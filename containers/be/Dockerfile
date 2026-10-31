@@ -13,7 +13,7 @@
 # Demonstrated with PEP 696 type-parameter defaults — ``type A[T = int]``
 # parses on 3.13 and is a SyntaxError on 3.12, which fails at import, so
 # the container would not have started at all.
-FROM python:3.13-slim AS builder
+FROM python:3.15-slim AS builder
 
 WORKDIR /app
 
@@ -31,7 +31,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev && uv pip freeze > requirements.txt
 
 # Stage 2: Final image
-FROM python:3.13-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
