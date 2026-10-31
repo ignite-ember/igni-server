@@ -1,0 +1,74 @@
+# Values for the kind install. F1.
+#
+# The point of this file is that it is *plausible* — the values a small
+# customer would actually pass, not the minimum that makes `helm
+# template` exit 0. The chart has been asserted on rendered manifests
+# since it was written; what had never happened is a cluster applying
+# them, pulling the images, running the migration and answering a
+# request. So the images are the ones CI builds, the datastores are the
+# ones `tools/kind/datastores.yaml` deploys, and the secrets are real
+# values of the right shape.
+#
+# Nothing here is a secret. The encryption key is a throwaway Fernet key
+# used nowhere else, the server generates its own signing key under it,
+# and the Postgres password matches the throwaway database in the same
+# directory.
+
+image:
+  repository: igni-api
+  tag: kind
+  # The images are side-loaded with `kind load docker-image`, so there is
+  # no registry to pull from. `IfNotPresent` would work; `Never` is
+  # stricter and makes a failed side-load show up as `ErrImageNeverPull`
+  # rather than as a pull that quietly finds something on Docker Hub.
+  pullPolicy: Never
+
+portalImage:
+  repository: igni-portal
+  tag: kind
+  pullPolicy: Never
+
+postgres:
+  host: pg
+  port: 5432
+  user: igni
+  database: igni
+
+redis:
+  host: redis
+  port: 6379
+
+secrets:
+  create: true
+  postgresPassword: kind-only-password
+  # A real Fernet key: the chart and the server both refuse without one.
+  secretEncryptionKey: BF3aXbYNBFCsD9AmMYXqBnJf2bTKMEwHIEHzUYqTAcA=
+  metricsToken: kind-metrics-token
+
+# One of each, so a rollout that only works at replicas=1 is not hidden
+# by two pods and so the cluster fits in a CI runner.
+api:
+  replicaCount: 1
+portal:
+  replicaCount: 1
+
+# Off: it needs a PersistentVolumeClaim that the harness does not create,
+# and a CronJob's first run is hours away regardless.
+backup:
+  enabled: false
+
+# Off: it needs the Prometheus operator's CRDs, which a bare kind cluster
+# does not have. `helm template` renders it and `kubeconform` checks its
+# shape; applying it is a test of the operator, not of this chart.
+monitoring:
+  prometheusRule:
+    enabled: false
+  serviceMonitor:
+    enabled: false
+
+# The server's external https:// address, the issuer of its tokens.
+# Nothing in the kind cluster fetches its keys from here, but the chart
+# and the server both refuse a plain-HTTP or missing one outside dev, and
+# this file is meant to be what a customer would pass.
+urls:
+  publicBase: https://igni.kind.invalid

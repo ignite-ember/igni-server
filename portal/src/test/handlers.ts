@@ -1,0 +1,93 @@
+/**
+ * Default MSW request handlers — match the real backend just well enough
+ * that components mount happily. Individual tests entry these with
+ * `server.use(...)` when they need specific responses.
+ */
+import { http, HttpResponse } from 'msw'
+
+const ME_DEFAULT = {
+  user_id: 'demo-user-001',
+  email: 'alex@ember.sh',
+  full_name: 'Alex Chen',
+  created_at: '2026-01-01T00:00:00Z',
+  role: 'admin',
+  pending_email: null,
+  auth_provider: 'email',
+  org_id: 'demo-org-001',
+  org_slug: 'demo',
+  org_display_name: 'Demo Org',
+  organizations: [
+    { id: 'demo-org-001', slug: 'demo', display_name: 'Demo Org', role: 'admin' },
+  ],
+}
+
+export const defaultHandlers = [
+  http.get('/v1/portal/me', () => HttpResponse.json(ME_DEFAULT)),
+
+  // The free base with no paid modules: nothing to say about a licence.
+  http.get('/v1/portal/licence/notice', () => HttpResponse.json({ warnings: [] })),
+
+  // A deployment its startup checks have nothing to say about.
+  http.get('/v1/portal/deployment/notices', () => HttpResponse.json({ notices: [] })),
+
+  http.get('/v1/portal/team', () =>
+    HttpResponse.json({
+      members: [
+        {
+          id: 'm-1',
+          user_id: 'demo-user-001',
+          email: 'alex@ember.sh',
+          full_name: 'Alex Chen',
+          role: 'admin',
+          status: 'active',
+          total_sessions: 0,
+          total_tokens: 0,
+          last_active: null,
+          joined_at: '2026-01-01T00:00:00Z',
+          assigned_by: null,
+        },
+      ],
+      total: 1,
+    }),
+  ),
+
+  http.get('/v1/portal/groups', () =>
+    HttpResponse.json({ groups: [], total: 0 }),
+  ),
+  http.get('/v1/portal/groups/:groupId', () =>
+    HttpResponse.json({
+      id: 'g-1',
+      org_id: 'demo-org-001',
+      name: 'Engineering',
+      description: 'Engineering team',
+      created_by_user_id: 'demo-user-001',
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      member_count: 0,
+      entry_count: 0,
+    }),
+  ),
+  http.get('/v1/portal/groups/:groupId/members', () =>
+    HttpResponse.json({ members: [], total: 0 }),
+  ),
+  http.get('/v1/portal/group-memberships', () => HttpResponse.json({ memberships: [] })),
+  http.get('/v1/portal/groups/:groupId/entries', () =>
+    HttpResponse.json({ entries: [], total: 0 }),
+  ),
+  http.get('/v1/portal/me/group', () => HttpResponse.json(null)),
+  http.get('/v1/portal/me/group/pack', () => HttpResponse.json(null)),
+
+  // The inference page polls this; a deployment with no GPUs configured
+  // is a legitimate state, so the default is an empty fleet rather than
+  // an error.
+  http.get('/v1/portal/inference', () =>
+    HttpResponse.json({
+      pools: [
+        { pool: 'chat', nodes: [], total_in_flight: 0, total_capacity: 0, utilization: 0 },
+        { pool: 'codeindex', nodes: [], total_in_flight: 0, total_capacity: 0, utilization: 0 },
+      ],
+      registration_enabled: false,
+      heartbeat_interval_seconds: 60,
+    }),
+  ),
+]

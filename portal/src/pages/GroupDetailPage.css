@@ -1,0 +1,45 @@
+@import './cards.css';
+
+.group-detail-muted {
+  color: var(--fgColor-muted, #57606a);
+}
+
+.group-detail-card {
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+}
+
+.group-detail-metric {
+  min-width: 160px;
+}
+
+/* One table, so the box around it reads as the table's edge. */
+.group-detail-table {
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium, 0.375rem);
+  margin-top: var(--base-size-8, 0.5rem);
+}
+
+/* The configuration tab stacks one of these per kind, and a box around
+ * each turns four tables into four crates. The heading above and the
+ * header row below already say where one starts.
+ */
+.group-entries-table {
+  margin-top: var(--base-size-8, 0.5rem);
+}
+
+.group-detail-table td,
+.group-detail-table th,
+.group-entries-table td,
+.group-entries-table th {
+  vertical-align: middle;
+}
+
+.group-detail-description {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+

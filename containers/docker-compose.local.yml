@@ -1,0 +1,129 @@
+services:
+  # Database Migrations (Run once: docker-compose run --rm migrate)
+  migrate:
+    container_name: igni__migrate
+    build:
+      context: ..
+      dockerfile: containers/be/Dockerfile
+    working_dir: /app
+    command: sh -c 'alembic upgrade head && python -m app.db.sql.tenant_migrations'
+    # Mount the same paths ``igni_api`` does. Without this the image
+    # has to be rebuilt for every new revision, and the failure is
+    # confusing: alembic reports "can't locate revision <the DB's own
+    # version>" because the image predates it.
+    volumes:
+      - ../app:/app/app
+      - ../alembic:/app/alembic
+      - ../alembic_tenant:/app/alembic_tenant
+      - ../alembic.ini:/app/alembic.ini
+    env_file:
+      - .env
+    # This file *is* the development stack, so it says so rather than
+    # depending on what .env happens to contain. dist.env ships
+    # APP_ENV=prod deliberately (dev disarms the startup safety checks,
+    # among them the one that refuses a plain-HTTP PUBLIC_BASE_URL), so a
+    # developer who copies the template verbatim would otherwise get:
+    #   - migrate refusing to create the local database, and
+    #   - the API refusing to start at all, because PORTAL_AUTH_BYPASS=1
+    #     below is rejected outside dev.
+    # Verified: dist.env as shipped plus that bypass raises
+    # UnsafeDeployment("this deployment cannot authenticate anybody").
+    environment:
+      - APP_ENV=dev
+    restart: "no"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - igni_network
+
+  # Application Backend (FastAPI) - Local Development Build
+  igni_api:
+    container_name: igni__api
+    build:
+      context: ..
+      dockerfile: containers/be/Dockerfile
+    # No published port: `gateway` owns :7777 and routes to this. See the
+    # gateway service for why, and for the loopback rule that moved with it.
+    expose:
+      - "7777"
+    volumes:
+      # Mount source code for live reloading
+      - ../app:/app/app
+      - ../alembic:/app/alembic
+      - ../alembic_tenant:/app/alembic_tenant
+      - ../alembic.ini:/app/alembic.ini
+      # Local-stub Secret Manager backing file lives under scripts/
+      - ../scripts:/app/scripts
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PORTAL_AUTH_BYPASS=1
+      - APP_ENV=dev
+      # Required in every environment, dev included: the server keeps the
+      # signing key it generates encrypted under this. DEV ONLY — this
+      # key is in a public repository, so it protects nothing. A value in
+      # .env wins, so a database whose keys were written under another
+      # key stays readable.
+      - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY:-jdlEOjgCCb-E6_7ChdCTvVPB7jmbuOSSpk21W4buHDQ=}
+      # The issuer of every token, and where services find the public
+      # keys: the gateway below, which routes /.well-known to this API.
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:7777}
+      # No mail relay locally, so sign-in codes are written to this log —
+      # off by default everywhere else (F35). The server warns at boot
+      # while it is on; that is expected here.
+      - LOG_SIGN_IN_CODES=${LOG_SIGN_IN_CODES:-true}
+    restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - igni_network
+    # Override CMD to enable auto-reload for development
+    command: bash -c "uvicorn app.main:app --host 0.0.0.0 --port 7777 --reload --log-level $${LOG_LEVEL,,}"
+
+  # The local edge for igni's own host — what the Helm ingress's first
+  # rule is in production. Everything on :7777 goes to the API. Nothing
+  # here routes to another service: igni__artifacts has its own name
+  # (see docker-compose.artifacts.yml), as it has its own host in
+  # production.
+  # See gateway/nginx.conf.
+  gateway:
+    container_name: igni__gateway
+    image: nginx:1.27-alpine
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # Loopback. This used to publish on every interface, and this file is
+      # the one paired with a .env that sets PORTAL_AUTH_BYPASS=true — so on
+      # a host with any inbound reach, `make up` served an unauthenticated
+      # admin API. Verified concretely: while a stack was up on 7777, a
+      # GitHub load balancer (lb-140-82-121-6-fra.github.com) reached
+      # /health and /ready on it from the internet.
+      - "127.0.0.1:7777:7777"
+    depends_on:
+      - igni_api
+    restart: always
+    networks:
+      - igni_network
+
+  portal:
+    container_name: igni__portal
+    environment:
+      # Explicit, like the production file. Inheriting the image's
+      # default is how this pointed at a renamed service for months
+      # without anybody noticing: nothing fails until nginx tries to
+      # resolve it, and then the container refuses to start.
+      - API_UPSTREAM=igni_api:7777
+    build:
+      context: ../portal
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: always
+    networks:
+      - igni_network
+
+networks:
+  igni_network:
+    driver: bridge

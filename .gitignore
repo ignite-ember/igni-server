@@ -1,0 +1,163 @@
+# Combined .gitignore
+
+### Local scripts (throwaway debug, secrets, key pools) ###
+/scripts/*
+!/scripts/__init__.py
+# Tracked, and run by CI: without this `git add -A` on a fresh export drops it.
+!/scripts/check_migration_drift.py
+
+### Node (the portal keeps its own; a root one is only ever a stray cache) ###
+node_modules/
+
+### Local ember-code workspace (user-specific symlink or directory) ###
+/.igni
+# The pre-rename name, kept so an unmigrated workspace stays ignored.
+/.ember
+
+### Evals fixtures (local-only, large) ###
+/evals
+
+### Linux ###
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+### OSX ###
+*.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+### PyCharm ###
+*.idea
+.idea/**/workspace.xml
+.idea/**/tasks.xml
+.idea/dictionaries
+.idea/**/dataSources/
+.idea/**/dataSources.ids
+.idea/**/dataSources.xml
+.idea/**/dataSources.local.xml
+.idea/**/sqlDataSources.xml
+.idea/**/dynamic.xml
+.idea/**/uiDesigner.xml
+.idea/**/gradle.xml
+.idea/**/libraries
+.idea/**/mongoSettings.xml
+*.iws
+.idea_modules/
+atlassian-ide-plugin.xml
+.idea/replstate.xml
+/.rakeTasks
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties
+.idea/sonarlint
+
+### Python ###
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+# Anchored to the repo root: these are setuptools build output, and a
+# bare ``lib/`` also swallowed ``portal/src/lib/`` (three modules five
+# pages import) and the cross_file_deps parser fixtures — none of which
+# were in the repo, so a fresh clone could not build the portal.
+/lib/
+/lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+*.mo
+*.pot
+instance/
+.webassets-cache
+.scrapy
+docs/_build/
+target/
+.ipynb_checkpoints
+.python-version
+celerybeat-schedule.*
+*.sage.py
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.spyderproject
+.spyproject
+.ropeproject
+/site
+.mypy_cache/
+
+### VisualStudioCode ###
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history
+
+### Windows ###
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+*/build/*
+
+### AWS ###
+*.aws-sam
+claude.lock
+# Per-machine Claude settings, except the shared workflow definitions —
+# those are team artifacts. Git cannot re-include a file inside an ignored
+# DIRECTORY, so the ignore has to be `.claude/*`, not `.claude/`.
+.claude/*
+!.claude/workflows/

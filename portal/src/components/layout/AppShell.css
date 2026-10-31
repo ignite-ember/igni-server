@@ -1,0 +1,11 @@
+.app-shell {
+  min-height: 100vh;
+}
+
+/* Fix the sidebar pane so it stays in place while content scrolls */
+.app-shell [data-pane-id] {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+}

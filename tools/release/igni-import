@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+#
+# Verify an igni offline release bundle and import its images into your
+# own registry. Runs entirely offline: nothing here contacts Ignite Ember
+# or the internet.
+#
+#   igni-import --bundle igni-bundle-0.6.0.tar --public-key igni-release.pub \
+#               --registry registry.example.internal/igni [options]
+#
+# Options:
+#   --bundle FILE          the release tarball
+#   --public-key FILE      igni's minisign release key, obtained out of band.
+#                          Never the copy inside a bundle: a key that travels
+#                          with the thing it vouches for vouches for nothing.
+#   --registry URL         your registry and path prefix, e.g. reg.corp:5000/igni
+#   --expect-version V     refuse unless the bundle is exactly this release
+#   --verify-only          verify signature and hashes, import nothing
+#   --keep DIR             keep the verified contents (Helm chart, SBOMs) in
+#                          DIR, which must not exist yet
+#   --authfile FILE        registry credentials for skopeo (default: skopeo's)
+#   --dest-tls-verify BOOL passed to skopeo; `false` for a plain-HTTP registry
+#   --cosign-key FILE      after the push, check each image's cosign signature
+#                          and SBOM attestation in your registry with this key
+#
+# Order of work, and why it is this order:
+#
+#   1. The tarball is listed before anything is written. Absolute paths,
+#      `..`, links and device files are refused: an archive must not be
+#      able to write outside the directory it is unpacked into.
+#   2. The MANIFEST signature is checked with the key you supplied. The
+#      signed trusted comment carries the version, so a correctly signed
+#      MANIFEST cannot be relabelled as another release.
+#   3. Every file is hashed and compared with the MANIFEST. A file that is
+#      missing, altered or *not listed* is a refusal: an extra file is how
+#      something unsigned would ride along.
+#   4. Only then is anything pushed, by digest-preserving `skopeo copy`, and
+#      the digest the registry reports is compared with the signed one.
+#
+# Any failure exits non-zero having pushed nothing that failed, and says
+# which check refused.
+set -euo pipefail
+
+readonly FORMAT=1
+
+die() {
+    printf 'igni-import: REFUSED: %s\n' "$*" >&2
+    exit 1
+}
+
+info() {
+    printf '%s\n' "$*"
+}
+
+need() {
+    command -v "$1" > /dev/null 2>&1 || die "'$1' is required and was not found on PATH"
+}
+
+sha256_of() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
+
+bundle=''
+public_key=''
+registry=''
+expect_version=''
+verify_only=0
+keep_dir=''
+authfile=''
+dest_tls_verify=''
+cosign_key=''
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bundle) bundle="${2:?--bundle needs a file}"; shift 2 ;;
+        --public-key) public_key="${2:?--public-key needs a file}"; shift 2 ;;
+        --registry) registry="${2:?--registry needs a URL}"; shift 2 ;;
+        --expect-version) expect_version="${2:?--expect-version needs a version}"; shift 2 ;;
+        --verify-only) verify_only=1; shift ;;
+        --keep) keep_dir="${2:?--keep needs a directory}"; shift 2 ;;
+        --authfile) authfile="${2:?--authfile needs a file}"; shift 2 ;;
+        --dest-tls-verify) dest_tls_verify="${2:?--dest-tls-verify needs true or false}"; shift 2 ;;
+        --cosign-key) cosign_key="${2:?--cosign-key needs a file}"; shift 2 ;;
+        -h | --help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) die "unknown option '$1' (see --help)" ;;
+    esac
+done
+
+[ -n "$bundle" ] || die '--bundle is required'
+[ -n "$public_key" ] || die '--public-key is required'
+[ -f "$bundle" ] || die "no bundle at '$bundle'"
+[ -f "$public_key" ] || die "no public key at '$public_key'"
+if [ "$verify_only" -eq 0 ]; then
+    [ -n "$registry" ] || die '--registry is required unless --verify-only'
+    registry="${registry%/}"
+fi
+case "$dest_tls_verify" in '' | true | false) ;; *) die '--dest-tls-verify takes true or false' ;; esac
+
+need tar
+need minisign
+if [ "$verify_only" -eq 0 ]; then
+    need skopeo
+    [ -z "$cosign_key" ] || need cosign
+fi
+
+# ── 1. Unpack safely ────────────────────────────────────────────────────
+
+if [ -n "$keep_dir" ]; then
+    [ ! -e "$keep_dir" ] || die "--keep '$keep_dir' already exists; give a new directory"
+    mkdir -p "$keep_dir"
+    work="$keep_dir"
+    # A refused bundle is not left behind looking like a verified one.
+    discard_on_failure() {
+        local rc=$?
+        [ "$rc" -eq 0 ] || rm -rf "$keep_dir"
+    }
+    trap discard_on_failure EXIT
+else
+    work="$(mktemp -d "${TMPDIR:-/tmp}/igni-import.XXXXXX")"
+    trap 'rm -rf "$work"' EXIT
+fi
+
+listing="$(tar -tf "$bundle")" || die 'the bundle is not a readable tar archive'
+[ -n "$listing" ] || die 'the bundle is empty'
+while IFS= read -r name; do
+    case "$name" in
+        /*) die "archive entry '$name' is an absolute path" ;;
+    esac
+    case "/$name/" in
+        */../*) die "archive entry '$name' climbs out of the bundle" ;;
+    esac
+done <<< "$listing"
+
+# The first character of a verbose listing is the entry type in both GNU
+# tar and bsdtar: `-` a file, `d` a directory. Anything else — a symlink,
+# a hard link, a device — is not something a release bundle contains.
+while IFS= read -r line; do
+    case "$line" in
+        -* | d*) ;;
+        *) die "archive entry is not a plain file or directory: $line" ;;
+    esac
+done < <(tar -tvf "$bundle")
+
+top_levels="$(printf '%s\n' "$listing" | sed -e 's#^\./##' -e 's#/.*##' | grep -v '^$' | sort -u)"
+[ "$(printf '%s\n' "$top_levels" | wc -l | tr -d ' ')" = 1 ] \
+    || die 'the bundle must hold exactly one top-level directory'
+
+tar -xof "$bundle" -C "$work"
+root="$work/$top_levels"
+[ -d "$root" ] || die 'the bundle must hold exactly one top-level directory'
+
+if [ -n "$(find "$root" ! -type f ! -type d -print -quit)" ]; then
+    die 'the unpacked bundle contains something other than files and directories'
+fi
+
+manifest="$root/MANIFEST"
+signature="$root/MANIFEST.minisig"
+[ -f "$manifest" ] || die 'no MANIFEST in the bundle'
+[ -f "$signature" ] || die 'no MANIFEST.minisig in the bundle'
+
+# ── 2. The signature ────────────────────────────────────────────────────
+
+trusted_comment="$(minisign -V -Q -p "$public_key" -m "$manifest" -x "$signature" 2> /dev/null)" \
+    || die 'the MANIFEST signature does not verify with the supplied public key'
+
+manifest_format=''
+version=''
+commit=''
+created=''
+manifest_paths=()
+manifest_hashes=()
+hash_line='^([0-9a-f]{64})  ([A-Za-z0-9._+/-]+)$'
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+        '# igni-bundle-manifest: '*) manifest_format="${line#\# igni-bundle-manifest: }" ;;
+        '# version: '*) version="${line#\# version: }" ;;
+        '# commit: '*) commit="${line#\# commit: }" ;;
+        '# created: '*) created="${line#\# created: }" ;;
+        '#'*) die "unrecognised MANIFEST header: $line" ;;
+        *)
+            [[ "$line" =~ $hash_line ]] || die "malformed MANIFEST line: $line"
+            path="${BASH_REMATCH[2]}"
+            case "/$path/" in */../* | */./* | *//*) die "MANIFEST path '$path' is not a plain relative path" ;; esac
+            manifest_hashes+=("${BASH_REMATCH[1]}")
+            manifest_paths+=("$path")
+            ;;
+    esac
+done < "$manifest"
+
+[ "$manifest_format" = "$FORMAT" ] || die "MANIFEST format '$manifest_format' is not $FORMAT; use the igni-import that shipped with this release"
+[[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "MANIFEST version '$version' is not a version"
+[ "$trusted_comment" = "igni-bundle format=$FORMAT version=$version" ] \
+    || die "the signed version ('$trusted_comment') does not match the MANIFEST (version $version)"
+if [ -n "$expect_version" ] && [ "$expect_version" != "$version" ]; then
+    die "this bundle is version $version, not the expected $expect_version"
+fi
+[ "${#manifest_paths[@]}" -gt 0 ] || die 'the MANIFEST lists no files'
+
+# ── 3. Every file, and nothing else ─────────────────────────────────────
+
+listed="$(printf '%s\n' "${manifest_paths[@]}" | LC_ALL=C sort)"
+[ "$(printf '%s\n' "$listed" | uniq -d)" = '' ] || die 'the MANIFEST lists a file twice'
+present="$(cd "$root" && find . -type f ! -path ./MANIFEST ! -path ./MANIFEST.minisig | sed 's#^\./##' | LC_ALL=C sort)"
+
+unlisted="$(LC_ALL=C comm -13 <(printf '%s\n' "$listed") <(printf '%s\n' "$present"))"
+[ -z "$unlisted" ] || die "files in the bundle that the MANIFEST does not list: $(echo "$unlisted" | tr '\n' ' ')"
+missing="$(LC_ALL=C comm -23 <(printf '%s\n' "$listed") <(printf '%s\n' "$present"))"
+[ -z "$missing" ] || die "files the MANIFEST lists that are not in the bundle: $(echo "$missing" | tr '\n' ' ')"
+
+for i in "${!manifest_paths[@]}"; do
+    actual="$(sha256_of "$root/${manifest_paths[$i]}")"
+    [ "$actual" = "${manifest_hashes[$i]}" ] || die "hash mismatch: ${manifest_paths[$i]}"
+done
+
+[ -f "$root/images.tsv" ] || die 'no images.tsv index in the bundle'
+
+info "Verified igni $version (commit ${commit:-unknown}, built ${created:-unknown})"
+info "  signature: good, key $public_key"
+info "  files:     ${#manifest_paths[@]}, every sha256 matches the signed MANIFEST"
+
+# ── 4. Import ───────────────────────────────────────────────────────────
+
+image_names=()
+image_tags=()
+image_digests=()
+tab=$'\t'
+image_line="^([a-z0-9][a-z0-9._-]*)${tab}([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})${tab}(sha256:[0-9a-f]{64})\$"
+while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    [[ "$line" =~ $image_line ]] || die "malformed images.tsv line: $line"
+    image_names+=("${BASH_REMATCH[1]}")
+    image_tags+=("${BASH_REMATCH[2]}")
+    image_digests+=("${BASH_REMATCH[3]}")
+    [ -f "$root/images/${BASH_REMATCH[1]}/image/manifest.json" ] \
+        || die "images.tsv names ${BASH_REMATCH[1]} but the bundle holds no image for it"
+done < "$root/images.tsv"
+[ "${#image_names[@]}" -gt 0 ] || die 'the images.tsv index is empty'
+
+if [ "$verify_only" -eq 1 ]; then
+    info '  images:'
+    for i in "${!image_names[@]}"; do
+        info "    ${image_names[$i]}:${image_tags[$i]}@${image_digests[$i]}"
+    done
+    info 'Verify only: nothing imported.'
+    [ -z "$keep_dir" ] || info "Verified contents kept in $root"
+    exit 0
+fi
+
+skopeo_args=(copy --all --preserve-digests)
+[ -z "$authfile" ] || skopeo_args+=(--authfile "$authfile")
+[ -z "$dest_tls_verify" ] || skopeo_args+=("--dest-tls-verify=$dest_tls_verify")
+cosign_args=(--key "$cosign_key" --insecure-ignore-tlog=true)
+[ "$dest_tls_verify" != false ] || cosign_args+=(--allow-insecure-registry --allow-http-registry)
+
+digest_file="$work/.pushed-digest"
+imported=()
+for i in "${!image_names[@]}"; do
+    name="${image_names[$i]}"
+    tag="${image_tags[$i]}"
+    digest="${image_digests[$i]}"
+    dest="$registry/$name"
+
+    rm -f "$digest_file"
+    skopeo "${skopeo_args[@]}" --digestfile "$digest_file" \
+        "dir:$root/images/$name/image" "docker://$dest:$tag" \
+        || die "skopeo could not push $name to $dest:$tag"
+    pushed="$(cat "$digest_file" 2> /dev/null || true)"
+    [ "$pushed" = "$digest" ] \
+        || die "$dest:$tag was stored as '${pushed:-nothing}', not the signed $digest"
+
+    # cosign looks for an image's signature and attestations at these tags
+    # in the same repository, so they keep the names they had upstream.
+    extras=''
+    for kind in sig att; do
+        if [ -f "$root/images/$name/$kind/manifest.json" ]; then
+            skopeo "${skopeo_args[@]}" "dir:$root/images/$name/$kind" \
+                "docker://$dest:${digest/:/-}.$kind" \
+                || die "skopeo could not push the $kind for $name"
+            extras="$extras $kind"
+        fi
+    done
+
+    if [ -n "$cosign_key" ]; then
+        cosign verify "${cosign_args[@]}" "$dest@$digest" > /dev/null \
+            || die "the cosign signature on $dest@$digest does not verify"
+        cosign verify-attestation "${cosign_args[@]}" --type cyclonedx "$dest@$digest" > /dev/null \
+            || die "the SBOM attestation on $dest@$digest does not verify"
+        extras="$extras cosign-verified"
+    fi
+    imported+=("$dest:$tag@$digest${extras:+ (${extras# })}")
+done
+
+info 'Imported:'
+for line in "${imported[@]}"; do
+    info "  $line"
+done
+for chart in "$root"/charts/*.tgz; do
+    [ -f "$chart" ] && info "Helm chart: charts/$(basename "$chart")"
+done
+for sbom in "$root"/sboms/*; do
+    [ -f "$sbom" ] && info "SBOM:       sboms/$(basename "$sbom")"
+done
+if [ -n "$keep_dir" ]; then
+    info "Verified contents kept in $root"
+else
+    info 'Use --keep DIR to keep the chart and SBOMs.'
+fi

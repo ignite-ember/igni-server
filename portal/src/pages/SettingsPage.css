@@ -1,0 +1,41 @@
+@import './cards.css';
+
+/* One measure for both: the form fields and the Sessions guidance
+   beside them line up, and there is one literal rather than two — the
+   primitives ratchet counts them, and a second copy of the same number
+   is exactly what it is for. */
+.settings-form,
+.settings-hint {
+  max-width: 480px;
+}
+
+.settings-saved {
+  color: var(--fgColor-success, var(--color-success-fg, #1a7f37));
+}
+
+.settings-pending-email {
+  color: var(--fgColor-attention, var(--color-attention-fg, #9a6700));
+}
+
+.linked-account-row {
+  padding: var(--base-size-8, 0.5rem) var(--base-size-12, 0.75rem);
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-default);
+}
+
+.settings-empty-state {
+  color: var(--fgColor-muted);
+  font-style: italic;
+}
+
+.settings-mono {
+  font-family: var(--fontStack-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+  font-size: var(--text-body-size-small, 0.75rem);
+}
+
+
+/* No colour on `.settings-hint` deliberately. F137 was a dimmed
+   FormControl caption reaching 3.24:1 against the panel, and the
+   sentence saying the CLI stops working too is the last place to spend
+   contrast on looking calm. */

@@ -1,0 +1,10 @@
+{
+  "GET /v1/portal/me": {
+    "status": 401,
+    "body": "{\n \"detail\": \"Not authenticated\"\n}"
+  },
+  "GET /v1/auth/methods": {
+    "status": 200,
+    "body": "{\n \"password\": true,\n \"oauth_providers\": [\n  \"google\"\n ],\n \"sso\": {\n  \"enabled\": false,\n  \"label\": \"SSO\",\n  \"start_url\": \"/v1/auth/oidc\"\n }\n}"
+  }
+}

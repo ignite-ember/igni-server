@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "igni chart values",
+  "description": "Helm validates values against this before rendering, so a typo in a values file is a named error rather than a silently ignored key. Everything the chart genuinely refuses is enforced in templates/_helpers.tpl instead, where the message can explain why.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "appEnv": {
+      "type": "string",
+      "enum": ["prod", "dev"],
+      "description": "dev downgrades every startup safety check to a warning."
+    },
+    "logLevel": {
+      "type": "string",
+      "enum": ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]
+    },
+    "logFormat": {
+      "type": "string",
+      "enum": ["text", "json"],
+      "description": "json emits one object per line for a log shipper."
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string" },
+        "tag": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "portalImage": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string" },
+        "tag": { "type": "string" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "user": { "type": "string", "minLength": 1 },
+        "database": { "type": "string", "minLength": 1 }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "db": { "type": "integer", "minimum": 0, "maximum": 15 }
+      }
+    },
+    "email": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backend": { "type": "string", "enum": ["smtp", "ses"] },
+        "smtpPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "smtpTlsMode": {
+          "type": "string",
+          "enum": ["starttls", "tls", "none"],
+          "description": "Different servers, not preferences: starttls is 587, tls is implicit on 465, none is an internal relay on 25."
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "properties": {
+        "auditDays": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "concurrency": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "portal": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "existingSecret": { "type": "string" }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "existingClaim": { "type": "string" },
+        "schedule": { "type": "string", "minLength": 9 },
+        "retainDays": { "type": "integer", "minimum": 1 },
+        "image": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "apiPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "portalPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    }
+  }
+}

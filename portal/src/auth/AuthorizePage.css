@@ -1,0 +1,31 @@
+/* Signing a person in to a registered client.
+ *
+ * A page of its own rather than inside the app shell: the person is on
+ * their way somewhere else. Every value is a Primer primitive (see
+ * src/test/primitives.test.ts).
+ */
+
+.authorize-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--base-size-16, 1rem);
+  background-color: var(--bgColor-default);
+}
+
+.authorize-container {
+  width: 100%;
+  max-width: 30rem;
+}
+
+.authorize-card {
+  padding: var(--base-size-24, 1.5rem);
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-large, 12px);
+  background-color: var(--bgColor-muted);
+}
+
+.authorize-muted {
+  color: var(--fgColor-muted);
+}

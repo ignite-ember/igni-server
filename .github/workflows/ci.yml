@@ -1,0 +1,507 @@
+name: CI
+
+on:
+  pull_request:
+    branches: ["**"]
+  # Callable, so cd.yml can gate a deploy on it. Without this there was no
+  # way to reuse it, and `cd.yml` triggers on `push` — so the commit that
+  # got built and pushed to the registry had never been tested. CI
+  # ran on the pull request's head, which is not the merge result, and a
+  # direct push to `main` skipped it entirely.
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Black
+        run: uv run black --check app
+
+      - name: Ruff
+        # `tools` is in the list because it was not, and it is tracked:
+        # `gen_dashboard.py` and the key-rotation tool are both operator
+        # -facing code that CI never looked at. Same shape as F104's
+        # unrun eslint, found while adding a third file there.
+        run: uv run ruff check app tests alembic alembic_tenant tools
+
+      - name: MyPy
+        run: uv run mypy app
+
+  # Nothing audited dependencies, and `bandit` was a declared dev
+  # dependency that no target invoked — the same shape as `alembic` being
+  # linted by nothing. The first run found 76 advisories across 24
+  # packages, 66 of them in the shipped image.
+  # Deployment configs are code. B2/F140 found `containers/Caddyfile`
+  # had `email` inside the site block, where it is not a directive at
+  # all — `caddy validate` rejects the file, so the only TLS path the
+  # product documents exited on start, and had since it was written.
+  # Nothing had ever parsed it.
+  configs:
+    name: Deployment configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The placeholders only get past interpolation: `docker compose
+      # config` refuses to render the prod file without IGNI_ENV_FILE
+      # and IGNI_IMAGE, which is that file working as designed.
+      - name: Caddyfile
+        run: |
+          docker run --rm \
+            -e IGNI_DOMAIN=igni.example.invalid \
+            -e IGNI_ACME_EMAIL=ops@example.invalid \
+            -v "$PWD/containers/Caddyfile":/etc/caddy/Caddyfile:ro \
+            caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+
+      - name: Compose files
+        working-directory: containers
+        env:
+          IGNI_ENV_FILE: /dev/null
+          IGNI_IMAGE: example.invalid/igni-api:0.0.0
+          IGNI_PORTAL_IMAGE: example.invalid/igni-portal:0.0.0
+          IGNI_DOMAIN: igni.example.invalid
+          IGNI_ACME_EMAIL: ops@example.invalid
+        run: |
+          docker compose -f docker-compose.local.yml config > /dev/null
+          docker compose -f docker-compose.prod.yml config > /dev/null
+          docker compose -f docker-compose.prod.yml -f docker-compose.tls.yml config > /dev/null
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      # PYSEC-2026-1325 (ecdsa, via python-jose) is the one exception, and
+      # it is permanent: the project considers side-channel attacks out of
+      # scope and there is no planned fix. It is a Minerva timing attack on
+      # *signing* — the advisory states verification is unaffected, and this
+      # codebase only ever verifies (id_tokens with ES*; our own tokens are
+      # HS256). Any *new* advisory fails this job.
+      - name: pip-audit
+        run: uv run pip-audit --ignore-vuln PYSEC-2026-1325
+
+      # `-ll` gates at MEDIUM and above. The three MEDIUM findings that
+      # existed are suppressed inline with the reason at the call site, and
+      # 16 LOW ones are still reported — so a pass here means the gate ran,
+      # not that everything is excluded.
+      - name: Bandit
+        run: uv run bandit -r app -q -ll
+
+  # The *image* was never scanned — only the repository. `pip-audit` above
+  # reads `uv.lock`, which is not what ships: the runtime image also carries
+  # a base OS, its system packages, and whatever `pip` itself pulled in. A
+  # marketplace listing is scanned as an image, so this is the check that
+  # matches how it will be judged.
+  #
+  # Also the place a root user would have been caught. Both images ran as
+  # root until the marketplace pass; `tests/test_images_are_marketplace_shaped.py`
+  # asserts the Dockerfiles, and Trivy's `--scanners misconfig` asserts the
+  # built result.
+  #
+  # `exit-code: 0` on the vulnerability scan deliberately: a new CVE in a
+  # base image is not this repository's regression and should not turn every
+  # pull request red until an upstream rebuild exists. The report is
+  # uploaded and readable. The *misconfiguration* scan does gate, because
+  # those findings are ours to fix and do not appear from nowhere.
+  image-scan:
+    name: Image Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the backend image
+        run: docker build -f containers/be/Dockerfile -t igni-api:ci .
+
+      - name: Build the portal image
+        run: docker build -f portal/Dockerfile -t igni-portal:ci portal/
+
+      - name: Trivy — backend vulnerabilities (report only)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: igni-api:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
+      - name: Trivy — portal vulnerabilities (report only)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: igni-portal:ci
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
+      - name: Trivy — backend misconfiguration (gates)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: igni-api:ci
+          scanners: misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      # The release SBOMs are produced by cd.yml; these exist so the step
+      # is exercised on every pull request rather than first discovered to
+      # be broken during a release. Uploaded because an SBOM diff on a
+      # dependency-bump PR is the clearest possible review artefact.
+      - name: SBOM — backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: igni-api:ci
+          format: cyclonedx
+          output: sbom-api-image.cdx.json
+
+      - name: SBOM — portal image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: igni-portal:ci
+          format: cyclonedx
+          output: sbom-portal-image.cdx.json
+
+      # The portal's npm tree is compiled into the bundle, so an image
+      # scan of that container cannot see it — 71 Alpine packages and zero
+      # of the 242 npm ones. See the comment in cd.yml.
+      - name: SBOM — portal npm tree
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: portal
+          format: cyclonedx
+          output: sbom-portal-npm.cdx.json
+          skip-dirs: portal/node_modules
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: '*.cdx.json'
+          retention-days: 14
+
+  # 898 tests that nothing enforced. The lint job below has been the whole
+  # of CI, so a pull request could go red on formatting and green with a
+  # failing suite — and the app half of the product (ember-code) has run
+  # pytest in CI all along, which made the asymmetry easy to miss.
+  #
+  # The services mirror what tests/conftest.py connects to: Postgres as
+  # ``myuser`` on 5432 (it creates and migrates ``ember_test`` itself) and
+  # Redis on 6379.
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: myuser
+          POSTGRES_PASSWORD: mysecretpassword
+          # `ember_test`, not `postgres`. `tests/conftest.py` connects to
+          # a database of that name, so with the service creating
+          # `postgres` the conftest import raised
+          # `database "ember_test" does not exist` and **every one of the
+          # 2400+ tests failed at collection**. The job went red at the
+          # first step and the suite has never run here.
+          #
+          # Kept in step with conftest by
+          # `tests/test_lint_is_the_same_locally_and_in_ci.py`.
+          POSTGRES_DB: ember_test
+        ports:
+          - 5432:5432
+        # Without the health check the first connection races the
+        # container's own initialisation and the whole suite errors in
+        # collection.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      # `tests/test_the_helm_chart_deploys_igni.py` renders the chart with
+      # `helm template` and asserts on the manifests. Without helm on the
+      # runner every one of those assertions skips, and a skipped test
+      # reads as a passing one — so the binary is installed here rather
+      # than in a separate job that only lints.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      # Structural validation against the published Kubernetes schemas.
+      # Catches a misspelled field, which renders and lints happily.
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          VERSION=v0.6.7
+          curl -sSfL -o /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform
+          sudo install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      # `tests/test_an_offline_bundle_is_verified_before_import.py` signs
+      # and verifies real bundles with it. Without it those tests would
+      # skip, so under `CI` the module raises instead.
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
+
+      - name: Pytest
+        # APP_ENV=dev so the startup checks downgrade to warnings. Not the
+        # encryption key, which is required everywhere, so CI carries a
+        # throwaway Fernet key used nowhere else; the server generates its
+        # own signing key under it.
+        #
+        # REDIS_HOST because `Settings.redis_host` defaults to `redis`,
+        # which is the *compose service name*. This job is not
+        # containerised, so its services are published on the runner's
+        # localhost and that name resolves to nothing: 83 tests failed
+        # with "Temporary failure in name resolution" the first time the
+        # suite got far enough to run at all.
+        #
+        # It works locally only because a developer's untracked `.env`
+        # sets it — which is the worst way for a suite to pass, since no
+        # local run can reveal the gap. `conftest.py` hardcodes
+        # `localhost` for Postgres for the same reason; Redis is read
+        # through the settings object instead, so it needs saying here.
+        #
+        # SECRET_ENCRYPTION_KEY is made fresh for each run rather than
+        # written here: a key in a public file is one somebody copies into
+        # a real deployment.
+        env:
+          APP_ENV: dev
+          REDIS_HOST: localhost
+        run: |
+          export SECRET_ENCRYPTION_KEY="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+          uv run pytest tests/ -q
+
+      # A second, blunter check on the same chart: lint it with the
+      # values a customer would actually pass. `helm lint` sees things
+      # `helm template` does not, such as a malformed Chart.yaml.
+      # The five generated compliance documents, refusing to write. The
+      # suite already fails when one is stale, but this names the
+      # problem in one line instead of five assertion diffs — and it is
+      # the command a developer runs (`make check-docs`).
+      - name: Generated documents are current
+        run: make check-docs
+
+      - name: Helm lint
+        run: |
+          helm lint charts/igni \
+            --set image.repository=registry.example.com/igni/igni-api \
+            --set portalImage.repository=registry.example.com/igni/portal \
+            --set postgres.host=pg.internal \
+            --set redis.host=redis.internal \
+            --set urls.publicBase=https://igni.example.com \
+            --set secrets.secretEncryptionKey=DUuX49F9ROzfR-UMMTjm65pV86qN7IyUSzC0gkFQDh0=
+
+  lint-portal:
+    name: Lint Portal
+    runs-on: ubuntu-latest
+    # The visual baselines in `tests/e2e/visual.spec.ts-snapshots` were
+    # generated in this exact image by `portal/scripts/baselines-linux.sh`.
+    # Pixel comparison is only meaningful against the renderer and the
+    # fonts it was baselined on, and `playwright install --with-deps` on
+    # a bare runner is a different set of both — so the job runs where
+    # the baselines came from rather than hoping the two agree. Pinned
+    # to the same version as package.json; bump both together. E4.
+    container: mcr.microsoft.com/playwright:v1.60.0-noble
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - run: npm ci --legacy-peer-deps
+
+      # `npm run typecheck`, not `npx tsc --noEmit`. The latter is what
+      # this step ran for as long as it existed, and it checks *nothing*:
+      # `tsconfig.json` is a solution file — `"files": []` plus three
+      # references — so a bare `tsc` compiles zero files and exits 0.
+      # `tsc --noEmit --listFiles` prints nothing at all.
+      #
+      # Type errors did still fail the build, in the *Image Scan* job,
+      # because the portal Dockerfile runs `npm run build` and that is
+      # `tsc -b`. So the check existed and the step that names it was not
+      # the one doing it — which is worse than no step, because a green
+      # "Lint & Type Check" is read as "the types are fine".
+      #
+      # `make portal-lint` already used `tsc -b`. The Makefile was right
+      # and CI was wrong, which is F142 the other way round.
+      - run: npm run typecheck
+
+      # The gate that was missing. `eslint` was configured, worked, and
+      # ran nowhere — so 11 errors accumulated in a tree that reported
+      # itself green, three of them conditionally-called React hooks in
+      # `CLIAuthPage.tsx`. That is a crash, not a style preference:
+      # React throws "Rendered fewer hooks than expected" when the count
+      # changes between renders, and a query parameter decided the count.
+      #
+      # `--max-warnings 0` because a warning nobody sees is an error
+      # nobody fixed. See F104.
+      - name: ESLint
+        run: npx eslint src --max-warnings 0
+
+      # ``--omit=dev`` audits what the built bundle actually ships. The
+      # full tree also flags vite and undici (via jsdom), which are the
+      # build and test tooling and never reach a browser — failing the
+      # build on those would train people to ignore this step.
+      #
+      # Was 9 shipped advisories, 7 of them high: axios carried 28 on its
+      # own, plus lodash, nanoid, form-data, follow-redirects and
+      # react-router-dom. ``npm audit fix --legacy-peer-deps`` cleared all
+      # of them with no major bumps.
+      - run: npm audit --omit=dev
+
+      # Added once the suite was actually green. Two RepositoriesPage
+      # tests had been failing — one on a jsdom gap that crashed the page
+      # render, one asserting an install CTA that moved to Integrations —
+      # so wiring this up earlier would only have taught people to ignore
+      # a red job.
+      - run: npm test -- --run
+
+      # The portal has 5 e2e spec files, a playwright.config.ts and a
+      # `test:e2e` script, and CI ran none of them. Unsurprisingly the suite
+      # had rotted: 8 of 31 specs failed on first run — including one
+      # asserting the heading "Welcome to Ember Code", which is exactly the
+      # regression it existed to catch and which sailed through the rename
+      # because nothing was running it.
+      #
+      # All the stale ones are fixed, the two testing a removed AI-key
+      # feature are deleted, and the screenshot generator is gated on
+      # PORTAL_E2E_SHOTS (it needs a live portal with a seeded Default
+      # group). What is left runs clean here.
+      #
+      # `Visual regression` used to be excluded here with
+      # `--grep-invert`, because Playwright names baselines per-platform
+      # and only darwin ones were committed. A command-line filter
+      # produces no skipped test, no line in the report and a green job,
+      # which is F128's mistake wearing a different hat. Linux baselines
+      # are committed now, and those tests skip themselves only when
+      # their own baseline file is absent — tagged `@needs-baseline`, so
+      # the reporter names them every run. E4.
+      #
+      # IGNI_E2E_STRICT=1 turns an *undeclared* skip into a failure, so
+      # coverage cannot go quiet again without this job going red. F130.
+      #
+      # No `playwright install`: the container ships the browsers, and
+      # installing a second copy is how the renderer stops matching the
+      # baselines.
+      - name: Portal E2E
+        env:
+          IGNI_E2E_STRICT: '1'
+        run: npx playwright test
+
+  # ── The chart, on a cluster ──────────────────────────────────────────
+  #
+  # F1. `test` renders the chart and asserts on the manifests, `helm lint`
+  # reads Chart.yaml, `kubeconform` validates every field. All three are
+  # static, all three passed, and `helm install` failed on every cluster
+  # for two reasons neither could see: the migration hook named a
+  # ServiceAccount Helm creates *after* hooks run, and Kubernetes' service
+  # links set `REDIS_PORT=tcp://...` on top of `Settings.redis_port: int`.
+  # Hook ordering and environment injection are properties of the set and
+  # of the cluster, not of a document.
+  #
+  # F140 is the precedent: the Caddyfile this product ships was rejected
+  # by `caddy validate` from the day it was written, because nothing ever
+  # started it.
+  #
+  # Runs `tools/kind/install.sh` — the same script and the same values a
+  # developer runs locally, rather than a second inlined recipe that can
+  # drift from it. F134's lesson: a CI-only code path is a code path
+  # nobody tests.
+  chart-install:
+    name: Chart installs on kind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Install kind
+        run: |
+          set -euo pipefail
+          VERSION=v0.33.0
+          curl -sSfLo /tmp/kind \
+            "https://github.com/kubernetes-sigs/kind/releases/download/${VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Install the chart, migrate, and ask the API
+        run: tools/kind/install.sh
+
+  # ── The backup, restored ─────────────────────────────────────────────
+  #
+  # F5. DP-10 has read `Verified` since §39, on the strength of one
+  # afternoon's `pg_dump` typed at a prompt. Two gaps: it was never
+  # repeated, so nothing would notice the day a migration or an image
+  # change broke it; and it never used `containers/backup.sh` — the
+  # script the compose stack runs as a service and the chart's CronJob
+  # runs as `once` — which had never been executed by anything at all.
+  #
+  # This runs the shipped script, restores what it produces, compares the
+  # two databases, re-tests the append-only trigger and the sequence,
+  # boots the application on the restored database, and then checks that
+  # the script's own refusals still refuse. A verification step that
+  # cannot fail is decoration.
+  #
+  # Same script a developer runs, for F134's reason.
+  restore-drill:
+    name: Backups restore
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dump with the shipped script, restore it, boot on it
+        run: tools/restore-drill.sh

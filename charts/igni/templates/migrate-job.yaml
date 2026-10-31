@@ -1,0 +1,106 @@
+{{- if .Values.migrations.enabled }}
+{{- include "igni.validate" . -}}
+{{/*
+Alembic, as a hook that must succeed before anything else is installed or
+upgraded. The release does not proceed if it fails, and that is the whole
+point: without ordering, the API and worker come up alongside the
+migration and serve against whichever schema happens to exist at that
+moment.
+
+Its configuration comes from the hook-scoped objects in migrate-env.yaml
+rather than from the main ConfigMap — see the comment there, which is
+about Helm's ordering rather than about migrations.
+
+`before-hook-creation` as the delete policy: a failed Job and its logs
+stay in the cluster until the next attempt replaces them. Helm's
+`hook-succeeded` would delete exactly what somebody needs to read.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "igni.fullname" . }}-migrate
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.migrations.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "igni.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      # Off for the reason api-deployment.yaml spells out: a Service
+      # named `redis` in this namespace sets `REDIS_PORT=tcp://...`,
+      # which `Settings.redis_port: int` refuses — and this Job was
+      # where F1 found it.
+      enableServiceLinks: false
+      restartPolicy: Never
+      {{/*
+      The hook-scoped account from migrate-env.yaml, not the release's:
+      that one is an ordinary resource and does not exist yet when this
+      hook runs. See the comment there. When `serviceAccount.create` is
+      false the field is omitted entirely rather than naming something
+      the operator has not made.
+      */}}
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "igni.fullname" . }}-migrate-hook
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: migrate
+          image: {{ include "igni.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          workingDir: /app
+          # The shared plane first, then each organisation's own database:
+          # the registry of which database is whose is in the shared plane.
+          command:
+            - sh
+            - -c
+            - alembic upgrade head && python -m app.db.sql.tenant_migrations
+          envFrom:
+            - configMapRef:
+                name: {{ include "igni.fullname" . }}-migrate-env
+            {{- if .Values.secrets.existingSecret }}
+            {{/*
+            An existing Secret already exists when the hook runs, so the
+            job can read it directly. `optional` because a deployment
+            authenticating to Postgres some other way — IAM, a client
+            certificate — has no POSTGRES_PASSWORD key at all, and a
+            missing key otherwise fails the pod at startup.
+            */}}
+            - secretRef:
+                name: {{ .Values.secrets.existingSecret }}
+                optional: true
+            {{- else }}
+            - secretRef:
+                name: {{ include "igni.fullname" . }}-migrate-env
+                optional: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

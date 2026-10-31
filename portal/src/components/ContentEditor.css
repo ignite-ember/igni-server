@@ -1,0 +1,51 @@
+.content-editor {
+  width: 100%;
+}
+
+/* The editor's own height when inline. Expanded, the frame takes what
+ * the fixed container leaves after the bar. */
+.content-editor-frame {
+  height: 380px;
+  width: 100%;
+  overflow: hidden;
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+}
+
+.content-editor--expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  padding: var(--base-size-12, 12px);
+  gap: var(--base-size-8, 8px);
+  background-color: var(--bgColor-default);
+}
+
+.content-editor--expanded .content-editor-frame {
+  flex: 1;
+  height: auto;
+}
+
+.content-editor-bar {
+  width: 100%;
+}
+
+.content-editor-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--base-size-8, 8px);
+  width: 100%;
+  margin-bottom: var(--base-size-8, 8px);
+  padding: var(--base-size-20, 1.25rem) var(--base-size-12, 0.75rem);
+  border: var(--borderWidth-thick, 2px) dashed var(--borderColor-muted);
+  border-radius: var(--borderRadius-medium, 6px);
+  cursor: pointer;
+}
+
+.content-editor-drop--active {
+  background-color: var(--bgColor-inset, #f6f8fa);
+}

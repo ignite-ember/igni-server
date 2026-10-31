@@ -1,0 +1,33 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+shots/
+
+# Playwright output. 29 files were committed here, 16 of them failure
+# screenshots and traces from a red run — the debris of the one time the
+# e2e suite was run before CI started running it. Traces are large binaries
+# and screenshots render whatever data the run used, so neither belongs in
+# version control.
+test-results/
+playwright-report/

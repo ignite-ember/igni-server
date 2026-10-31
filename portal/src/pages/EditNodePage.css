@@ -1,0 +1,27 @@
+/*
+ * The node form.
+ *
+ * Every value here is a Primer primitive rather than a number somebody
+ * picked: `--breakpoint-medium` for the column, the functional colour
+ * roles for text. The fallbacks exist for the case where the primitives
+ * stylesheet has not loaded — they are the token's own published value,
+ * not a second opinion about it.
+ */
+
+/* A form column, not a page. `--breakpoint-medium` (48rem) is the point
+ * Primer itself treats as the boundary of a single readable column, so a
+ * label and its caption stay adjacent instead of stretching across a
+ * wide monitor. Sibling pages hardcode 720 and 800; this is the same
+ * intent said in the design system's own vocabulary.
+ */
+.node-form {
+  max-width: var(--breakpoint-medium, 48rem);
+}
+
+.node-form-muted {
+  color: var(--fgColor-muted);
+}
+
+.node-form-heading {
+  color: var(--fgColor-default);
+}

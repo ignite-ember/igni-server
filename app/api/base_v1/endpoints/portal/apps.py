@@ -1,0 +1,92 @@
+"""An organisation's apps — the producers that are not people.
+
+Org admin only, in the organisation the portal is acting in. An app is
+registered with a name, an owner and its public keys, gets tokens as
+itself (`client_credentials`, `private_key_jwt`), is in no group, and has
+its own list of extensions, off until switched on here
+(`docs/service-identity.md` §11).
+"""
+
+from fastapi import APIRouter, Depends, Request, Response, status
+
+from app.api.base_v1.schema.portal.apps import (
+    OrgAppList,
+    OrgAppResponse,
+    RegisterAppRequest,
+    ReplaceAppKeysRequest,
+    UpdateAppRequest,
+)
+from app.api.base_v1.schema.portal.groups import GroupExtensionList, SetGroupExtension
+from app.api.base_v1.schema.portal.user import PortalUser
+from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.security.portal_auth import require_admin
+from app.services.portal.apps import OrgApps
+
+router = APIRouter()
+
+
+@router.get('/apps', response_model=OrgAppList)
+async def list_apps(current_user: PortalUser = Depends(require_admin)) -> OrgAppList:
+    return await OrgApps().list(current_user.org_id)
+
+
+@router.post('/apps', response_model=OrgAppResponse, status_code=status.HTTP_201_CREATED)
+async def register_app(
+    request: Request, body: RegisterAppRequest, current_user: PortalUser = Depends(require_admin)
+) -> OrgAppResponse:
+    app = await OrgApps().register(current_user.org_id, body, by_user_id=current_user.user_id)
+    set_audit_target(request, target_type='app', target_id=app.app_id)
+    set_audit_detail(request, {'app': app.name, 'thumbprint': app.thumbprint})
+    return app
+
+
+@router.get('/apps/{app_id}', response_model=OrgAppResponse)
+async def get_app(app_id: str, current_user: PortalUser = Depends(require_admin)) -> OrgAppResponse:
+    return await OrgApps().get(current_user.org_id, app_id)
+
+
+@router.patch('/apps/{app_id}', response_model=OrgAppResponse)
+async def update_app(
+    request: Request, app_id: str, body: UpdateAppRequest, current_user: PortalUser = Depends(require_admin)
+) -> OrgAppResponse:
+    set_audit_target(request, target_type='app', target_id=app_id)
+    return await OrgApps().update(current_user.org_id, app_id, body)
+
+
+@router.put('/apps/{app_id}/keys', response_model=OrgAppResponse)
+async def replace_app_keys(
+    request: Request, app_id: str, body: ReplaceAppKeysRequest, current_user: PortalUser = Depends(require_admin)
+) -> OrgAppResponse:
+    app = await OrgApps().replace_keys(current_user.org_id, app_id, body)
+    set_audit_target(request, target_type='app', target_id=app_id)
+    set_audit_detail(request, {'thumbprint': app.thumbprint})
+    return app
+
+
+@router.delete('/apps/{app_id}', status_code=status.HTTP_204_NO_CONTENT)
+async def remove_app(request: Request, app_id: str, current_user: PortalUser = Depends(require_admin)) -> Response:
+    await OrgApps().remove(current_user.org_id, app_id)
+    set_audit_target(request, target_type='app', target_id=app_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/apps/{app_id}/extensions', response_model=GroupExtensionList)
+async def list_app_extensions(app_id: str, current_user: PortalUser = Depends(require_admin)) -> GroupExtensionList:
+    """Every approved extension, with whether this app has it on."""
+    return await OrgApps().extensions(current_user.org_id, app_id)
+
+
+@router.put('/apps/{app_id}/extensions/{extension_id}', status_code=status.HTTP_204_NO_CONTENT)
+async def set_app_extension(
+    request: Request,
+    app_id: str,
+    extension_id: str,
+    body: SetGroupExtension,
+    current_user: PortalUser = Depends(require_admin),
+) -> Response:
+    await OrgApps().set_extension(
+        current_user.org_id, app_id, extension_id, body.enabled, by_user_id=current_user.user_id
+    )
+    set_audit_target(request, target_type='app', target_id=app_id)
+    set_audit_detail(request, {'extension': extension_id, 'enabled': body.enabled})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

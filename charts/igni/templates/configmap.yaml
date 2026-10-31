@@ -1,0 +1,80 @@
+{{- include "igni.validate" . -}}
+{{/*
+Every non-secret setting, in one ConfigMap consumed by the API, the
+the migration job through `envFrom`. One source rather
+than four lists: the four workloads read the same configuration, and a
+setting that reaches three of them is a bug that only shows up in the
+fourth.
+
+The names here are the names in `dist.env`, deliberately — that file is
+the operator-facing contract, and a test asserts every key in it has a
+home in this chart.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "igni.configMapName" . }}
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  APP_ENV: {{ .Values.appEnv | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+  LOG_FORMAT: {{ .Values.logFormat | quote }}
+
+  POSTGRES_HOST: {{ .Values.postgres.host | quote }}
+  POSTGRES_PORT: {{ .Values.postgres.port | quote }}
+  POSTGRES_USER: {{ .Values.postgres.user | quote }}
+  POSTGRES_DB: {{ .Values.postgres.database | quote }}
+  DB_POOL_SIZE: {{ .Values.postgres.poolSize | quote }}
+  DB_MAX_OVERFLOW: {{ .Values.postgres.maxOverflow | quote }}
+  DB_POOL_TIMEOUT: {{ .Values.postgres.poolTimeout | quote }}
+
+  REDIS_HOST: {{ .Values.redis.host | quote }}
+  REDIS_PORT: {{ .Values.redis.port | quote }}
+  REDIS_DB: {{ .Values.redis.db | quote }}
+
+  PUBLIC_BASE_URL: {{ include "igni.publicBaseUrl" . | quote }}
+  PORTAL_BASE_URL: {{ .Values.urls.portalBase | quote }}
+  OAUTH_REDIRECT_BASE_URL: {{ .Values.urls.oauthRedirectBase | quote }}
+  OAUTH_FRONTEND_BASE_URL: {{ .Values.urls.oauthFrontendBase | quote }}
+
+  EMAIL_ENABLED: {{ .Values.email.enabled | quote }}
+  EMAIL_CODES_HOURLY_LIMIT: {{ .Values.email.codesHourlyLimit | quote }}
+  EMAIL_BACKEND: {{ .Values.email.backend | quote }}
+  SMTP_HOST: {{ .Values.email.smtpHost | quote }}
+  SMTP_PORT: {{ .Values.email.smtpPort | quote }}
+  SMTP_TLS_MODE: {{ .Values.email.smtpTlsMode | quote }}
+  SMTP_USERNAME: {{ .Values.email.smtpUsername | quote }}
+  EMAIL_FROM_ADDRESS: {{ .Values.email.fromAddress | quote }}
+  EMAIL_FROM_NAME: {{ .Values.email.fromName | quote }}
+  SES_REGION: {{ .Values.email.sesRegion | quote }}
+  LOG_SIGN_IN_CODES: {{ .Values.email.logSignInCodes | quote }}
+
+  AUDIT_RETENTION_DAYS: {{ .Values.retention.auditDays | quote }}
+
+  {{/*
+  The in-cluster default rather than the compose one. `mcp_gateway:7778`
+  is a compose service name and resolves to nothing in Kubernetes, so a
+  deployment that left this alone would have failed at first use rather
+  than at install.
+  */}}
+  MCP_GATEWAY_URL: {{ .Values.mcpGatewayUrl | default (printf "http://%s-mcp-gateway:7778" (include "igni.fullname" .)) | quote }}
+  AI__UPSTREAM_TIMEOUT: {{ .Values.ai.upstreamTimeout | quote }}
+
+  OIDC_ISSUER: {{ .Values.sso.issuer | quote }}
+  OIDC_CLIENT_ID: {{ .Values.sso.clientId | quote }}
+  OIDC_DISPLAY_NAME: {{ .Values.sso.displayName | quote }}
+  OIDC_EMAIL_CLAIM: {{ .Values.sso.emailClaim | quote }}
+  OIDC_LINK_BY_EMAIL: {{ .Values.sso.linkByEmail | quote }}
+
+  {{- /*
+  `toJson` rather than `quote`: the setting is a list, and
+  `OAUTH_PROVIDERS=google` is a startup crash rather than a
+  one-element list.
+  */}}
+  OAUTH_PROVIDERS: {{ .Values.socialSignIn.providers | toJson | quote }}
+  OAUTH_GOOGLE_CLIENT_ID: {{ .Values.socialSignIn.googleClientId | quote }}

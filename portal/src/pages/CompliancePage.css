@@ -1,0 +1,82 @@
+/* Four admin tools that had no interface. See CompliancePage.tsx. */
+
+/* Three of the four tabs are tables that can be wider than the viewport.
+   The scroll stays inside the table so the filters, the pagination and
+   the page chrome remain anchored — the same reasoning as
+   `.events-table`, and the reason this is not `overflow-x` on the page. */
+.compliance-table-scroll {
+  overflow-x: auto;
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+}
+
+.compliance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-size-small, 12px);
+}
+
+.compliance-table th {
+  text-align: left;
+  padding: var(--base-size-8, 8px) var(--base-size-12, 12px);
+  background-color: var(--bgColor-muted);
+  border-bottom: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  font-weight: var(--base-text-weight-semibold, 600);
+  white-space: nowrap;
+}
+
+.compliance-table td {
+  padding: var(--base-size-8, 8px) var(--base-size-12, 12px);
+  border-bottom: var(--borderWidth-thin, 1px) solid var(--borderColor-muted);
+  vertical-align: top;
+}
+
+.compliance-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.compliance-mono {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+}
+
+.compliance-nowrap {
+  white-space: nowrap;
+}
+
+/* An id, and clickable. Monospace because it is an identifier somebody
+   may still want to read character by character, and the padding is
+   stripped so it sits on the table's baseline rather than inflating the
+   row it is in. */
+.compliance-target-id {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  padding-inline: var(--base-size-4, 4px);
+}
+
+.compliance-muted {
+  color: var(--fgColor-muted);
+}
+
+/* Above each tab: what the thing is for, and what a boring answer looks
+   like. These tools are used rarely and under pressure, which is exactly
+   when nobody reads the documentation. */
+.compliance-hint {
+  color: var(--fgColor-muted);
+  max-width: 68ch;
+}
+
+/* The subject access report, shown whole. Monospace because it is JSON a
+   customer may hand to a regulator, and wrapping it would make the
+   structure unreadable. */
+.compliance-report {
+  width: 100%;
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  font-size: var(--text-body-size-small, 12px);
+  white-space: pre;
+  overflow: auto;
+}
+
+@media (max-width: 767px) {
+  .compliance-table {
+    font-size: var(--text-caption-size, 0.75rem);
+  }
+}

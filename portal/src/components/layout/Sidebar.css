@@ -1,0 +1,123 @@
+.sidebar-root {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Combined org + user identity card ─────────────────────────────── */
+
+.sidebar-identity {
+  margin: 8px;
+  border: 1px solid var(--borderColor-default, var(--color-border-default, #d1d9e0));
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.sidebar-org-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  margin: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--fgColor-default, var(--color-fg-default, #1f2328));
+  text-align: left;
+}
+
+.sidebar-org-section:hover {
+  background: var(--bgColor-neutral-muted, var(--color-neutral-muted, rgba(175, 184, 193, 0.2)));
+}
+
+.sidebar-org-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--bgColor-accent-muted, var(--color-accent-subtle, #ddf4ff));
+  color: var(--fgColor-accent, var(--color-accent-fg, #0969da));
+  flex-shrink: 0;
+}
+
+.sidebar-org-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.sidebar-org-name {
+  display: block;
+  font-size: var(--text-body-size-small, 13px);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-org-role {
+  display: block;
+  font-size: 11px;
+  color: var(--fgColor-muted, var(--color-fg-muted, #656d76));
+  text-transform: capitalize;
+}
+
+.sidebar-identity-divider {
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--borderColor-default, var(--color-border-default, #d1d9e0));
+}
+
+.sidebar-user-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  margin: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--fgColor-default, var(--color-fg-default, #1f2328));
+  text-align: left;
+}
+
+.sidebar-user-section:hover {
+  background: var(--bgColor-neutral-muted, var(--color-neutral-muted, rgba(175, 184, 193, 0.2)));
+}
+
+.sidebar-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bgColor-success-muted, var(--color-success-subtle, #dafbe1));
+  color: var(--fgColor-success, var(--color-success-fg, #1a7f37));
+  font-weight: 600;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.sidebar-user-name {
+  font-size: var(--text-body-size-small, 13px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+/* ─── Create org dialog ─────────────────────────────────────────────── */
+
+.create-org-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 0;
+}

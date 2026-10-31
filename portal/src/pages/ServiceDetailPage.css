@@ -1,0 +1,86 @@
+/* One registered service and its extension, laid out for a super admin
+ * deciding whether to approve it.
+ *
+ * Every value is a Primer primitive (see src/test/primitives.test.ts).
+ */
+
+.service-section {
+  padding: var(--base-size-16, 1rem);
+}
+
+/* A heading in the document outline, at body size: the parts of a
+ * section are lists, not sections of their own. */
+.service-part-heading {
+  margin: 0;
+}
+
+/* Term on the left, value on the right; the value column takes the
+ * rest and wraps, because descriptions and digests are long. */
+.service-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--base-size-8, 0.5rem) var(--base-size-16, 1rem);
+  margin: 0;
+}
+
+.service-facts dt {
+  color: var(--fgColor-muted);
+  font-size: var(--text-body-size-small, 0.75rem);
+  line-height: var(--text-body-lineHeight-medium, 1.4285);
+}
+
+.service-facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.service-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8, 0.5rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.service-code {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  font-size: var(--text-body-size-small, 0.75rem);
+  overflow-wrap: anywhere;
+}
+
+/* An agent standing in for one of igni's own is the line a super admin
+ * most needs not to skim past. */
+.service-replaces {
+  padding-left: var(--base-size-8, 0.5rem);
+  border-left: var(--borderWidth-thick, 2px) solid var(--borderColor-attention-emphasis);
+}
+
+.service-manifest summary {
+  cursor: pointer;
+  color: var(--fgColor-accent);
+}
+
+.service-manifest pre {
+  margin: var(--base-size-8, 0.5rem) 0 0;
+  padding: var(--base-size-12, 0.75rem);
+  overflow-x: auto;
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  font-size: var(--text-body-size-small, 0.75rem);
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-default);
+  color: var(--fgColor-default);
+}
+
+@media (max-width: 34rem) {
+  .service-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--base-size-4, 0.25rem);
+  }
+
+  .service-facts dd {
+    margin-bottom: var(--base-size-8, 0.5rem);
+  }
+}

@@ -1,0 +1,121 @@
+# TLS terminator for the single-instance deployment. Used only under the
+# `tls` profile of docker-compose.prod.yml.
+#
+# Certificates are obtained and renewed automatically, which needs the DNS
+# record pointing at this host and port 80 reachable before the first
+# start. There is no HTTP fallback: Caddy redirects 80 to 443 itself.
+#
+# `email` sits here, in the global options block, and not in the site
+# block below. It is a global-only directive, and with it inside the
+# site block `caddy validate` rejects the whole file — "unrecognized
+# directive: email" — which means the container exits on start and the
+# only TLS path this product ships never came up. It was written that
+# way from the beginning and nothing validated it. `make check-configs`
+# does now. F140.
+{
+	email {$IGNI_ACME_EMAIL}
+}
+
+{$IGNI_DOMAIN} {
+
+	# The API. The CLI talks here directly, so it is routed on its own
+	# rather than through the portal's nginx —
+	# which would add a hop and a second body-size limit to keep in
+	# agreement with the API's own 32 MB.
+	handle /v1/* {
+		reverse_proxy igni_api:7777 {
+			# Forwarded for the audit trail, not for URL construction.
+			#
+			# This comment used to say the API "decides `secure` on
+			# cookies and builds absolute links from these". Neither is
+			# true: the app sets no cookies at all — deliberately, see
+			# `db/redis/auth_handoff.py` — and every absolute URL comes
+			# from explicit configuration (`PORTAL_BASE_URL`,
+			# `OAUTH_REDIRECT_BASE_URL`) rather than from the request.
+			# So a missing header cannot
+			# break an OAuth callback here.
+			#
+			# `X-Forwarded-For` does matter: `audit_events.forwarded_for`
+			# records where a privileged action came from, and without
+			# it every entry reads as this container's address. Note
+			# uvicorn only trusts these from `--forwarded-allow-ips`,
+			# which defaults to 127.0.0.1 — Caddy reaches the API from
+			# the docker network, so the API sees its own view unless
+			# that is widened. B2, F140.
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-For {remote_host}
+			header_up Host {host}
+		}
+	}
+
+	# The server's public signing keys and OpenID metadata. Services fetch
+	# them from PUBLIC_BASE_URL — this domain — so they must reach the
+	# API; under the catch-all below they would get the portal's index
+	# page. See docs/service-identity.md.
+	handle /.well-known/* {
+		reverse_proxy igni_api:7777 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-For {remote_host}
+			header_up Host {host}
+		}
+	}
+
+	# Nothing here routes to another service. Artifacts, CodeIndex and
+	# every later service is served on its own domain — its own site
+	# block, `artifacts.example.com { reverse_proxy ... }`, never a
+	# `handle /v1/<service>/*` here. A service's URL is its identity: the
+	# audience of the tokens people get for it, and where igni calls it
+	# to erase or export a person's data (docs/service-identity.md).
+
+	# Everything else is the portal.
+	handle {
+		reverse_proxy portal:3000 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-For {remote_host}
+			header_up Host {host}
+		}
+	}
+
+	# `/docs`, `/redoc` and `/openapi.json` are deliberately absent. The
+	# API serves them to anything on the docker network; publishing your
+	# API documentation is a separate decision from deploying the product.
+
+	# 32 MB, matching the API's own limit and the portal's nginx. Three
+	# places, and they have disagreed before: nginx's default of 1 MB
+	# silently refused bodies the API would have accepted.
+	#
+	# One route is larger: a service uploading the extension it ships
+	# (`PUT /v1/clients/{client_id}/extension`), whose bundle carries a
+	# wheelhouse for three platforms. The API allows 400 MiB there and
+	# nowhere else. The two matchers are each other's opposite on purpose:
+	# both `request_body` handlers would otherwise run on the upload, and
+	# the smaller limit would win.
+	@extension_upload path_regexp ^/v1/clients/[^/]+/extension$
+	@not_extension_upload not path_regexp ^/v1/clients/[^/]+/extension$
+	request_body @extension_upload {
+		max_size 400MiB
+	}
+	request_body @not_extension_upload {
+		max_size 32MB
+	}
+
+	# HSTS. Absent until B2's audit of DP-4 asked what this profile
+	# actually enforces: it redirects 80 to 443, which stops a *later*
+	# plaintext request and does nothing about the first one.
+	#
+	# 180 days, and deliberately without `includeSubDomains` or
+	# `preload`. Both are commitments a customer's DNS may not be able
+	# to keep — a subdomain serving plain HTTP would become unreachable
+	# — and neither is ours to make on their domain. An operator who
+	# wants them edits one line.
+	header {
+		Strict-Transport-Security "max-age=15552000"
+	}
+
+	encode gzip
+
+	log {
+		output stdout
+		format console
+	}
+}

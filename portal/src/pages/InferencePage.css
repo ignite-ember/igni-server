@@ -1,0 +1,192 @@
+/* Inference page.
+ *
+ * Deliberately small. The bars are Primer's ProgressBar, the disclosure
+ * is Primer's Details, the model chips are Token and the status dot is an
+ * Octicon — so what is left here is only what a design system has no
+ * opinion about: how the summary row's columns line up, and the two grids
+ * inside the expanded panel.
+ *
+ * Every length is a Primer token. An earlier version invented its own
+ * scale — 12px here, 44px there, 5.5rem for a column — which is most of
+ * why the page looked unrelated to the rest of the portal.
+ */
+
+/* A write that did not land. Danger rather than muted: the point is
+   that what you see is not what the deployment is doing. */
+.inference-error {
+  color: var(--fgColor-danger, #cf222e);
+}
+
+.inference-muted {
+  color: var(--fgColor-muted);
+}
+
+/* Counts and addresses. Tabular figures stop "8/64" jittering as the
+   number changes under the ten-second refresh. */
+.inference-numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.inference-pool-totals {
+  margin-left: auto;
+}
+
+/* ── The node list ────────────────────────────────────────────────── */
+
+.inference-nodes {
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  overflow: hidden;
+}
+
+.inference-node + .inference-node {
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+
+.inference-node-summary {
+  display: grid;
+  /* Identity takes the slack; the numbers sit in fixed tracks on the
+     right so they line up down the list.
+
+     Each row is its own grid container — they are separate <summary>
+     elements — so content-sized tracks resolve against that row's own
+     content and the columns visibly stepped in and out down the page.
+     Fixed tracks on the right resolve identically everywhere, and the
+     1fr on identity fills the middle instead of leaving a canyon
+     between the name and the numbers. */
+  /* Identity, then what is happening, then what it is for. Every track
+     but the last is a fixed width: each row is its own grid container,
+     so content-sized tracks resolve against that row's own content and
+     the columns step in and out down the page. */
+  grid-template-columns:
+    var(--base-size-16)  /* caret */
+    var(--base-size-16)  /* dot   */
+    10rem                /* name  */
+    5.5rem               /* queue */
+    9rem                 /* load  */
+    minmax(0, 1fr);      /* pools */
+  align-items: center;
+  gap: var(--stack-gap-condensed);
+  padding: var(--base-size-8) var(--stack-padding-normal);
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Replaced by our own caret, so it can sit in the grid with the rest. */
+.inference-node-summary::-webkit-details-marker {
+  display: none;
+}
+
+.inference-node-summary:hover {
+  background-color: var(--bgColor-muted);
+}
+
+.inference-node-caret {
+  display: flex;
+  color: var(--fgColor-muted);
+  transition: transform 0.15s ease;
+}
+
+.inference-node[open] .inference-node-caret {
+  transform: rotate(90deg);
+}
+
+.inference-dot--ok {
+  color: var(--fgColor-success);
+}
+
+.inference-dot--warn {
+  color: var(--fgColor-attention);
+}
+
+.inference-dot--bad {
+  color: var(--fgColor-danger);
+}
+
+.inference-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pushed to the right edge, but as a fixed block with its text starting
+   at the left of it — so the pools begin at the same x on every row
+   instead of ending at the same x, which is what makes a column
+   readable down the page. */
+.inference-node-pools {
+  white-space: nowrap;
+  width: 11rem;
+  margin-left: auto;
+}
+
+/* Fixed widths so the bars line up down the list and can be compared
+   without reading a single number — the only reason to put a bar in a
+   dense row at all. The queue keeps its width whether or not it has
+   anything in it, so its presence never shifts the bar beside it. */
+.inference-node-queue {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inference-node-load {
+  display: flex;
+  align-items: center;
+  gap: var(--stack-gap-condensed);
+}
+
+.inference-node-load > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.inference-node-percent {
+  flex: 0 0 auto;
+  text-align: right;
+  min-width: var(--base-size-32);
+}
+
+/* ── The expanded panel ───────────────────────────────────────────── */
+
+.inference-node-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--stack-gap-normal);
+  padding: var(--stack-padding-condensed) var(--stack-padding-normal) var(--stack-padding-normal)
+    var(--base-size-40);
+  background-color: var(--bgColor-muted);
+  border-top: var(--borderWidth-thin) solid var(--borderColor-muted);
+}
+
+/* Bars across the top: two columns where there is room, one when not. */
+.inference-gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--stack-gap-normal) var(--stack-gap-spacious);
+  width: 100%;
+}
+
+.inference-facts {
+  display: grid;
+  grid-template-columns: minmax(var(--base-size-96), max-content) minmax(0, 1fr);
+  gap: var(--base-size-4) var(--stack-gap-normal);
+  margin: 0;
+  width: 100%;
+}
+
+.inference-fact-value {
+  margin: 0;
+  min-width: 0;
+}
+
+/* The address field shares its row with the Check button. */
+.inference-url-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ── Stat cards ───────────────────────────────────────────────────
+   The same recipe the dashboard uses for its numbers, so the page reads
+   as part of the portal rather than as something bolted on. */
+

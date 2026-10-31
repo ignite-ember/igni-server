@@ -1,0 +1,125 @@
+{{- if .Values.backup.enabled }}
+{{- include "igni.validate" . -}}
+{{/*
+Nightly `pg_dump`, verified, into a PersistentVolumeClaim you supply:
+one run directory per night (`igni-<UTC stamp>/`) holding an archive of
+the shared plane, one archive per organisation's own database (every row
+of `tenants`, detached ones included; never the tenant template) and a
+MANIFEST. The run counts only if every archive verified.
+
+The same script the compose stack runs, invoked with `once` instead of
+looping — `files/backup.sh`, a byte-identical copy of
+`containers/backup.sh` with a test comparing them. Helm cannot read files
+outside a chart directory, so the copy is unavoidable; the drift is not.
+
+Two decisions worth stating.
+
+**Postgres's own image, not ours.** `pg_dump` has to be at least the
+server's version, and pinning it to the database rather than to the
+application means an upgrade of Postgres does not silently leave a
+`pg_dump` behind that refuses to run.
+
+**No storage is created here.** `backup.existingClaim` is required,
+because a chart that quietly provisions a volume in whatever the default
+StorageClass happens to be is a chart that writes your backups onto the
+same disk as your database in some clusters and onto network storage in
+others — and you would not know which until you needed one.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "igni.fullname" . }}-backup
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  # UTC, always. A schedule that follows the node's timezone runs twice on
+  # one day a year and not at all on another.
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  # A missed run is worth seeing. Kubernetes keeps the last few so
+  # `kubectl get jobs` shows whether last night worked.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # If the controller was down, do not start a dump hours late into the
+  # middle of a working day.
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "igni.labels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+        spec:
+          # Off for the reason api-deployment.yaml spells out: a
+          # Service named `redis` here sets `REDIS_PORT=tcp://...`,
+          # which the settings model refuses.
+          enableServiceLinks: false
+          restartPolicy: Never
+          serviceAccountName: {{ include "igni.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            # The Postgres image's own postgres user. `fsGroup` is what
+            # makes the volume writable by it.
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+          containers:
+            - name: backup
+              image: {{ .Values.backup.image | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              command: ['/bin/sh', '/scripts/backup.sh', 'once']
+              envFrom:
+                - configMapRef:
+                    name: {{ include "igni.configMapName" . }}
+                - secretRef:
+                    name: {{ include "igni.secretName" . }}
+              env:
+                - name: IGNI_BACKUP_DIR
+                  value: /backups
+                - name: IGNI_BACKUP_RETAIN_DAYS
+                  value: {{ .Values.backup.retainDays | quote }}
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+                # The read-only root filesystem again: the script writes
+                # each archive's table of contents, and the list of
+                # organisations it reads from `tenants`, to /tmp.
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: scripts
+              configMap:
+                name: {{ include "igni.fullname" . }}-backup-script
+                defaultMode: 0555
+            - name: backups
+              persistentVolumeClaim:
+                claimName: {{ required "backup.existingClaim is required when backup.enabled is true. Create the PVC yourself: a chart that provisions one in the default StorageClass may put your backups on the same disk as your database." .Values.backup.existingClaim }}
+            - name: tmp
+              emptyDir: {}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "igni.fullname" . }}-backup-script
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+data:
+  backup.sh: |
+{{ .Files.Get "files/backup.sh" | indent 4 }}
+{{- end }}

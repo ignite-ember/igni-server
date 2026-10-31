@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+#
+# Build igni's signed offline release bundle: one tarball per release that
+# an air-gapped customer verifies with `igni-import` and imports into their
+# own registry on their own schedule. docs/OFFLINE_UPDATES.md is the
+# customer's half of this.
+#
+# Two steps, because only the first needs a network:
+#
+#   igni-bundle export-image --staging DIR --name NAME \
+#       --repository REPO --source-tag TAG --tag TAG [--cosign-key KEY]
+#
+#     Copies one image from REPO:SOURCE-TAG (in CD, a release tag of
+#     ghcr.io/ignite-ember/NAME) into DIR/images/NAME/ in
+#     skopeo's `dir:` layout, by digest, together with its cosign signature
+#     and attestations, and records `NAME<TAB>TAG<TAB>DIGEST` in DIR/images.tsv.
+#     `dir:` rather than `docker save` or `oci-archive:` because it stores
+#     the manifest byte for byte: the digest the customer's registry ends
+#     up with is the digest that was signed, so the cosign signature still
+#     verifies there. A docker-format manifest put through `docker save`
+#     or converted to OCI comes out with a different digest.
+#
+#     With --cosign-key, the image's signature is checked first and its
+#     CycloneDX attestation is written to DIR/sboms/NAME.cdx.json, so the
+#     SBOM in the bundle is the one that was signed, not a second scan.
+#
+#   igni-bundle seal --staging DIR --version V --key MINISIGN_SECRET_KEY \
+#       --out OUTDIR [--commit SHA] [--public-key MINISIGN_PUBLIC_KEY]
+#
+#     Offline. Adds igni-import, writes MANIFEST (sha256 of every file and
+#     the version), signs it with minisign, and writes
+#     OUTDIR/<basename of DIR>.tar plus a .sha256 beside it. The password
+#     for the secret key, if it has one, is read from MINISIGN_PASSWORD.
+#     With --public-key, the fresh signature is verified before the tarball
+#     is written, so a mismatched key pair fails here and not at a customer.
+#
+# Why minisign for the MANIFEST, when images are signed with cosign: it is
+# offline by construction (no transparency log to switch off, no flags
+# whose defaults change between releases), a single small binary packaged
+# by Debian, Ubuntu, Alpine, Fedora and EPEL, and the format the desktop
+# app's updater already uses. The signed "trusted comment" carries the
+# version, so a signed MANIFEST cannot be passed off as another release.
+set -euo pipefail
+
+readonly FORMAT=1
+here="$(cd "$(dirname "$0")" && pwd)"
+
+die() {
+    printf 'igni-bundle: %s\n' "$*" >&2
+    exit 1
+}
+
+need() {
+    command -v "$1" > /dev/null 2>&1 || die "'$1' is required and was not found on PATH"
+}
+
+sha256_of() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
+
+export_image() {
+    local staging='' name='' repository='' source_tag='' tag='' cosign_key=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --staging) staging="$2"; shift 2 ;;
+            --name) name="$2"; shift 2 ;;
+            --repository) repository="$2"; shift 2 ;;
+            --source-tag) source_tag="$2"; shift 2 ;;
+            --tag) tag="$2"; shift 2 ;;
+            --cosign-key) cosign_key="$2"; shift 2 ;;
+            *) die "export-image: unknown option '$1'" ;;
+        esac
+    done
+    [ -n "$staging" ] && [ -n "$name" ] && [ -n "$repository" ] && [ -n "$source_tag" ] && [ -n "$tag" ] \
+        || die 'export-image needs --staging, --name, --repository, --source-tag and --tag'
+    [[ "$name" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "image name '$name' is not a plain repository name"
+    [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "tag '$tag' is not a valid tag"
+    [ ! -e "$staging/images/$name" ] || die "$name is already in $staging"
+    need skopeo
+
+    local digest
+    digest="$(skopeo inspect --format '{{.Digest}}' "docker://$repository:$source_tag")"
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not resolve $repository:$source_tag to a digest"
+    local ref="$repository@$digest"
+
+    mkdir -p "$staging/images/$name" "$staging/sboms"
+    if [ -n "$cosign_key" ]; then
+        need cosign
+        need jq
+        # Key-based and offline-verifiable, as the customer will check it:
+        # no transparency log, because CD does not upload to one.
+        cosign verify --key "$cosign_key" --insecure-ignore-tlog=true "$ref" > /dev/null \
+            || die "$ref is not signed with the release key; refusing to bundle it"
+        cosign verify-attestation --key "$cosign_key" --insecure-ignore-tlog=true --type cyclonedx "$ref" \
+            | head -n 1 | jq -r '.payload' | base64 -d | jq '.predicate' > "$staging/sboms/$name.cdx.json" \
+            || die "$ref has no verifiable CycloneDX attestation"
+    fi
+
+    skopeo copy --all --preserve-digests "docker://$ref" "dir:$staging/images/$name/image"
+    local kind
+    for kind in sig att; do
+        if skopeo inspect --raw "docker://$repository:${digest/:/-}.$kind" > /dev/null 2>&1; then
+            skopeo copy --all --preserve-digests "docker://$repository:${digest/:/-}.$kind" \
+                "dir:$staging/images/$name/$kind"
+        elif [ -n "$cosign_key" ]; then
+            die "$ref has no .$kind artefact to carry into the bundle"
+        fi
+    done
+
+    printf '%s\t%s\t%s\n' "$name" "$tag" "$digest" >> "$staging/images.tsv"
+    printf 'exported %s:%s@%s\n' "$name" "$tag" "$digest"
+}
+
+seal() {
+    local staging='' version='' key='' out='' commit='' public_key=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --staging) staging="$2"; shift 2 ;;
+            --version) version="$2"; shift 2 ;;
+            --key) key="$2"; shift 2 ;;
+            --out) out="$2"; shift 2 ;;
+            --commit) commit="$2"; shift 2 ;;
+            --public-key) public_key="$2"; shift 2 ;;
+            *) die "seal: unknown option '$1'" ;;
+        esac
+    done
+    [ -n "$staging" ] && [ -n "$version" ] && [ -n "$key" ] && [ -n "$out" ] \
+        || die 'seal needs --staging, --version, --key and --out'
+    [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "'$version' is not a version"
+    [ -d "$staging" ] || die "no staging directory at $staging"
+    [ -f "$key" ] || die "no signing key at $key"
+    [ -f "$staging/images.tsv" ] || die 'the staging directory has no images.tsv'
+    [ -s "$staging/images.tsv" ] || die 'images.tsv is empty: a bundle with no images is not a release'
+    need minisign
+
+    staging="$(cd "$staging" && pwd)"
+    local bundle_name
+    bundle_name="$(basename "$staging")"
+    [[ "$bundle_name" =~ ^[A-Za-z0-9._-]+$ ]] || die "staging directory name '$bundle_name' is not a plain name"
+
+    # The importer checks every images.tsv line the same way; finding a bad one
+    # here is cheaper than a customer finding it.
+    local line tab=$'\t'
+    local image_line="^[a-z0-9][a-z0-9._-]*${tab}[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}${tab}sha256:[0-9a-f]{64}\$"
+    while IFS= read -r line; do
+        [[ "$line" =~ $image_line ]] \
+            || die "malformed images.tsv line: $line"
+        [ -f "$staging/images/${line%%$'\t'*}/image/manifest.json" ] \
+            || die "images.tsv names ${line%%$'\t'*} but there is no image for it"
+    done < "$staging/images.tsv"
+
+    if [ -n "$(find "$staging" ! -type f ! -type d -print -quit)" ]; then
+        die 'the staging directory holds links or special files; a bundle holds only files'
+    fi
+    rm -f "$staging/MANIFEST" "$staging/MANIFEST.minisig"
+    install -m 0755 "$here/igni-import" "$staging/igni-import"
+
+    local manifest="$staging/MANIFEST" path
+    {
+        printf '# igni-bundle-manifest: %s\n' "$FORMAT"
+        printf '# version: %s\n' "$version"
+        printf '# commit: %s\n' "${commit:-unknown}"
+        printf '# created: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        while IFS= read -r path; do
+            [[ "$path" =~ ^[A-Za-z0-9._+/-]+$ ]] || die "file name '$path' is outside the set a MANIFEST may name"
+            printf '%s  %s\n' "$(sha256_of "$staging/$path")" "$path"
+        done < <(cd "$staging" && find . -type f ! -path ./MANIFEST ! -path ./MANIFEST.minisig | sed 's#^\./##' | LC_ALL=C sort)
+    } > "$manifest"
+
+    printf '%s\n' "${MINISIGN_PASSWORD-}" \
+        | minisign -S -s "$key" -m "$manifest" -x "$staging/MANIFEST.minisig" \
+            -t "igni-bundle format=$FORMAT version=$version" > /dev/null \
+        || die 'minisign could not sign the MANIFEST'
+
+    if [ -n "$public_key" ]; then
+        minisign -V -q -p "$public_key" -m "$manifest" -x "$staging/MANIFEST.minisig" \
+            || die 'the new signature does not verify with --public-key; the key pair does not match'
+    fi
+
+    mkdir -p "$out"
+    local tarball
+    tarball="$(cd "$out" && pwd)/$bundle_name.tar"
+    # COPYFILE_DISABLE: macOS's tar otherwise adds a hidden `._name` entry
+    # for every file with extended attributes, which GNU tar on the
+    # customer's host unpacks as files the MANIFEST does not list.
+    COPYFILE_DISABLE=1 tar -cf "$tarball" -C "$(dirname "$staging")" "$bundle_name"
+    (cd "$(dirname "$tarball")" && printf '%s  %s\n' "$(sha256_of "$tarball")" "$(basename "$tarball")" > "$tarball.sha256")
+    printf '%s\n' "$tarball"
+}
+
+case "${1:-}" in
+    export-image) shift; export_image "$@" ;;
+    seal) shift; seal "$@" ;;
+    *) die 'usage: igni-bundle export-image ... | igni-bundle seal ... (see the header of this file)' ;;
+esac

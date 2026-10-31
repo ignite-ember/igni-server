@@ -1,0 +1,57 @@
+/* Services: registered clients and a super admin's decision on each.
+ *
+ * Every value is a Primer primitive (see src/test/primitives.test.ts).
+ */
+
+/* Padding comes from the Stack's own `padding` prop: Primer's Stack
+ * sets its padding itself and won over a rule here. */
+
+/* A registration waiting for a decision is the thing to act on. */
+.services-card-pending {
+  border-color: var(--borderColor-attention-emphasis);
+}
+
+/* The thumbprint is compared character by character against the
+ * service's log, so it is large, monospaced, wrapped anywhere rather
+ * than truncated, and selects as one piece. */
+.services-thumbprint {
+  display: block;
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  font-size: var(--text-body-size-large, 1rem);
+  line-height: var(--text-body-lineHeight-large, 1.5);
+  letter-spacing: 0.04em;
+  word-break: break-all;
+  user-select: all;
+  padding: var(--base-size-8, 0.5rem) var(--base-size-12, 0.75rem);
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-default);
+  color: var(--fgColor-default);
+}
+
+.services-detail {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+  font-size: var(--text-body-size-small, 0.75rem);
+  word-break: break-all;
+}
+
+/* The extension line on a card: an icon, then its name and what it says
+ * it does. The text may wrap; the icon stays at the top. */
+.services-extension {
+  flex: 1;
+  min-width: 0;
+}
+
+.services-extension-icon {
+  display: flex;
+  padding-top: var(--base-size-2, 0.125rem);
+  color: var(--fgColor-muted);
+}
+
+.services-priority {
+  margin: 0;
+  padding-left: var(--base-size-24);
+  display: flex;
+  flex-direction: column;
+  gap: var(--base-size-8);
+}

@@ -1,0 +1,46 @@
+/* Shared card idiom for settings-style surfaces.
+ *
+ * Lived in SettingsPage.css until the group page needed the same
+ * shape. Reaching across for another page's stylesheet works only for
+ * as long as both end up in one bundle, so the rules moved here and
+ * both pages import this.
+ */
+
+.settings-card {
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-muted);
+}
+
+/* Matches Primer's ``Table.Title``, deliberately.
+ *
+ * Sections headed with this class sit on the same pages as sections
+ * whose tables carry ``Table.Title``. While this used
+ * ``--text-title-size-medium`` (20px) against Table.Title's 14px, the
+ * two read as different components rather than sections of one page.
+ *
+ * Aligned to Table.Title rather than the reverse: it is Primer's own
+ * type scale, and it is required inside Table.Container for the
+ * aria-labelledby wiring. */
+.settings-section-heading {
+  font-size: var(--text-body-size-medium, 14px);
+  font-weight: var(--text-title-weight-medium, 600);
+  line-height: var(--text-body-lineHeight-medium, 1.4285);
+}
+
+.settings-section-caption {
+  color: var(--fgColor-muted);
+}
+
+/* The live "that tool does not exist" note under the entry editor.
+ * Attention rather than danger: the entry is still saveable, and the
+ * agent is still fine apart from this one name.
+ */
+.entry-tool-warning {
+  display: block;
+  padding: var(--base-size-8, 0.5rem) var(--base-size-12, 0.75rem);
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-attention-emphasis);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-attention-muted);
+  color: var(--fgColor-attention);
+}

@@ -1,0 +1,245 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- include "igni.validate" . -}}
+{{/*
+Deny-by-default, both directions, for every pod of this release — the
+API, the portal, the migrate hook Job and the backup CronJob — with one
+explicit policy per hole.
+
+Off by default, and read this before switching it on. In a cluster whose
+CNI does not enforce NetworkPolicy it does nothing at all while looking
+like a control — the worse of the two failure modes, because it is the
+one that gets written down as evidence. In a cluster that does enforce
+it, an empty `egress` list means the API can resolve DNS and reach
+nothing else, which is a working deployment of nothing.
+
+What is open, and to whom:
+
+  ingress  API     :7777  from the portal, the ingress controller
+                          (`ingressFrom`), Prometheus (`metricsFrom`) and
+                          any in-cluster service in `apiIngressFrom`
+  ingress  portal  :3000  from the ingress controller only
+  egress   all     :53    DNS (to `dns.to` if set, else anywhere)
+  egress   portal  :7777  to the API pods — its nginx proxies `/v1`
+  egress   api, migrate, backup
+                          each `egress` entry, on its own ports; and
+                          `egressCidrs`, on every port (kept for old values)
+
+The ingress controller is a required value rather than
+`namespaceSelector: {}`. "Every namespace" was what this chart used to
+allow, and it made the API ingress policy decoration in any cluster with
+more than one tenant.
+
+DNS is opened separately because every other rule depends on it, and a
+policy that forgets it fails in a way that looks like the database being
+down. It is not pinned to the cluster DNS by default: the label CoreDNS
+carries differs between distributions, and NodeLocal DNSCache answers on
+a link-local address no pod selector matches. Set `dns.to` if yours is
+known.
+
+The backup CronJob's storage is a PersistentVolumeClaim, which the node
+mounts — the pod itself needs only Postgres.
+
+The migrate Job is a pre-install/pre-upgrade hook and these are ordinary
+resources, so on an upgrade it runs under the *previous* release's
+policies. An upgrade that moves Postgres to a new address and adds its
+egress entry in the same step will fail the migration; add the entry
+first.
+*/}}
+{{- $np := .Values.networkPolicy }}
+{{- $fullname := include "igni.fullname" . }}
+{{- if not $np.ingressFrom.namespaceSelector }}
+{{- fail "networkPolicy.ingressFrom.namespaceSelector is required when networkPolicy.enabled is true: a label map naming the namespace your ingress controller runs in, e.g. {kubernetes.io/metadata.name: ingress-nginx}, optionally narrowed with networkPolicy.ingressFrom.podSelector. The API and portal accept traffic only from there (and the API from the portal). Without it the chart would have to allow every namespace, which is not a deny-by-default policy." }}
+{{- end }}
+{{- if and .Values.monitoring.serviceMonitor.enabled (not $np.metricsFrom.namespaceSelector) }}
+{{- fail "networkPolicy.metricsFrom.namespaceSelector is required when both networkPolicy.enabled and monitoring.serviceMonitor.enabled are true: a label map naming the namespace Prometheus runs in, e.g. {kubernetes.io/metadata.name: monitoring}. Without it the policy blocks the scrape and /metrics goes dark." }}
+{{- end }}
+{{- $components := list "api" "portal" "migrate" "backup" }}
+{{- $serverSide := list "api" "migrate" "backup" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-default-deny
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+spec:
+  # Every pod of this release, whatever it is. The policies below add
+  # holes; this one has none.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-dns
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      {{- with $np.dns.to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-api-ingress
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "igni.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "igni.selectorLabels" (dict "root" . "component" "portal") | nindent 14 }}
+        {{- include "igni.networkPolicyPeer" $np.ingressFrom | nindent 8 }}
+        {{- if $np.metricsFrom.namespaceSelector }}
+        {{- include "igni.networkPolicyPeer" $np.metricsFrom | nindent 8 }}
+        {{- end }}
+        {{- with $np.apiIngressFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: 7777
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-portal-ingress
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "igni.selectorLabels" (dict "root" . "component" "portal") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- include "igni.networkPolicyPeer" $np.ingressFrom | nindent 8 }}
+      ports:
+        - port: 3000
+          protocol: TCP
+---
+{{/* The portal's nginx proxies `/v1` to the API Service; nothing else. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-portal-egress
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "igni.selectorLabels" (dict "root" . "component" "portal") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "igni.selectorLabels" (dict "root" . "component" "api") | nindent 14 }}
+      ports:
+        - port: 7777
+          protocol: TCP
+{{- range $i, $entry := $np.egress }}
+{{- $where := printf "networkPolicy.egress[%d]" $i }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString (default "" $entry.name))) }}
+{{- fail (printf "%s.name is required and must be lowercase letters, digits and '-' (it names the NetworkPolicy), e.g. postgres" $where) }}
+{{- end }}
+{{- if not (or $entry.cidrs $entry.to) }}
+{{- fail (printf "networkPolicy.egress %q needs cidrs (or to: a list of NetworkPolicy peers). An entry with no destination opens nothing" $entry.name) }}
+{{- end }}
+{{- if not $entry.ports }}
+{{- fail (printf "networkPolicy.egress %q needs ports: [{port, protocol}]. Every port to a destination is what egressCidrs does, and the point of this list is not to" $entry.name) }}
+{{- end }}
+{{- $applies := default $serverSide $entry.components }}
+{{- range $applies }}
+{{- if not (has . $components) }}
+{{- fail (printf "networkPolicy.egress %q: unknown component %q; use any of api, portal, migrate, backup" $entry.name .) }}
+{{- end }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-egress-{{ $entry.name }}
+  labels:
+    {{- include "igni.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          {{- toYaml $applies | nindent 10 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range $entry.cidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+        {{- with $entry.to }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        {{- range $entry.ports }}
+        - port: {{ required (printf "networkPolicy.egress %q: every ports entry needs a port" $entry.name) .port }}
+          protocol: {{ default "TCP" .protocol }}
+        {{- end }}
+{{- end }}
+{{- with $np.egressCidrs }}
+---
+{{/*
+The old form: every port to each CIDR. Kept so an existing values file
+still renders; prefer `networkPolicy.egress`, which names ports.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-egress-cidrs
+  labels:
+    {{- include "igni.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          {{- toYaml $serverSide | nindent 10 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+{{- end }}
+{{- end }}

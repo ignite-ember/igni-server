@@ -1,0 +1,17 @@
+# Paid-module images that go into each offline release bundle, and which
+# version of each. Read by the `offline-bundle` job in .github/workflows/cd.yml.
+#
+# A pin, not "latest": a release is a reviewed set of versions, and bumping
+# one is a line in a pull request. Each image must already be on
+# ghcr.io/ignite-ember/<name> under that version tag — an unprefixed tag,
+# which only a module's `main` branch pushes — signed with the release
+# cosign key and carrying a CycloneDX attestation. Its own repository's CD
+# does that. The bundle job refuses any image that is not.
+#
+# Columns, separated by whitespace:
+#   name — on GHCR (ghcr.io/ignite-ember/<name>), in the bundle and in the
+#          customer's registry: one name everywhere
+#   version tag
+igni-artifacts           0.1.0
+igni-artifacts-embedder  0.1.0
+igni-codeindex           0.1.0

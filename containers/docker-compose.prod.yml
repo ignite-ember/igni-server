@@ -1,0 +1,293 @@
+# Production stack. Postgres and Redis are external — point .env at them.
+#
+# ``image:`` is a required variable rather than a literal. It used to say
+# ``ember/ember-api:latest``, which is unqualified and therefore resolves to
+# ``docker.io/ember/ember-api`` — a completely different image from the one
+# this project publishes. CD pushes to
+# ``ghcr.io/ignite-ember/igni-api:<tag>``, so a fresh
+# host running this file would have tried to pull from Docker Hub. Nobody
+# noticed because docker-compose.local.yml *builds* from the Dockerfile
+# instead of pulling.
+#
+# Whether that Docker Hub namespace is unregistered or belongs to somebody
+# else could not be determined — Docker Hub answers 401 for both — so it is
+# stated as unknown rather than guessed. Either way it is not ours.
+#
+# ``:?`` makes compose refuse to start with a message naming the variable,
+# which beats pulling something unexpected. Pin a real tag: ``latest``
+# cannot be rolled back to, and ``up`` will not always re-pull it.
+x-igni-image: &igni_image ${IGNI_IMAGE:?set IGNI_IMAGE to the pushed image and an explicit tag, e.g. ghcr.io/ignite-ember/igni-api:0.6.0}
+
+# The env file is named explicitly for the same reason. This used to read
+# ``.env`` — the same filename local development uses — so a checkout with a
+# leftover dev ``.env`` would deploy with ``APP_ENV=dev``,
+# ``PORTAL_AUTH_BYPASS=true``, ``POSTGRES_HOST=host.docker.internal`` and
+# localhost OAuth URLs.
+#
+# The startup check cannot save you there, and that is the point:
+# ``check_deployment`` refuses ``PORTAL_AUTH_BYPASS`` only when
+# ``APP_ENV != dev``, and ``APP_ENV`` is read from the same file. A dev env
+# file disarms the guard that exists to catch a dev env file. Naming the
+# file is what breaks that loop.
+x-igni-env-file: &igni_env_file ${IGNI_ENV_FILE:?set IGNI_ENV_FILE to the production env file, e.g. .env.prod — do not point it at .env, which is the local development file}
+
+# The portal is a different image from the API — cd.yml pushes both — so
+# it needs its own variable. It was missing from this file entirely, which
+# meant the production stack had no web UI at all: the API and its
+# datastores, and nothing a person could open.
+x-igni-portal-image: &igni_portal_image ${IGNI_PORTAL_IMAGE:?set IGNI_PORTAL_IMAGE to the pushed portal image and an explicit tag, e.g. ghcr.io/ignite-ember/igni-portal:0.6.0}
+
+services:
+  # Database migrations. Everything else waits for this to exit 0 (see
+  # ``depends_on`` below), so ``up`` is ordered rather than racing: without
+  # it the API started alongside the migration and served against
+  # whatever schema happened to exist at that moment.
+  migrate:
+    container_name: igni__migrate
+    image: *igni_image
+    working_dir: /app
+    # Waits for Postgres, then migrates.
+    #
+    # There is deliberately no `depends_on: postgres` here, and it is not
+    # an oversight: Postgres and Redis live behind the `bundled` profile,
+    # and a `depends_on` naming a profiled service makes the *other*
+    # shape refuse to load at all — `service "migrate" depends on
+    # undefined service "redis": invalid compose project`. Tried, and
+    # that is the error.
+    #
+    # So the wait is in here, which works for both shapes: a bundled
+    # Postgres still initialising, or a managed one that is rebooting.
+    # Everything else waits for this container, so this is the only place
+    # that needs it. 120 seconds, then it gives up and says so rather
+    # than hanging a deploy.
+    command: >-
+      bash -c 'for i in $$(seq 1 60); do
+        python -c "import os,socket; socket.create_connection((os.environ[\"POSTGRES_HOST\"], int(os.environ.get(\"POSTGRES_PORT\", 5432))), 2)" 2>/dev/null && break;
+        echo "waiting for postgres at $$POSTGRES_HOST:$${POSTGRES_PORT:-5432} ($$i/60)"; sleep 2;
+      done;
+      python -c "import os,socket; socket.create_connection((os.environ[\"POSTGRES_HOST\"], int(os.environ.get(\"POSTGRES_PORT\", 5432))), 2)" || {
+        echo "postgres never became reachable; not running migrations"; exit 1;
+      };
+      alembic upgrade head && python -m app.db.sql.tenant_migrations'
+    env_file:
+      - *igni_env_file
+    restart: "no"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - igni_network
+
+  # Application Backend (FastAPI) - Production
+  igni_api:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    container_name: igni__api
+    image: *igni_image
+    ports:
+      # Loopback by default, so a reverse proxy on the host fronts this
+      # rather than the container being the edge. Publishing on every
+      # interface put an unauthenticated-if-misconfigured API directly on
+      # the internet, and this host demonstrated it is reachable: a GitHub
+      # load balancer in Frankfurt reached /health and /ready on 7777 while
+      # a test stack was up.
+      #
+      # Override deliberately if the container really is the edge:
+      #   IGNI_API_BIND=0.0.0.0 docker compose -f docker-compose.prod.yml up -d
+      - "${IGNI_API_BIND:-127.0.0.1}:7777:7777"
+    # /health, not /ready. This decides whether to RESTART the container,
+    # and a restart fixes a wedged process but not an unreachable
+    # database — pointing it at /ready would turn a database blip into a
+    # restart loop across every instance at once. /ready is for whatever
+    # decides where to send traffic.
+    #
+    # Without any healthcheck, `restart: always` only catches the process
+    # exiting, so a hung API stayed "up" indefinitely.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7777/health', timeout=5).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    env_file:
+      - *igni_env_file
+    # Compose's default is 10 seconds, and this API waits
+    # AI__UPSTREAM_TIMEOUT (300) for a model to answer — so a plain
+    # `docker compose down` or a redeploy used to kill any completion
+    # still streaming after ten seconds, mid-sentence, and leave its
+    # concurrency lease in Redis for the full 15-minute lease timeout.
+    # The request budget plus headroom. Raise it with the timeout. F119.
+    stop_grace_period: 330s
+    restart: always
+    # The paid modules' licence (docs/licence-file.md). The same directory
+    # is mounted into every paid module and the Fleet gateway at the same
+    # path; they enforce it, igni server shows it on the portal and
+    # installs an upload into it. Empty or absent: the free base only.
+    volumes:
+      - ${IGNI_LICENCE_DIR:-./licence}:/etc/igni/licence
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - igni_network
+
+  # The admin portal: the built bundle, plus a /v1/ proxy for browser
+  # traffic. Loopback like everything else — Caddy below is what faces
+  # the world, and only under the `tls` profile.
+  portal:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    container_name: igni__portal
+    image: *igni_portal_image
+    environment:
+      # The compose service name, not the container name. nginx resolves
+      # this once at startup and exits if it does not resolve.
+      - API_UPSTREAM=igni_api:7777
+    ports:
+      - "${IGNI_PORTAL_BIND:-127.0.0.1}:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: always
+    networks:
+      - igni_network
+
+  # ── Profile: bundled ─────────────────────────────────────────────────
+  #
+  # Postgres and Redis on the same host. For one instance serving one
+  # customer this is the whole point: managed offerings mean two more
+  # consoles and a VPC before anything runs, for a single-tenant install
+  # whose isolation is the product.
+  #
+  #   docker compose --profile bundled -f docker-compose.prod.yml up -d
+  #
+  # Point POSTGRES_HOST=postgres and REDIS_HOST=redis in the env file, and
+  # read the backup note in README.md — nothing here backs anything up.
+  # Omit the profile and both are external, which is the other supported
+  # shape and needs nothing else from this file.
+  postgres:
+    profiles: [bundled]
+    container_name: igni__postgres
+    # Pinned to a minor version. `postgres:17` moves under you on the next
+    # `pull`, and a major upgrade of Postgres is not a restart.
+    image: postgres:17.6-alpine
+    env_file:
+      - *igni_env_file
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # The migration waits for this, so "started" is not enough: a
+    # connection to a container mid-initialisation fails, and the
+    # migration is what everything else waits for in turn.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: always
+    networks:
+      - igni_network
+
+  redis:
+    profiles: [bundled]
+    container_name: igni__redis
+    image: redis:7.4-alpine
+    # The concurrency leases and the one-time sign-in codes. Losing it is
+    # survivable — leases expire and rebuild, codes are reissued — so
+    # this is snapshots rather than an append-only log: cheap, and
+    # bounded loss of something already replaceable.
+    #
+    # It was also a Celery broker until DEC-13, which is what made the
+    # sentence above worth re-checking: a queue of real work would have
+    # made `appendonly no` a data-loss setting. Nothing queued anything,
+    # and now nothing can.
+    command: redis-server --save 60 1 --appendonly no
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+    networks:
+      - igni_network
+
+
+  # ── Profile: backup ──────────────────────────────────────────────────
+  #
+  #   docker compose --profile bundled --profile backup \
+  #     -f docker-compose.prod.yml up -d
+  #
+  # Works with either shape: it reads POSTGRES_HOST from the env file, so
+  # a managed database is backed up the same way as the bundled one.
+  #
+  # Each run is one directory, `igni-<UTC stamp>/`, holding one archive
+  # for the shared plane, one per organisation (`<db>_t<n>`, detached
+  # organisations included) and a MANIFEST naming which is whose — so one
+  # organisation can be restored, handed over or destroyed on its own.
+  # A run counts only if every archive in it verified; otherwise it stays
+  # `igni-<stamp>.part/` and `.last-success`, which the healthcheck reads,
+  # does not move. See containers/backup.sh.
+  #
+  # Dumps land in a directory on this host — `./backups` unless you set
+  # IGNI_BACKUP_DIR — which is deliberately not the whole answer. A
+  # backup on the same disk as the database survives a dropped table and
+  # not a lost instance. Point IGNI_BACKUP_DIR at mounted durable storage,
+  # or let whatever snapshots this host pick the directory up. Where the
+  # copy goes is the one part of this nobody else can decide for you.
+  #
+  # The dumps are as sensitive as the database: everything a person typed,
+  # plus stored secrets that are encrypted with a key kept elsewhere.
+  # Mode 600 (run directories 700), and treat the directory accordingly.
+  backup:
+    # The schema has to exist first. Found by running it: without this the
+    # backup container beat the migration, dumped an 819-byte database
+    # with no application tables in it, and refused the result — correct,
+    # but it crash-looped until the migration finished. `migrate` is not
+    # behind a profile, so unlike Postgres it is safe to depend on.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    profiles: [backup]
+    container_name: igni__backup
+    # The database's own image, so pg_dump matches the server by
+    # construction. A pg_dump older than its server refuses outright.
+    image: postgres:17.6-alpine
+    env_file:
+      - *igni_env_file
+    environment:
+      - IGNI_BACKUP_DIR=/backups
+      - IGNI_BACKUP_RETAIN_DAYS=${IGNI_BACKUP_RETAIN_DAYS:-14}
+      - IGNI_BACKUP_INTERVAL_SECONDS=${IGNI_BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backup.sh:/usr/local/bin/igni-backup:ro
+      - ${IGNI_BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["/usr/local/bin/igni-backup"]
+    # Red when the newest verified dump is older than two intervals. The
+    # container being up is not evidence of a backup; this is the closest
+    # thing to evidence that `docker ps` can show.
+    healthcheck:
+      test: ["CMD-SHELL", "test -n \"$$(find /backups/.last-success -mmin -$$(( ${IGNI_BACKUP_INTERVAL_SECONDS:-86400} / 30 )) 2>/dev/null)\""]
+      interval: 300s
+      timeout: 10s
+      retries: 2
+      start_period: 120s
+    restart: always
+    networks:
+      - igni_network
+
+volumes:
+  # Under the `bundled` profile these hold the deployment's actual data
+  # and are the thing to back up. Unused when Postgres and Redis are
+  # external, which is the other supported shape.
+  pgdata:
+  redisdata:
+
+
+networks:
+  igni_network:
+    driver: bridge

@@ -1,0 +1,73 @@
+.team-stat {
+  flex: 1;
+  min-width: 140px;
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-muted);
+}
+
+/* Full-width table */
+.team-table {
+  max-width: 100%;
+  width: 100%;
+}
+
+
+
+.role-badge-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--base-size-4, 0.25rem);
+}
+
+.team-muted {
+  color: var(--fgColor-muted);
+}
+
+.invite-card {
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-muted);
+}
+
+.invite-email-field {
+  flex: 1;
+  min-width: 280px;
+}
+
+.invite-email-field span[class*="TextInputWrapper"],
+.invite-email-field input {
+  width: 100%;
+  min-width: 320px;
+}
+
+.invite-role-select {
+  height: 32px;
+  padding: var(--base-size-4, 0.25rem) var(--base-size-12, 0.75rem);
+  margin-right: var(--base-size-8, 0.5rem);
+  font-size: var(--text-body-size-medium);
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-default);
+  color: var(--fgColor-default);
+  cursor: pointer;
+}
+
+.invite-role-select:focus {
+  outline: var(--borderWidth-thick, 2px) solid var(--fgColor-accent);
+  outline-offset: -1px;
+}
+
+/* Bump confirmation dialog title one step up */
+.confirm-dialog-lg h1 {
+  font-size: var(--text-body-size-large, 1rem);
+}
+
+/* The claim link an admin has to copy when there is no relay. Wide
+   enough to read the whole URL, and it grows with the banner rather
+   than forcing a horizontal scroll on the page. */
+.invite-url-field {
+  flex: 1 1 22rem;
+  min-width: 0;
+  font-family: var(--fontStack-monospace);
+}

@@ -1,0 +1,37 @@
+apiVersion: v2
+name: igni
+description: igni server, the open-source base of igni — API, admin portal and migrations
+type: application
+
+# The chart's own version. Bumped when the chart changes, independently of
+# the application: a customer upgrading the chart to get a fixed template
+# should not be forced onto a new application image, and vice versa.
+version: 0.1.0
+
+# The default application version, and the default image tag. Deliberately
+# not `latest`: `latest` cannot be rolled back to, and a Deployment whose
+# tag never changes gives Kubernetes no reason to roll pods at all.
+#
+# `helm template` refuses to render when this resolves to `latest` — see
+# templates/_helpers.tpl.
+appVersion: "0.6.0"
+
+home: https://github.com/ignite-ember/igni-server
+sources:
+  - https://github.com/ignite-ember/igni-server
+
+keywords:
+  - ai
+  - coding-agent
+  - self-hosted
+
+maintainers:
+  - name: igni
+
+annotations:
+  # Neither Postgres nor Redis is a dependency of this chart, and that is a
+  # decision rather than an omission — see values.yaml and README.md. A
+  # bundled database would be a second thing to patch, a second thing to
+  # back up, and a chart dependency to fetch over the network, which is the
+  # one thing an air-gapped install cannot do.
+  igni.sh/requires-external: "postgresql,redis"

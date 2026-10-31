@@ -1,0 +1,117 @@
+{{- if .Values.ingress.enabled }}
+{{- include "igni.validate" . -}}
+{{/*
+`/v1` and `/.well-known` to the API, everything else to the portal.
+
+`/.well-known` carries the server's public signing keys and its OpenID
+metadata. Services fetch them from `PUBLIC_BASE_URL`, which defaults to
+this host; routed to the portal, they would get its index page instead.
+
+Two paths rather than one. The portal's nginx can proxy `/v1` itself, and
+in compose it does — but the CLI talks to `/v1` directly, so routing that
+traffic through the portal would add a hop
+and a second body-size limit that has to stay in agreement with the API's
+own (32 MB). They disagreed once already: nginx's default of 1 MB
+silently refused bodies the API would have accepted.
+
+`/docs`, `/redoc` and `/openapi.json` are deliberately absent. The API
+serves them to anything inside the cluster, which is a different decision
+from publishing them on the internet.
+
+`Prefix` and this ordering are what make it work: `/v1` is more specific
+than `/`, and the Ingress spec says the longest matching path wins
+regardless of the order they appear in.
+
+Nothing on this host belongs to another service. Artifacts (and every
+later service) is served on its own hostname by the second Ingress below:
+its URL is its identity — the audience of the tokens people get for it,
+and where igni calls `{service URL}/v1/igni/subjects/...` — and a path
+here would share igni's origin and take a path igni may one day need.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "igni.fullname" . }}
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ required "ingress.tls.secretName is required when ingress.tls.enabled is true" .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "igni.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.apiPort }}
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "igni.fullname" . }}-api
+                port:
+                  number: {{ .Values.service.apiPort }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "igni.fullname" . }}-portal
+                port:
+                  number: {{ .Values.service.portalPort }}
+{{- if .Values.artifacts.enabled }}
+---
+{{/*
+igni__artifacts, on its own host. One rule, `/` to the artifacts Service:
+the whole origin is the service's, so it decides what it serves there.
+
+TLS follows igni's: on when `ingress.tls.enabled`, with a certificate of
+its own — igni's names igni's host and would not be valid here.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "igni.fullname" . }}-artifacts
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.artifacts.host | quote }}
+      secretName: {{ required "artifacts.tls.secretName is required when ingress.tls.enabled is true: Artifacts is served on its own host, so it needs its own certificate" .Values.artifacts.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.artifacts.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.artifacts.serviceName }}
+                port:
+                  number: {{ .Values.artifacts.servicePort }}
+{{- end }}
+{{- end }}

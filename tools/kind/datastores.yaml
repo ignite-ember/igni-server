@@ -1,0 +1,103 @@
+# Postgres and Redis for the kind install, and nothing more.
+#
+# F1. The chart deploys neither on purpose — `values.yaml` gives three
+# reasons, and "bring your own" is what a customer does. So the harness
+# brings its own, and these manifests are deliberately *not* production
+# shaped: one replica, `emptyDir`, no PVC, no backup, a password in
+# plain sight. They exist so the chart has something to connect to.
+#
+# If you are reading this looking for how to run Postgres in Kubernetes,
+# this is not it. See `charts/igni/values.yaml`, "The data stores, both
+# external".
+apiVersion: v1
+kind: Service
+metadata:
+  name: pg
+spec:
+  selector:
+    app: pg
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pg
+  template:
+    metadata:
+      labels:
+        app: pg
+    spec:
+      containers:
+        - name: postgres
+          # The same major version the backup CronJob pins, so `pg_dump`
+          # in the chart matches the server the harness runs.
+          image: postgres:17.6-alpine
+          env:
+            - name: POSTGRES_USER
+              value: igni
+            - name: POSTGRES_PASSWORD
+              value: kind-only-password
+            - name: POSTGRES_DB
+              value: igni
+            # `emptyDir` plus fsync off: this database is thrown away
+            # when the cluster is, and the harness waits on readiness
+            # rather than on durability.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          args: ["-c", "fsync=off", "-c", "full_page_writes=off"]
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "igni", "-d", "igni"]
+            initialDelaySeconds: 3
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 2

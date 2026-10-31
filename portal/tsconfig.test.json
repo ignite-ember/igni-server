@@ -1,0 +1,31 @@
+{
+  /*
+   * Test files, type-checked with the environment they actually run in.
+   *
+   * They were inside `tsconfig.app.json`, which pins `types` to
+   * `vite/client` — a browser environment. That was fine until a test
+   * needed to read the filesystem: `src/test/primitives.test.ts` scans
+   * the stylesheets, so it imports `node:fs`, and `tsc -b` failed on it.
+   *
+   * The failure did not surface where it should have. `npx tsc --noEmit`
+   * — which is what I had been running — resolves `tsconfig.json`,
+   * whose `files` is empty, so it checked nothing and reported success.
+   * `npm run build` runs `tsc -b`, which builds the referenced projects
+   * and fails properly. The Docker build then failed and compose kept
+   * serving the previous image, so the portal looked unchanged.
+   *
+   * Splitting the projects is the fix rather than adding `node` to the
+   * app's types: a browser bundle should not have `process` in scope,
+   * and a test that reads files should not have to pretend it does not.
+   */
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "types": ["vite/client", "node", "vitest/globals"],
+    "noEmit": true
+  },
+  /* Reset: `extends` would otherwise inherit the app project's
+     exclude, which names exactly these files and cancels the include. */
+  "exclude": [],
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**/*"]
+}

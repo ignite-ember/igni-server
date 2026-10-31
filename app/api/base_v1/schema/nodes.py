@@ -1,0 +1,374 @@
+"""Request and response shapes for node registration and the node view.
+
+Separate from ``app.services.ai.schemas`` on purpose. ``InferenceBackend``
+carries ``api_key``, and a model that is both the wire format of a public
+endpoint and the thing the portal serialises is one careless
+``response_model`` away from publishing it. The registration request
+accepts a key and never gives one back; the portal view has no field for
+one at all.
+"""
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field, model_validator
+
+from app.db.sql.models.inference_node import InferenceNode
+from app.db.sql.schemas.inference_node import NodeChanges
+from app.services.ai.schemas import BackendStatus, InferenceBackend, pools_from_storage, PoolType
+
+
+class NodeRegistration(BaseModel):
+    """What a starting node tells us about itself."""
+
+    id: str = Field(
+        min_length=1,
+        max_length=128,
+        # Ids namespace Redis keys and appear in the portal, so the
+        # characters are constrained rather than trusted — a colon would
+        # let a caller reach outside its own key.
+        pattern=r'^[A-Za-z0-9._-]+$',
+        description='Stable identifier for this node; re-registering the same id replaces the entry',
+    )
+    base_url: str = Field(description='Where the OpenAI-compatible API is served, e.g. http://gpu-3:8000/v1')
+    # Every id this node answers to. A vLLM process started with
+    # ``--enable-lora`` serves its base model and each adapter as
+    # separate ids, and any of them may be requested.
+    models: list[str] = Field(min_length=1, description='Model ids this node serves, base plus any LoRA adapters')
+    api_key: str | None = Field(default=None, description='Only if the node is behind an auth proxy')
+    max_concurrent: int = Field(default=64, gt=0, description="Roughly the vLLM instance's --max-num-seqs")
+    pools: list[PoolType] = Field(default=['chat'], min_length=1)
+    multimodal: bool = Field(default=False, description='Whether the model accepts image input')
+
+    @model_validator(mode='before')
+    @classmethod
+    def _accept_a_single_model(cls, data: object) -> object:
+        """``model: "x"`` is accepted for a node serving just one.
+
+        **Not a back-compatibility reader, and not removable.**
+        `model` is the *documented* field: `docs/gpu-clusters.md` uses
+        it in the registration example an operator copies and lists it
+        in the field table, and `models` appears there nowhere. The
+        plural arrived with LoRA adapters, where one vLLM process
+        serves its base model and each adapter under separate ids.
+
+        Said at length because a review read this as a legacy shim for
+        a payload we control and proposed deleting it, which would
+        break every registration in the published guide.
+        """
+        if isinstance(data, dict) and 'models' not in data and 'model' in data:
+            data = {**data, 'models': [data['model']]}
+        return data
+
+    @model_validator(mode='after')
+    def _base_url_is_absolute(self) -> 'NodeRegistration':
+        """Checked here as well as on ``InferenceBackend``.
+
+        Not redundant: validating only in ``to_backend`` would raise
+        inside the handler, and the caller would get a 500 for what is
+        plainly a bad request. A node registered with a relative URL is
+        stored happily and then fails every request routed to it, so this
+        has to be a 422 at the door.
+        """
+        if not self.base_url.startswith(('http://', 'https://')):
+            raise ValueError('base_url must start with http:// or https://')
+        return self
+
+    def to_backend(self) -> InferenceBackend:
+        """The routing model."""
+        return InferenceBackend(
+            id=self.id,
+            base_url=self.base_url,
+            models=list(self.models),
+            api_key=self.api_key,
+            max_concurrent=self.max_concurrent,
+            pools=self.pools,
+            multimodal=self.multimodal,
+        )
+
+
+class NodeRegistrationAccepted(BaseModel):
+    """Confirmation, and how often to check back in.
+
+    The interval is returned rather than documented so the customer's
+    heartbeat loop reads it from the server it is talking to, instead of
+    hardcoding a number that a later release might change underneath it.
+    """
+
+    id: str
+    registered_at: float
+    heartbeat_interval_seconds: int
+
+
+class NodeHealthView(BaseModel):
+    """Whether a node is answering, and why not when it is not.
+
+    ``detail`` is written for a person. "No response within 3s" and "The
+    node rejected our credentials" send somebody to different places, and
+    a bare state would send them to the same one.
+    """
+
+    state: str
+    detail: str | None = None
+    latency_ms: float | None = None
+
+
+class PinnedNodeCreate(BaseModel):
+    """A GPU node an admin is adding by hand."""
+
+    node_id: str = Field(
+        min_length=1,
+        max_length=128,
+        # Ids namespace Redis keys, so the characters are constrained
+        # rather than trusted — a colon would let one node reach outside
+        # its own gauge.
+        pattern=r'^[A-Za-z0-9._-]+$',
+        description='Stable identifier, unique across every source',
+    )
+    base_url: str = Field(description='Where the OpenAI-compatible API is served, e.g. http://gpu-3:8000/v1')
+    # Usually discovered rather than typed: POST /inference/nodes/discover
+    # asks the node what it serves, which is the only way to get LoRA
+    # adapter names right.
+    models: list[str] = Field(min_length=1, description='Model ids to route here, base plus any LoRA adapters')
+    api_key: str | None = Field(default=None, description='Only if the node is behind an auth proxy')
+    max_concurrent: int = Field(default=64, gt=0, description="Roughly the vLLM instance's --max-num-seqs")
+    pools: list[PoolType] = Field(default=['chat'], min_length=1)
+    multimodal: bool = False
+
+    @model_validator(mode='after')
+    def _base_url_is_absolute(self) -> 'PinnedNodeCreate':
+        """A 422 at the door rather than a node stored happily and
+        failing on every request routed to it."""
+        if not self.base_url.startswith(('http://', 'https://')):
+            raise ValueError('base_url must start with http:// or https://')
+        return self
+
+
+class PinnedNodeUpdate(BaseModel):
+    """A partial edit. Everything optional; absent means unchanged."""
+
+    base_url: str | None = None
+    models: list[str] | None = Field(default=None, min_length=1)
+    # Absent leaves the stored credential alone; an explicit empty string
+    # clears it. The portal never sends the key back, so treating absent
+    # as "clear" would wipe it on every edit of anything else.
+    api_key: str | None = None
+    max_concurrent: int | None = Field(default=None, gt=0)
+    pools: list[PoolType] | None = Field(default=None, min_length=1)
+    multimodal: bool | None = None
+    enabled: bool | None = None
+
+    @model_validator(mode='after')
+    def _base_url_is_absolute(self) -> 'PinnedNodeUpdate':
+        if self.base_url is not None and not self.base_url.startswith(('http://', 'https://')):
+            raise ValueError('base_url must start with http:// or https://')
+        return self
+
+    def changes(self) -> NodeChanges:
+        """The edit, as the persistence layer's own contract.
+
+        Was `-> dict`, unannotated, with a fully knowable key set — the
+        model's own fields — which the caller then splatted back into
+        `NodeChanges(**body.changes())`.
+
+        `exclude_unset` is the whole semantics and survives: absent
+        means unchanged, and an explicitly-null `api_key` means clear
+        it. Dumping everything would turn every edit into a write of
+        every field.
+        """
+        return NodeChanges(**self.model_dump(exclude_unset=True))
+
+
+class PinnedNodeView(BaseModel):
+    """A node added here, as the portal gets it back.
+
+    No ``api_key``: it goes in and is never returned. An admin who needs
+    to change it sets a new one.
+    """
+
+    node_id: str
+    base_url: str
+    models: list[str]
+    max_concurrent: int
+    #: `list[PoolType]`, matching `NodeStatusView`. It was `list[str]`,
+    #: so the admin view of a node lost the enum validation the status
+    #: view of the same node kept — one concept, two types, one file.
+    pools: list[PoolType]
+    multimodal: bool
+    enabled: bool
+    has_api_key: bool
+
+    @classmethod
+    def of(cls, node: InferenceNode) -> 'PinnedNodeView':
+        """Project a stored node for the portal.
+
+        `node` was unannotated, and the body read the persistence
+        format directly — `str(node.pools).split(',')` — so an API
+        schema knew that the column is comma-joined. That decision
+        belongs to the storage layer and `pools_from_storage` is where
+        it now lives, shared with the registry that had its own copy.
+        """
+        return cls(
+            node_id=str(node.node_id),
+            base_url=str(node.base_url),
+            models=list(node.models or []),
+            max_concurrent=int(node.max_concurrent),
+            pools=pools_from_storage(node.pools),
+            multimodal=bool(node.multimodal),
+            enabled=bool(node.enabled),
+            has_api_key=bool(node.api_key),
+        )
+
+
+class NodeMetricsView(BaseModel):
+    """The node's own numbers, when it publishes them.
+
+    ``running`` will differ from ``in_flight`` on a node igni does not
+    have to itself — somebody calling it directly, or another service
+    sharing the GPU — and where they disagree the node is right.
+    """
+
+    running: int | None = None
+    waiting: int | None = None
+    kv_cache_percent: float | None = None
+    prefix_cache_hit_percent: float | None = None
+    preemptions: int | None = None
+
+
+class NodeDrainRequest(BaseModel):
+    """Optionally, why.
+
+    Optional because requiring a reason during an incident is friction at
+    the worst moment, and a required field people fill with "." is worse
+    than an empty one. Bounded so it cannot become a place to store
+    something.
+    """
+
+    reason: str | None = Field(default=None, max_length=280)
+
+
+class NodeDrainView(BaseModel):
+    """Why a node is not serving, and on whose say-so.
+
+    Carried with the state rather than left to the audit trail: a drained
+    node found weeks later is the question "why is this off?", and
+    searching an audit log is a poor way to answer something the record
+    can say itself.
+    """
+
+    by: str
+    by_email: str | None = None
+    at: datetime
+    reason: str | None = None
+
+
+class NodeStatusView(BaseModel):
+    """One node, as the portal shows it.
+
+    ``utilization`` is computed here rather than in the browser so every
+    consumer agrees on what it means, and because it is the number an
+    operator actually reads — "in flight over capacity" is the same
+    information but has to be divided in your head.
+    """
+
+    id: str
+    base_url: str
+    models: list[str]
+    pools: list[PoolType]
+    multimodal: bool
+    source: str
+    in_flight: int
+    max_concurrent: int
+    utilization: float
+    health: NodeHealthView
+    metrics: NodeMetricsView | None = None
+    last_seen_seconds_ago: float | None = None
+    registered_at: float | None = None
+
+    # Present when an operator has taken this node out of rotation. The
+    # node is still listed — a switch whose subject disappears cannot be
+    # switched back — so the browser needs to know which state it is in.
+    drain: NodeDrainView | None = None
+
+    @classmethod
+    def of(cls, status: BackendStatus) -> 'NodeStatusView':
+        return cls(**status.model_dump(), utilization=status.utilization)
+
+
+class PoolStatusView(BaseModel):
+    """One pool's nodes and its totals.
+
+    The totals are what answers "do we need another GPU?", which is the
+    question this page exists for. Per-node rows answer the follow-up:
+    which one.
+    """
+
+    pool: PoolType
+    nodes: list[NodeStatusView]
+    total_in_flight: int
+    total_capacity: int
+    utilization: float
+
+
+class InferenceStatusView(BaseModel):
+    """Both pools, plus whether registration is available at all.
+
+    ``registration_enabled`` lets the portal explain an empty registered
+    list correctly: "nothing has registered" and "this deployment does
+    not accept registrations" look identical otherwise, and they call for
+    completely different fixes.
+    """
+
+    pools: list[PoolStatusView]
+    registration_enabled: bool
+    heartbeat_interval_seconds: int
+
+
+class NodeProbeRequest(BaseModel):
+    """Ask a node what it is before adding it.
+
+    The point of the flow: an admin pastes an address, and the node
+    itself supplies the model ids. Typing them by hand is how you end up
+    with a node that is never selected — a mistyped id simply never
+    matches a request — and it is the only practical way to get LoRA
+    adapter names right, since they are whatever the operator passed to
+    ``--lora-modules``.
+    """
+
+    base_url: str
+    api_key: str | None = None
+
+    @model_validator(mode='after')
+    def _base_url_is_absolute(self) -> 'NodeProbeRequest':
+        if not self.base_url.startswith(('http://', 'https://')):
+            raise ValueError('base_url must start with http:// or https://')
+        return self
+
+
+class NodeProbeResult(BaseModel):
+    """What the node said, or why it did not.
+
+    ``reachable`` false is a 200, not an error: "I could not reach that
+    address" is a successful answer to "what is at this address", and the
+    dialog needs the reason to show rather than an exception.
+    """
+
+    reachable: bool
+    models: list[str] = []
+    detail: str | None = None
+    latency_ms: float | None = None
+
+    # It answered, but refused without a token. The most likely outcome
+    # of pasting the address of a vLLM node started with ``--api-key``,
+    # and worth saying plainly: without this the dialog reported
+    # "reachable, 0 models", which sounds like a node serving nothing.
+    needs_credentials: bool = False
+
+
+class AvailableModels(BaseModel):
+    """Model ids this deployment serves, deduplicated and sorted.
+
+    Includes LoRA adapters, since a node answers to each of them by name
+    and any of them is a legitimate choice for a group.
+    """
+
+    models: list[str] = []

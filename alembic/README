@@ -1,0 +1,4 @@
+Generic single-database configuration.
+To generate migration:
+
+uv run alembic revision --autogenerate -m "message text"

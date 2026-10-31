@@ -1,0 +1,195 @@
+/* ── CLI Auth Page — styled to match Landing Page ──────────────────── */
+
+.cli-auth-page {
+  min-height: 100vh;
+  background-color: var(--bgColor-default);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cli-auth-container {
+  width: 100%;
+  max-width: 480px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.cli-auth-logo {
+  margin-bottom: 32px;
+}
+
+.cli-auth-title {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 0 0 8px;
+  color: var(--fgColor-default);
+}
+
+.cli-auth-gradient {
+  background: linear-gradient(135deg, #F97316, #DC2626, #F97316);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.cli-auth-subtitle {
+  font-size: 16px;
+  color: var(--fgColor-muted);
+  margin: 0 0 32px;
+  line-height: 1.5;
+}
+
+/* ── Org selection card ────────────────────────────────────────────── */
+
+.cli-auth-card {
+  width: 100%;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 12px;
+  background-color: var(--bgColor-muted);
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.cli-auth-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  padding: 16px 20px;
+  margin: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  color: var(--fgColor-default);
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.cli-auth-row:hover {
+  background: var(--bgColor-neutral-muted, rgba(175, 184, 193, 0.2));
+}
+
+.cli-auth-row-border {
+  border-bottom: 1px solid var(--borderColor-default);
+}
+
+.cli-auth-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(220, 38, 38, 0.08));
+  color: #F97316;
+  font-weight: 700;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.cli-auth-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cli-auth-row-name {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cli-auth-row-meta {
+  display: block;
+  font-size: 13px;
+  color: var(--fgColor-muted);
+}
+
+.cli-auth-chevron {
+  color: var(--fgColor-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.cli-auth-row:hover .cli-auth-chevron {
+  transform: translateX(2px);
+  color: #F97316;
+}
+
+/* ── Success state ────────────────────────────────────────────────── */
+
+.cli-auth-success-icon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(220, 38, 38, 0.08));
+  margin: 0 auto 24px;
+  z-index: 1;
+  overflow: visible;
+}
+
+.cli-auth-success-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--fgColor-default);
+}
+
+.cli-auth-success-hint {
+  font-size: 15px;
+  color: var(--fgColor-muted);
+  margin: 0 0 32px;
+  line-height: 1.5;
+}
+
+.cli-auth-terminal-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 12px;
+  background-color: var(--bgColor-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 14px;
+  color: var(--fgColor-muted);
+}
+
+/* ── Error banner ─────────────────────────────────────────────────── */
+
+.cli-auth-error {
+  width: 100%;
+  margin-bottom: 24px;
+}
+
+/* ── Security note ────────────────────────────────────────────────── */
+
+.cli-auth-security {
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  margin: 0;
+}
+
+.cli-auth-security strong {
+  color: var(--fgColor-default);
+}
+
+/* ── Fireworks canvas ─────────────────────────────────────────────── */
+
+.cli-auth-fireworks-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10;
+}

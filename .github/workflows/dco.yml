@@ -1,0 +1,43 @@
+name: DCO
+
+# Every commit in a pull request must carry a `Signed-off-by:` line
+# (CONTRIBUTING.md, "Developer Certificate of Origin").
+#
+# Safe for pull requests from forks: it runs on `pull_request`, never
+# `pull_request_target`, so it gets a read-only token and no secrets, and
+# it only reads commit messages — it runs nothing from the pull request.
+on:
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  signed-off:
+    name: Every commit is signed off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Check Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for sha in $(git rev-list --no-merges "${BASE}..${HEAD}"); do
+            author="$(git log -1 --format='%an <%ae>' "${sha}")"
+            if ! git log -1 --format='%B' "${sha}" | grep -qiE '^Signed-off-by: .+ <.+>'; then
+              echo "::error::${sha} (${author}) has no Signed-off-by line"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "Sign off with 'git commit -s', or for a branch: git rebase --signoff ${BASE}"
+            exit 1
+          fi
+          echo "Every commit is signed off."

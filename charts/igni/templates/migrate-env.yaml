@@ -1,0 +1,98 @@
+{{- if .Values.migrations.enabled }}
+{{- include "igni.validate" . -}}
+{{/*
+Configuration for the migration hook, and it exists because of a Helm
+ordering rule that is easy to get wrong.
+
+Hooks run *before* the release's own resources are created. So a
+pre-install Job that reads the main ConfigMap and Secret via `envFrom`
+cannot start on a first install — those objects do not exist yet, and the
+pod fails with CreateContainerConfigError, which reads like a
+configuration mistake rather than an ordering one.
+
+The fix is a hook-scoped copy, kept as small as the job actually needs:
+Alembic reads `settings.postgres_url_sync` and `settings.app_env` and
+nothing else. No signing key, no encryption key, no sign-in secrets.
+One password, five coordinates.
+
+Deleted once the hook succeeds, so a successful install leaves no extra
+copy of anything behind. Kept when it fails, because the first question
+after a failed migration is what it said.
+*/}}
+{{- if .Values.serviceAccount.create }}
+{{/*
+The migration hook's own ServiceAccount, and it exists because the
+ordering rule above has a second victim nobody noticed.
+
+`serviceaccount.yaml` is an ordinary release resource, so Helm creates it
+*after* every pre-install hook has completed — while `migrate-job.yaml`
+names it in `serviceAccountName`. Kubernetes refuses to create a pod for
+a ServiceAccount that does not exist, so the Job never started:
+
+    Error creating: pods "igni-migrate-" is forbidden: error looking up
+    service account igni/igni: serviceaccount "igni" not found
+
+Which means `helm install` failed on **every** cluster, always, from the
+day the chart was written. Nothing caught it because nothing installed
+it: `helm template` renders this file happily, `helm lint` reads
+Chart.yaml, and `kubeconform` validates each object on its own — hook
+ordering is a property of the *set*, and none of the three looks at the
+set. F1.
+
+Deleted when the hook succeeds, like the ConfigMap and Secret above, so
+a successful install leaves nothing extra behind and `helm uninstall` has
+nothing untracked to strand. The long-lived pods keep using the ordinary
+account from `serviceaccount.yaml`; this one exists for the two minutes
+the migration runs, so that the migration pod is not running as
+`default` either.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "igni.fullname" . }}-migrate-hook
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-15"
+    helm.sh/hook-delete-policy: hook-succeeded
+automountServiceAccountToken: false
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "igni.fullname" . }}-migrate-env
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: hook-succeeded
+data:
+  APP_ENV: {{ .Values.appEnv | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+  POSTGRES_HOST: {{ .Values.postgres.host | quote }}
+  POSTGRES_PORT: {{ .Values.postgres.port | quote }}
+  POSTGRES_USER: {{ .Values.postgres.user | quote }}
+  POSTGRES_DB: {{ .Values.postgres.database | quote }}
+{{- if and .Values.secrets.create (not .Values.secrets.existingSecret) (.Values.secrets.postgresPassword) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "igni.fullname" . }}-migrate-env
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: hook-succeeded
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ .Values.secrets.postgresPassword | quote }}
+{{- end }}
+{{- end }}

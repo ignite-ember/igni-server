@@ -1,0 +1,42 @@
+{{- include "igni.validate" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "igni.fullname" . }}-api
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.apiPort }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "igni.selectorLabels" (dict "root" . "component" "api") | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "igni.fullname" . }}-portal
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.portalPort }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "igni.selectorLabels" (dict "root" . "component" "portal") | nindent 4 }}

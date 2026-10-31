@@ -1,0 +1,88 @@
+# What `docker build` must not send to the daemon.
+#
+# F1. This lived at `Dockerfile.dockerignore` in the repository root,
+# which docker never reads: the per-Dockerfile form has to sit next to
+# the Dockerfile it belongs to (`containers/be/Dockerfile.dockerignore`),
+# and there is no root `Dockerfile` for the root-named one to pair with.
+# So nothing was excluded from any build, ever.
+#
+# Measured before the fix: a 1.3 GB context — `.venv` at 319 MB,
+# `portal/node_modules` at 323 MB, `.git` at 28 MB — for a Dockerfile
+# that copies about 11 MB. Every build in CI and CD paid for it, and so
+# did every developer.
+#
+# The image itself was never affected: `containers/be/Dockerfile` copies
+# named paths (`./app`, `alembic`, `alembic.ini`, `pyproject.toml`,
+# `uv.lock`) rather than `COPY . .`, so no secret ever reached a layer.
+# This is about the upload, and about a file that looked like a control
+# and was not one.
+#
+# A root `.dockerignore` rather than a per-Dockerfile one deliberately:
+# the per-Dockerfile form is a BuildKit feature, so `DOCKER_BUILDKIT=0`
+# silently ignores it — and silently ignored is how this started.
+
+# Version control and CI
+.git
+.github
+.gitignore
+
+# Virtualenvs and caches
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Node
+**/node_modules
+portal/dist
+
+# Local configuration and secrets. Never copied into the image, but a
+# context is uploaded to whatever daemon is building — which on a remote
+# builder is not this machine.
+.env
+.env.*
+**/*.env
+
+# Tests, docs and tooling: not in the image, not needed to build it.
+tests
+docs
+tools
+scripts
+marketplace
+
+# …except the one file the marketplace deployer copies.
+#
+# F2. `marketplace/Dockerfile` is built from the repository root — its
+# own instructions say so, because the chart is a sibling directory —
+# and excluding `marketplace` here meant that build failed with
+# "/marketplace/schema.yaml: not found". Nobody saw it, because the
+# deployer image had never been built: a correct change (slimming a
+# 1.3 GB context) made another artefact false, and nothing connected
+# the two.
+#
+# A negation rather than a `marketplace/Dockerfile.dockerignore`, which
+# would have been more precise and would also have reintroduced exactly
+# what the note at the top of this file is about: the per-Dockerfile
+# form is BuildKit-only and is silently ignored without it.
+#
+# The cost is 11 KB in the API image's context, which that image does
+# not copy and therefore never carries.
+!marketplace/schema.yaml
+
+# …and the tool that finishes an encryption-key rotation. The runbook
+# runs it inside the API container (`kubectl exec deploy/igni-api --
+# python tools/rotate_secret_key.py`), and with `tools` excluded it was
+# in no image: the step that re-encrypts what is stored could not be run
+# where the documentation said to run it.
+!tools/rotate_secret_key.py
+**/*.md
+**/*.log
+
+# The other images' own build inputs.
+portal
+containers
+
+# Playwright baselines, which are large and numerous.
+**/*.spec.ts-snapshots

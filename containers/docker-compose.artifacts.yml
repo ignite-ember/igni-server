@@ -1,0 +1,126 @@
+# Optional: igni Artifacts beside the development stack.
+#
+# Artifacts is a paid module, and its source is in a separate, private
+# repository. This file builds it from a sibling checkout, so it works only
+# for people who have one (`../../igni__artifacts`, next to this
+# repository). Without it, docker-compose.local.yml alone runs the whole
+# open server.
+#
+#   cd containers
+#   docker compose -f docker-compose.local.yml -f docker-compose.artifacts.yml \
+#     --env-file .env up --build
+#
+# or `make up ARTIFACTS=1`.
+
+services:
+  # igni__artifacts' embedder, built from the same sibling checkout as
+  # the service below. It is Artifacts' image, not this server's — igni
+  # server reads no vectors.
+  #
+  # Without it igni__artifacts reports `embedder: disabled` and stores
+  # new versions with no vectors, so `artifact_search` cannot find a
+  # document written locally — every read path would look healthy and
+  # quietly return nothing.
+  embedder:
+    container_name: igni__artifacts_embedder
+    build:
+      context: ../../igni__artifacts/embedder
+      dockerfile: Dockerfile
+    restart: always
+    networks:
+      - igni_network
+
+  # igni__artifacts — where documents actually live.
+  #
+  # Its own database: the service reads no table of ours and asks this
+  # server about people over HTTP. Nothing secret is shared between the
+  # two. On start it generates a key pair, registers, uploads its
+  # extension and logs its key's thumbprint; it serves nobody until a
+  # super admin approves it on the portal's Services page
+  # (docs/service-identity.md).
+  #
+  # **Its own name, never a path on igni's.** A service's URL is its
+  # identity: the audience of every token people get for it, and where
+  # igni calls `{service URL}/v1/igni/subjects/...` to erase or export a
+  # person's data. Locally that URL is http://artifacts.localhost:8100,
+  # chosen because the one name works from both sides:
+  #
+  #   * on the laptop, `*.localhost` is loopback (RFC 6761). Browsers,
+  #     curl and macOS's resolver answer it without any /etc/hosts entry,
+  #     and the port below is published on 127.0.0.1;
+  #   * inside this network, the alias below makes the same name resolve
+  #     to this container, on the same port — so igni_api's erasure and
+  #     export calls reach it at exactly the URL it registered.
+  #
+  # `http://localhost:8100` would be a distinct origin too, but inside a
+  # container `localhost` is that container, so igni could never call
+  # the service at its own URL. And routing it through the gateway by
+  # Host header would put a second service behind igni's edge, which is
+  # the shape this replaces.
+  #
+  # Every setting it needs is here, so a fresh clone runs with no second
+  # env file. Each is overridable from .env by the ARTIFACTS_-prefixed
+  # name.
+  igni_artifacts:
+    container_name: igni__artifacts
+    build:
+      context: ../../igni__artifacts
+      dockerfile: containers/be/Dockerfile
+    ports:
+      - "127.0.0.1:8100:8100"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=development
+      - PORT=8100
+      # Its own URL: the alias and the published port below, by
+      # construction. Change all three together.
+      - PUBLIC_BASE_URL=${ARTIFACTS_PUBLIC_BASE_URL:-http://artifacts.localhost:8100}
+      # Where it calls igni. In-network, straight to the API; the issuer it
+      # compares tokens against is igni's PUBLIC_BASE_URL, from discovery.
+      - IGNI_SERVER_BASE_URL=${ARTIFACTS_IGNI_SERVER_BASE_URL:-http://igni_api:7777}
+      # DEV ONLY — this key is in a public repository, so it protects
+      # nothing. It encrypts the service's signing key and each
+      # organisation's graph password; a value in .env wins, so secrets
+      # written under another key stay readable.
+      - GRAPH_CREDENTIALS_KEY=${ARTIFACTS_GRAPH_CREDENTIALS_KEY:-dHC78sDn0HeJYeEVxzWXUs52rxFaoGAUiIb0SrDGUa4=}
+      # DEV ONLY credentials: the same local Postgres and Redis as the API
+      # (.env), in a database and a logical db of its own (12, see
+      # igni__artifacts app/config.py).
+      - POSTGRES_URL=${ARTIFACTS_POSTGRES_URL:-postgresql+asyncpg://ember:ember@host.docker.internal:5532/igni_artifacts}
+      - REDIS_URL=${ARTIFACTS_REDIS_URL:-redis://host.docker.internal:6379/12}
+      - EMBEDDER_URL=${ARTIFACTS_EMBEDDER_URL:-http://embedder:7001}
+      - DOCUMENTS_BASE_URL=${ARTIFACTS_DOCUMENTS_BASE_URL:-http://localhost:3001}
+      - OAUTH_FRONTEND_BASE_URL=${ARTIFACTS_OAUTH_FRONTEND_BASE_URL:-http://localhost:3000}
+    depends_on:
+      - igni_api
+      - embedder
+    restart: always
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      igni_network:
+        aliases:
+          - artifacts.localhost
+
+  # The documents app — the hosted reading surface. Its source is in
+  # igni__artifacts/documents.
+  #
+  # Its own service rather than a path inside the portal, because it
+  # is its own application: a different audience (whoever was sent a
+  # link, who may have no account here), a different shape, and a
+  # bundle a fraction of the size because it shares none of the
+  # console's component library.
+  documents:
+    container_name: igni__documents
+    environment:
+      # The artifacts service, not igni_api — documents moved there.
+      - API_UPSTREAM=igni_artifacts:8100
+    build:
+      context: ../../igni__artifacts/documents
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:3001:3001"
+    restart: always
+    networks:
+      - igni_network
+

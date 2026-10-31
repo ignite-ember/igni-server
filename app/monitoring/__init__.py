@@ -1,0 +1,41 @@
+"""Metrics a customer's own monitoring can scrape. See `metrics.py`."""
+
+from app.monitoring.metrics import (
+    AUDIT_EVENTS_WRITTEN,
+    AUDIT_WRITE_FAILURES,
+    BUILD_INFO,
+    CHAT_QUEUE_DEPTH,
+    CHAT_QUEUE_WAIT,
+    DB_POOL_CAPACITY,
+    DB_POOL_IN_USE,
+    DB_POOL_TIMEOUTS,
+    EMAIL_CODES_THROTTLED,
+    HTTP_DURATION,
+    HTTP_REQUESTS,
+    note_retention_success,
+    REGISTRY,
+    render,
+    RETENTION_FAILURES,
+    SERVER_ERRORS,
+    set_dependency,
+)
+
+__all__ = [
+    'AUDIT_EVENTS_WRITTEN',
+    'AUDIT_WRITE_FAILURES',
+    'BUILD_INFO',
+    'CHAT_QUEUE_DEPTH',
+    'CHAT_QUEUE_WAIT',
+    'DB_POOL_CAPACITY',
+    'DB_POOL_IN_USE',
+    'DB_POOL_TIMEOUTS',
+    'EMAIL_CODES_THROTTLED',
+    'HTTP_DURATION',
+    'HTTP_REQUESTS',
+    'REGISTRY',
+    'RETENTION_FAILURES',
+    'SERVER_ERRORS',
+    'note_retention_success',
+    'render',
+    'set_dependency',
+]

@@ -1,0 +1,63 @@
+.login-page {
+  min-height: 100vh;
+  background-color: var(--bgColor-default);
+}
+
+.login-heading {
+  font-weight: var(--base-text-weight-light, 300);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 308px;
+  border: var(--borderWidth-thin, 1px) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium, 6px);
+  background-color: var(--bgColor-muted);
+}
+
+.login-hint {
+  color: var(--fgColor-muted);
+  margin: 0;
+}
+
+.login-code-input input {
+  letter-spacing: 0.15em;
+  font-family: var(--fontStack-monospace);
+}
+
+/* Social login buttons */
+.login-social-btn {
+  justify-content: center;
+}
+
+/* "Or" divider */
+.login-divider-row {
+  width: 100%;
+}
+
+.login-divider-line {
+  flex: 1;
+  height: var(--borderWidth-thin, 1px);
+  background-color: var(--borderColor-default);
+}
+
+.login-divider-text {
+  color: var(--fgColor-muted);
+  white-space: nowrap;
+}
+
+/* Footer */
+/* F132: this was capped at 308px to line up with the card above it,
+   and its one line of text needs 328px — so "Forgot password?" broke
+   across two lines on the first page anyone sees. Centred, and capped
+   at a token instead: the text sits on the same axis as the card
+   either way, and if it ever does wrap both lines stay centred. */
+.login-footer {
+  width: 100%;
+  max-width: var(--breakpoint-small);
+  text-align: center;
+}
+
+.login-footer button[class*="Link"] {
+  cursor: pointer;
+}

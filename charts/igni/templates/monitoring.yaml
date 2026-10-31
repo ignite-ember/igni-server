@@ -1,0 +1,83 @@
+{{- if or .Values.monitoring.serviceMonitor.enabled .Values.monitoring.prometheusRule.enabled }}
+{{- include "igni.validate" . -}}
+{{/*
+Both objects need the Prometheus Operator's CRDs, which is why both are
+off by default: rendering a ServiceMonitor into a cluster that has no
+`monitoring.coreos.com` API is an install that fails with
+`no matches for kind`, and doing it silently on somebody's first upgrade
+is worse.
+
+If you run Prometheus without the operator, ignore these and point your
+own scrape config at the API Service on {{ .Values.service.apiPort }}
+with a bearer token, and load `files/alerts.yaml` as a rule file.
+*/}}
+{{- end }}
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+{{- if not .Values.secrets.existingSecret }}
+{{- if not .Values.secrets.metricsToken }}
+{{- fail "monitoring.serviceMonitor.enabled needs secrets.metricsToken (or an existingSecret containing METRICS_TOKEN). Without a token /metrics answers 404 — it is not published unauthenticated, because the exposition lists every route in the product and the version each replica runs." -}}
+{{- end }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "igni.fullname" . }}
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "igni.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      # The token, read from the Secret rather than written here. A
+      # ServiceMonitor is a plain object readable by anything with `get
+      # servicemonitors`.
+      bearerTokenSecret:
+        name: {{ include "igni.secretName" . }}
+        key: METRICS_TOKEN
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "igni.fullname" . }}
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+{{ .Files.Get "files/alerts.yaml" | indent 2 }}
+{{- end }}
+{{- if .Values.monitoring.dashboard.enabled }}
+---
+{{/*
+The Grafana sidecar imports any ConfigMap carrying its label — usually
+`grafana_dashboard: "1"`, which is why the label is a value rather than a
+literal: the chart cannot know what your Grafana selects on, and guessing
+produces a dashboard that never appears with nothing to explain why.
+
+No Grafana dependency and no CRD: this is a ConfigMap. It renders whether
+or not Grafana is installed, which is why it is the one monitoring object
+that is safe to leave on if you are unsure.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "igni.fullname" . }}-dashboard
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.dashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  igni-overview.json: |
+{{ .Files.Get "files/dashboard.json" | indent 4 }}
+{{- end }}

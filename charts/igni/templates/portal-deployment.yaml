@@ -1,0 +1,133 @@
+{{- include "igni.validate" . -}}
+{{/*
+The admin portal: nginx serving a built bundle, plus a `/v1/` proxy to the
+API for browser traffic.
+
+Two things about this pod were found by running the image rather than by
+reading it, and both are load-bearing.
+
+**nginx resolves its upstream at startup.** With `API_UPSTREAM` naming a
+host that does not resolve, nginx exits with "host not found in upstream"
+rather than starting and retrying. The Service below always exists by the
+time these pods schedule — a Service has DNS as soon as it is created,
+whether or not any pod is ready — so this is survivable, and a pod that
+loses the race restarts into a working state.
+
+**The read-only root filesystem needs `fsGroup`.** This nginx renders
+/etc/nginx/templates/default.conf.template into /etc/nginx/conf.d at
+startup, which with a read-only root must be a writable volume. An
+emptyDir is owned by root:root unless `fsGroup` is set, so uid 101 could
+not write it — and the failure is quiet: the entrypoint logs "conf.d is
+not writable", nginx starts anyway with no server block, and answers
+nothing while the container reports Running. Verified both ways with
+`docker run --read-only`.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "igni.fullname" . }}-portal
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.portal.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "igni.selectorLabels" (dict "root" . "component" "portal") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "igni.labels" . | nindent 8 }}
+        app.kubernetes.io/component: portal
+      {{- with .Values.portal.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{/*
+      Kubernetes injects an environment variable per Service in the
+      namespace, and the chart tells you to bring your own Postgres and
+      Redis — so a Service named `redis` sets
+      `REDIS_PORT=tcp://10.96.112.222:6379`, which lands on
+      `Settings.redis_port: int` and kills the pod before it starts:
+
+          ValidationError: 1 validation error for Settings
+          redis_port
+            Input should be a valid integer, unable to parse string as
+            an integer [input_value='tcp://10.96.112.222:6379']
+
+      Nothing in igni discovers anything this way — every host comes from
+      configuration — so the links are pure hazard. Off on every pod
+      template in this chart, and a test asserts that. F1, found by
+      installing on kind with the obvious service names.
+      */}}
+      enableServiceLinks: false
+      serviceAccountName: {{ include "igni.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+      containers:
+        - name: portal
+          image: {{ include "igni.portalImage" . }}
+          imagePullPolicy: {{ .Values.portalImage.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: API_UPSTREAM
+              value: {{ printf "%s-api:%v" (include "igni.fullname" .) .Values.service.apiPort | quote }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.portal.resources | nindent 12 }}
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: nginx-conf
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.portal.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.portal.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.portal.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

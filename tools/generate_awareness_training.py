@@ -1,0 +1,512 @@
+"""Generate `docs/AWARENESS_TRAINING.md` — the syllabus, derived.
+
+C8, OR-3, ISO/IEC 27001 A 6.3, SOC 2 CC1.4 and CC2.2.
+
+Awareness training is the control that is easiest to satisfy dishonestly.
+Buy a course, sit people in front of a video about phishing, keep the
+completion certificates, show them to an auditor. Every box ticked, and
+nobody has learned anything about *this* system.
+
+So the syllabus here is not written. It is **derived from two things the
+repository already knows**, and that is the whole idea:
+
+**1. The policy clauses the software does not enforce.**
+`generate_policies.py` distinguishes a clause the system enforces from
+one only a person upholds — it has to, because a policy claiming an
+unenforced control is the failure that generator exists to prevent. That
+distinction is exactly a syllabus. A clause the software enforces needs
+no training: it is not possible to get wrong. A clause only a person
+upholds is the entire risk surface awareness training addresses, and
+there is no judgement involved in listing them.
+
+**2. The risks that have actually happened here.**
+`generate_risk_assessment.py` records, per risk, what was *observed*
+rather than imagined — 140 findings' worth. Training built on real
+incidents from the reader's own codebase is a different thing from
+training built on industry anecdotes: nobody can dismiss it as not
+applying to them.
+
+## What this cannot do
+
+It cannot train anybody. There is no learner, no delivery, no
+completion record with a name in it, and no evidence that a person read
+a word — which is why OR-3 stays `Process` and C8 stays partly blocked.
+This produces the syllabus and the record's shape; a person has to run
+it and sign the result.
+
+It also cannot decide the frequency or who must attend. Those are
+organisational commitments, so they are placeholders, in the same form
+the other seven documents use.
+
+## The rule that keeps it honest
+
+Every unenforced clause must appear, and nothing may appear that the
+software enforces. The first direction stops the syllabus quietly
+shedding an awkward topic; the second stops it padding with material
+that teaches people the training is not worth their attention.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass, field
+import importlib.util
+import pathlib
+import sys
+
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_OUTPUT = _ROOT / 'docs/AWARENESS_TRAINING.md'
+_TRACKER = _ROOT / 'docs/COMPLIANCE_TRACKER.md'
+
+PLACEHOLDER = '`__ORGANISATION_TO_COMPLETE__`'
+
+
+def _load(name: str):
+    """Import a sibling generator as the source of derived material."""
+    path = _ROOT / 'tools' / f'generate_{name}.py'
+    spec = importlib.util.spec_from_file_location(f'_awareness_{name}', path)
+    assert spec and spec.loader, path
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@dataclass(frozen=True)
+class Module:
+    """One thing a person has to come away knowing."""
+
+    ref: str
+    title: str
+    #: Why this is on the syllabus at all — the clause or risk it comes
+    #: from, quoted so a reader can check rather than trust.
+    because: str
+    #: What the learner must be able to do afterwards. Not "understands
+    #: the importance of": something checkable.
+    outcome: str
+    #: Who the material is for. Everyone, or a named role.
+    audience: str = 'Everyone with access to a customer deployment'
+    clauses: tuple[str, ...] = field(default_factory=tuple)
+    risks: tuple[str, ...] = field(default_factory=tuple)
+
+
+def unenforced_clauses() -> tuple:
+    """Policy clauses only a person upholds, in policy order."""
+    policies = _load('policies')
+    return tuple(c for c in policies.CLAUSES if getattr(c, 'unenforced_owner', ''))
+
+
+def observed_risks() -> tuple:
+    """Risks with a recorded instance rather than an estimate."""
+    risks = _load('risk_assessment')
+    return tuple(r for r in risks.RISKS if getattr(r, 'observed', ''))
+
+
+def _first_sentence(text: str, limit: int = 240) -> str:
+    """A clause's own words, trimmed to something quotable."""
+    flat = ' '.join(text.split())
+    cut = flat.find('. ')
+    sentence = flat if cut == -1 else flat[: cut + 1]
+    return sentence if len(sentence) <= limit else sentence[: limit - 1].rstrip() + '…'
+
+
+#: What a person must be able to do, per unenforced clause. Written, not
+#: derived — and that division is the point.
+#:
+#: Deriving the *list* of topics from the unenforced clauses takes no
+#: judgement and cannot be gamed. Deriving the *content* took none
+#: either, and that was the problem: the first version templated every
+#: outcome as "state that the software does not enforce this, name who
+#: does", which produced seven interchangeable modules teaching nothing.
+#: It was the padding this document's own closing section warns about,
+#: generated by the tool that warns about it.
+#:
+#: So the shape is derived and the substance is written, and
+#: `clauses_without_an_outcome` refuses to render until the two agree. A
+#: new unenforced clause is therefore a prompt to somebody: say what a
+#: person has to know about this, or explain why the clause should not
+#: be unenforced.
+OUTCOMES: dict[str, tuple[str, str]] = {
+    'AC-P10': (
+        'Multi-factor authentication, which this software does not have',
+        'Say plainly that local password accounts have no second factor, and that MFA is '
+        'real only where an OIDC provider is configured and administrative access actually '
+        'goes through it. Never describe the product as supporting MFA without that '
+        'qualification — to a customer, in a questionnaire, or in a listing. If you are asked '
+        'whether it does, the answer is "through your identity provider, and only if your '
+        'admins sign in that way".',
+    ),
+    'CR-P7': (
+        'What the product encrypts, and what your deployment has to',
+        'Separate the two. The product ships a TLS terminator with automatic certificates and '
+        'an 80→443 redirect, validated in CI. The DNS record, the trust chain, and encryption '
+        "at rest on the disk or volume are the deployment's — DP-3 and DP-4 are `Operator` in "
+        'the register for exactly that reason. Before answering "is data encrypted at rest", '
+        'check what the operator did rather than what the chart ships.',
+    ),
+    'SD-P9': (
+        'Review before merge is a setting somewhere else',
+        'Check that branch protection and required reviewers are actually enabled on the '
+        'source host, and know that nothing in the repository can assert it — the automated '
+        'gates run regardless of who reviewed. Do not cite "changes are reviewed" as a '
+        'control without having looked at that console.',
+    ),
+    'IR-P6': (
+        'The 72 hours in Article 33, and when the clock starts',
+        'Know that the window runs from becoming *aware* of a breach, not from confirming '
+        'one, and that the assessment is a legal decision needing a named person. Know where '
+        'the evidence lives: the append-only audit trail, the export, and the subject-access '
+        'report that can establish who was affected. Escalate on suspicion rather than '
+        'waiting for certainty, because waiting spends the window.',
+    ),
+    'IR-P7': (
+        'The incident plan exists and has never been rehearsed',
+        'Know that `docs/INCIDENT_RESPONSE.md` is thirty steps across detect, triage, '
+        'contain, eradicate, recover and learn, and that **every lever in it is tested '
+        'individually and nobody has run them in sequence**. Treat the first real incident as '
+        'the rehearsal it will be: follow the document, and write down where it was wrong. '
+        'Know that triage precedes containment because containment destroys evidence.',
+    ),
+    'IR-P8': (
+        'After an incident, produce the rule and not only the fix',
+        'Write down what was found, what it cost, and the change that keeps it fixed — the '
+        'form the pre-production review used for defects (`REVIEW_FINDINGS.md`). A fix without a rule '
+        'is a fix that gets '
+        'reverted by the next person who does not know why the code was odd.',
+    ),
+    'IR-P9': (
+        'Where to report, and the failure mode of a reporting channel',
+        'Know the address in `SECURITY.md` and what a report should contain, including what '
+        "you did *not* check. Know that the channel's failure mode is nobody reading it: an "
+        'address in a file is not a control, and if you own it, say how often you look.',
+    ),
+}
+
+
+def clauses_without_an_outcome() -> list[str]:
+    """An unenforced clause with no written outcome. The generator
+    refuses rather than templating one, because a templated outcome is
+    indistinguishable from an absent one to a reader and is worse to an
+    auditor: it looks like coverage."""
+    return sorted(c.ref for c in unenforced_clauses() if c.ref not in OUTCOMES)
+
+
+def outcomes_for_unknown_clauses() -> list[str]:
+    """The other direction: an outcome written for a clause that is no
+    longer unenforced, or no longer exists. Material teaching people to
+    watch something the software now handles."""
+    unenforced = {c.ref for c in unenforced_clauses()}
+    return sorted(ref for ref in OUTCOMES if ref not in unenforced)
+
+
+def derived_modules() -> tuple[Module, ...]:
+    """One module per unenforced clause, in the policies' own order.
+
+    The clause supplies the subject and the owner; `OUTCOMES` supplies
+    what a person has to be able to do.
+    """
+    out: list[Module] = []
+    for clause in unenforced_clauses():
+        owner = clause.unenforced_owner.split('.')[0].strip()
+        # The owner label prefixes the reasoning, so drop it: quoting
+        # "Security." as the reason a module exists explains nothing.
+        owned = clause.unenforced_owner
+        reasoning = owned.split('.', 1)[1].strip() if '.' in owned else owned
+        title, outcome = OUTCOMES[clause.ref]
+        out.append(
+            Module(
+                ref=f'M-{clause.ref}',
+                title=title,
+                because=(
+                    f'`{clause.ref}` is a policy clause the software does not enforce — '
+                    f'{owner} does. {_first_sentence(reasoning, limit=280)}'
+                ),
+                outcome=outcome,
+                audience=f'{owner}, and anybody who might assume the software handles it',
+                clauses=(clause.ref,),
+            )
+        )
+    return tuple(out)
+
+
+#: Modules that are not derived, because they are about the *practice*
+#: of this review rather than about a policy clause. Each names the
+#: observed risk it teaches, and every one of those is checked to exist.
+WRITTEN_MODULES: tuple[Module, ...] = (
+    Module(
+        ref='M-REPORT',
+        title='How to report something, and why speed beats certainty',
+        because=(
+            'A 6.8. `SECURITY.md` exists and says where to report; the part that has to be '
+            'true is that somebody is reading the address.'
+        ),
+        outcome=(
+            'Report a suspected problem through the channel in `SECURITY.md` without first '
+            'establishing that it is real. State what was checked and what was not — a report '
+            'saying "this endpoint leaks X, I did not check whether auth catches it" is more '
+            'useful than silence and cheaper than a confident wrong one.'
+        ),
+        risks=('R-19',),
+    ),
+    Module(
+        ref='M-NEVER-RUN',
+        title='An artefact nobody has executed is not working, it is untested',
+        because=(
+            'R-8, observed four times: a worker that died on import, a TLS profile rejected '
+            'by its own validator, a chart that could not install, and a backup script nothing '
+            'had ever run.'
+        ),
+        outcome=(
+            'Before claiming something works, say when it last ran and what ran it. Treat '
+            '"it renders", "it lints" and "it type-checks" as different claims from "it runs".'
+        ),
+        risks=('R-8',),
+    ),
+    Module(
+        ref='M-UNTRUE-DOC',
+        title='A document that is wrong is worse than a document that is missing',
+        because=(
+            'R-9. For a self-hosted product the documents *are* the product to anybody '
+            'deciding whether to buy it, and a reader cannot tell which sentence to distrust.'
+        ),
+        outcome=(
+            'When changing behaviour, find what described the old behaviour and change it in '
+            'the same commit. Where a claim can be checked mechanically, check it — this '
+            'repository asserts its documents against the code precisely because good '
+            'intentions did not hold.'
+        ),
+        risks=('R-9',),
+    ),
+    Module(
+        ref='M-VACUOUS-GUARD',
+        title='A check that passes for the wrong reason is worse than no check',
+        because=(
+            'R-10. A guard plus false confidence — a suite that reported green while skipping '
+            'every integration test, a probe that found no violations on a page it never '
+            'rendered.'
+        ),
+        outcome=(
+            'For any check you rely on, be able to say what makes it fail. Break it '
+            'deliberately once and watch it fail; if it does not, the check was not what you '
+            'thought it was.'
+        ),
+        risks=('R-10',),
+    ),
+    Module(
+        ref='M-CUSTOMER-DATA',
+        title="What leaves a customer's network, which is nothing",
+        because=(
+            "R-3, and the product's central promise. The vendor receives nothing and there is "
+            "no setting that changes that; a customer's own configuration is the only thing "
+            'that sends data anywhere.'
+        ),
+        outcome=(
+            'Recognise that adding any outbound call — telemetry, a licence check, an error '
+            'reporter, a CDN font — breaks the claim the product is sold on, and that a test '
+            'exists to stop it. Know that source code reaches whichever model endpoint the '
+            'customer configured, and that this makes them a controller with their own '
+            'obligations.'
+        ),
+        risks=('R-3',),
+    ),
+)
+
+
+def modules() -> tuple[Module, ...]:
+    return derived_modules() + WRITTEN_MODULES
+
+
+def register_rows() -> dict[str, str]:
+    import re
+
+    rows: dict[str, str] = {}
+    for match in re.finditer(
+        r'^\|\s*([A-Z]{2}-\d+)\s*\|([^|]*)\|([^|]*)\|\s*`?([A-Za-z]+)`?\s*\|',
+        _TRACKER.read_text(),
+        re.M,
+    ):
+        rows[match.group(1)] = match.group(4)
+    return rows
+
+
+# ── The checks the tests assert, computed here so both agree ─────────
+
+
+def clauses_without_a_module() -> list[str]:
+    """The direction that matters: a topic quietly dropped."""
+    covered = {c for m in modules() for c in m.clauses}
+    return sorted(c.ref for c in unenforced_clauses() if c.ref not in covered)
+
+
+def modules_for_enforced_clauses() -> list[str]:
+    """Padding. Teaching somebody to do what the software already does
+    for them is how a syllabus loses its audience."""
+    policies = _load('policies')
+    enforced = {c.ref for c in policies.CLAUSES if not getattr(c, 'unenforced_owner', '')}
+    return sorted(m.ref for m in modules() for c in m.clauses if c in enforced)
+
+
+def unknown_risks() -> list[str]:
+    known = {r.ref for r in _load('risk_assessment').RISKS}
+    return sorted({r for m in modules() for r in m.risks if r not in known})
+
+
+def risks_cited_without_an_instance() -> list[str]:
+    """A module claiming to teach from experience must cite a risk that
+    has one. Otherwise it is an industry anecdote in local clothing."""
+    observed = {r.ref for r in observed_risks()}
+    return sorted({r for m in modules() for r in m.risks if r not in observed})
+
+
+def modules_without_a_checkable_outcome() -> list[str]:
+    """ "Understands the importance of" is not an outcome. Every module
+    has to say what somebody can now *do*."""
+    weak = ('understand', 'be aware', 'appreciate', 'know the importance')
+    return sorted(m.ref for m in modules() if len(m.outcome) < 80 or any(m.outcome.lower().startswith(w) for w in weak))
+
+
+def render() -> str:
+    mods = modules()
+    derived = derived_modules()
+    written = WRITTEN_MODULES
+
+    out: list[str] = []
+    out.append('# Security awareness training')
+    out.append('')
+    out.append('**GENERATED by tools/generate_awareness_training.py — do not edit.**')
+    out.append('Regenerate with `make docs`; `tests/test_awareness_training.py` fails if the')
+    out.append('committed file and the generator disagree.')
+    out.append('')
+    out.append('C8, OR-3. ISO/IEC 27001 A 6.3; SOC 2 CC1.4 and CC2.2.')
+    out.append('')
+    out.append('## Why this is derived and not bought')
+    out.append('')
+    out.append('Awareness training is the control easiest to satisfy dishonestly: buy a course,')
+    out.append('play a video about phishing, keep the certificates. Every box ticked, and nobody')
+    out.append('has learned anything about this system.')
+    out.append('')
+    out.append('So the syllabus is not written. Most of it is **derived from the policy clauses')
+    out.append('the software does not enforce** — a distinction `docs/POLICIES.md` already makes,')
+    out.append('because a policy claiming an unenforced control is the failure that document')
+    out.append('exists to avoid. That distinction is a syllabus with no judgement in it: a clause')
+    out.append('the system enforces cannot be got wrong by a person and needs no training, and a')
+    out.append('clause only a person upholds is the entire surface this control addresses.')
+    out.append('')
+    out.append('The rest is drawn from **risks with a recorded instance** in')
+    out.append('`docs/RISK_ASSESSMENT.md` — things that went wrong in this codebase rather than')
+    out.append('in an industry anecdote. Nobody can dismiss those as not applying to them.')
+    out.append('')
+    out.append('| | |')
+    out.append('|---|---|')
+    out.append(f'| Modules derived from unenforced policy clauses | {len(derived)} |')
+    out.append(f'| Modules drawn from observed risks | {len(written)} |')
+    out.append('')
+    out.append('## What this document is not')
+    out.append('')
+    out.append('It is not training. There is no learner, no delivery, no completion record with')
+    out.append('a name in it, and no evidence that anybody has read a word. OR-3 stays `Process`')
+    out.append('for that reason. What is here is the syllabus and the shape of the record; a')
+    out.append('person has to deliver it and sign the result.')
+    out.append('')
+    out.append('It also does not set the frequency or the audience. Those are commitments an')
+    out.append('organisation makes, so they are left blank below rather than invented.')
+    out.append('')
+
+    out.append('## The programme')
+    out.append('')
+    out.append('| Field | Value |')
+    out.append('|---|---|')
+    for field_name in (
+        'Organisation',
+        'Owner of this programme',
+        'Delivered on joining, within',
+        'Repeated every',
+        'Record of completion kept at',
+        'Approved by',
+        'Date of approval',
+    ):
+        out.append(f'| {field_name} | {PLACEHOLDER} |')
+    out.append('')
+    out.append('A completion record needs, per person: who, which version of this document,')
+    out.append('when, and who confirmed it. The version is the part usually left out, and it is')
+    out.append('the part that matters — this file is regenerated whenever the policies or the')
+    out.append('risks it derives from change, so "trained" is a claim about a particular')
+    out.append('revision. Record the commit.')
+    out.append('')
+
+    out.append('## Syllabus')
+    out.append('')
+    for module in mods:
+        out.append(f'### {module.ref} — {module.title}')
+        out.append('')
+        out.append(f'**Audience.** {module.audience}')
+        out.append('')
+        out.append(f'**Why this is here.** {module.because}')
+        out.append('')
+        out.append(f'**Afterwards, the person can.** {module.outcome}')
+        if module.clauses:
+            out.append('')
+            out.append(f'Traces to: {", ".join(f"`{c}`" for c in module.clauses)} in `docs/POLICIES.md`.')
+        if module.risks:
+            out.append('')
+            out.append(
+                f'Traces to: {", ".join(f"`{r}`" for r in module.risks)} in '
+                '`docs/RISK_ASSESSMENT.md`, each with a recorded instance.'
+            )
+        out.append('')
+
+    out.append('## What is deliberately not on the syllabus')
+    out.append('')
+    out.append('**Anything the software enforces.** A person cannot choose a signing key at all —')
+    out.append('the server generates it — or start a deployment with the portal bypass on')
+    out.append('outside development, or accept an unverified webhook. Teaching people to do what')
+    out.append('the system already refuses to let them get wrong is how a syllabus teaches its')
+    out.append('audience that it is not worth attention. A test fails if a module appears for an')
+    out.append('enforced clause.')
+    out.append('')
+    out.append('**Generic material.** Phishing, password reuse and device hygiene are real and')
+    out.append('are not specific to this product. If the organisation buys a course for them,')
+    out.append('that is sensible and this document does not duplicate it — what it will not do is')
+    out.append('present bought material as evidence that anybody understands *this* system.')
+    out.append('')
+    out.append('**Assessment.** Whether a person has learned something is not established by')
+    out.append('their having attended. Each module states an outcome somebody can be asked to')
+    out.append("demonstrate; turning those into questions is the trainer's job and inventing a")
+    out.append('pass mark here would be inventing evidence.')
+    out.append('')
+    return '\n'.join(out)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description='Generate the awareness training syllabus.')
+    parser.add_argument('--check', action='store_true', help='exit non-zero if the file is stale')
+    args = parser.parse_args()
+
+    for label, offenders in (
+        ('are unenforced policy clauses with no written outcome', clauses_without_an_outcome()),
+        ('have an outcome written for a clause that is not unenforced', outcomes_for_unknown_clauses()),
+        ('are unenforced policy clauses with no module', clauses_without_a_module()),
+        ('are modules for clauses the software enforces', modules_for_enforced_clauses()),
+        ('cite a risk that does not exist', unknown_risks()),
+        ('cite a risk with no recorded instance', risks_cited_without_an_instance()),
+        ('have no checkable outcome', modules_without_a_checkable_outcome()),
+    ):
+        if offenders:
+            print(f'refusing: {offenders} {label}', file=sys.stderr)
+            return 1
+
+    rendered = render()
+    if args.check:
+        if _OUTPUT.exists() and _OUTPUT.read_text() == rendered:
+            print(f'{_OUTPUT} is current')
+            return 0
+        print(f'{_OUTPUT} is stale; regenerate it', file=sys.stderr)
+        return 1
+
+    _OUTPUT.write_text(rendered)
+    print(f'wrote {_OUTPUT} ({len(rendered.splitlines())} lines, {len(modules())} modules)')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

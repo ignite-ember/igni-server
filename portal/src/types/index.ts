@@ -1,0 +1,718 @@
+// ─── Usage ──────────────────────────────────────────────────────────
+
+export interface UsageDataPoint {
+  date: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  request_count: number
+}
+
+// ─── User ───────────────────────────────────────────────────────────
+
+// ─── Inference nodes ────────────────────────────────────────────────
+
+export type PoolType = 'chat' | 'codeindex'
+
+/**
+ * Where a node came from. The two are operated differently — a
+ * configured node changes by editing config and redeploying, a
+ * registered one by whatever started the cluster — so the portal shows
+ * which, to tell an operator where to go looking.
+ */
+export type NodeSource = 'static' | 'registered' | 'pinned'
+
+/**
+ * Whether a node is answering.
+ *
+ * ``unknown`` means we have not managed to probe it yet. It is rendered
+ * the same amber as ``degraded`` rather than getting a fourth colour:
+ * somebody asking "is my cluster up?" is not helped by grey.
+ */
+export type HealthState = 'healthy' | 'degraded' | 'unreachable' | 'unknown'
+
+export interface NodeHealth {
+  state: HealthState
+  /** Written for a person: "No response within 3s", not a status code. */
+  detail: string | null
+  latency_ms: number | null
+}
+
+/**
+ * The node's own gauges, from its `/metrics` endpoint.
+ *
+ * `running` differs from `in_flight` whenever igni is not the GPU's only
+ * client — someone calling it directly, or another service sharing it —
+ * and where they disagree the node is right. Every field is optional
+ * because not every node is vLLM; absent means "could not ask", never
+ * "zero".
+ */
+export interface NodeMetrics {
+  running: number | null
+  waiting: number | null
+  kv_cache_percent: number | null
+  /** hits / queries over the node's lifetime — whether sticky routing pays off. */
+  prefix_cache_hit_percent: number | null
+  /** Sequences discarded and redone for want of KV blocks. */
+  preemptions: number | null
+}
+
+export interface NodeStatus {
+  id: string
+  base_url: string
+  /** Every id this node answers to: the base model, plus any LoRA adapters. */
+  models: string[]
+  pools: PoolType[]
+  multimodal: boolean
+  source: NodeSource
+  in_flight: number
+  max_concurrent: number
+  utilization: number
+  health: NodeHealth
+  metrics: NodeMetrics | null
+  /** Registered nodes only; a configured node has no heartbeat to be late on. */
+  last_seen_seconds_ago: number | null
+  registered_at: number | null
+  /**
+   * Set when an operator took this node out of rotation. The node is
+   * still listed — a switch whose subject disappears cannot be switched
+   * back — so this is what tells the two states apart.
+   */
+  drain: NodeDrain | null
+}
+
+export interface NodeDrain {
+  by: string
+  by_email: string | null
+  at: string
+  reason: string | null
+}
+
+export interface PoolStatus {
+  pool: PoolType
+  nodes: NodeStatus[]
+  total_in_flight: number
+  total_capacity: number
+  utilization: number
+}
+
+/** A node an admin added by hand. The api_key is never returned. */
+export interface PinnedNode {
+  node_id: string
+  base_url: string
+  models: string[]
+  max_concurrent: number
+  pools: PoolType[]
+  multimodal: boolean
+  enabled: boolean
+  has_api_key: boolean
+}
+
+export interface PinnedNodeInput {
+  node_id: string
+  base_url: string
+  models: string[]
+  api_key?: string
+  max_concurrent: number
+  pools: PoolType[]
+  multimodal: boolean
+}
+
+/**
+ * What an address turned out to be, when asked directly.
+ *
+ * ``reachable: false`` arrives as a 200 with a reason, not an error:
+ * "I could not reach that" is a successful answer to "what is here?".
+ */
+export interface NodeProbeResult {
+  reachable: boolean
+  models: string[]
+  detail: string | null
+  latency_ms: number | null
+  /**
+   * It answered, but refused without a token — the likely outcome of
+   * pasting a vLLM node started with `--api-key`, which protects `/v1`.
+   */
+  needs_credentials: boolean
+}
+
+export interface InferenceStatus {
+  pools: PoolStatus[]
+  /**
+   * Whether this deployment accepts self-registration at all. Without
+   * it, "nothing has registered" and "registration is switched off" look
+   * identical, and they call for completely different fixes.
+   */
+  registration_enabled: boolean
+  heartbeat_interval_seconds: number
+}
+
+export interface OrgSummary {
+  id: string
+  slug: string
+  display_name: string
+  role: 'admin' | 'member'
+}
+
+export interface UserMe {
+  user_id: string
+  email: string | null
+  full_name: string | null
+  created_at: string | null
+  role?: 'admin' | 'member'
+  pending_email?: string | null
+  auth_provider?: 'email' | 'google' | 'oidc' | 'scim'
+  org_id?: string | null
+  org_slug?: string | null
+  org_display_name?: string | null
+  organizations?: OrgSummary[]
+  /** Owns the install: creates organisations, makes other super admins. */
+  is_super_admin?: boolean
+}
+
+// ─── Super admins ───────────────────────────────────────────────────
+
+/** An organisation as a super admin sees it: what it is and what it owns. */
+export interface DeploymentOrg {
+  id: string
+  slug: string
+  display_name: string
+  domains: string[]
+  members: number
+}
+
+export interface SuperAdmin {
+  user_id: string
+  email: string | null
+  full_name: string | null
+}
+
+// ─── Registered clients ─────────────────────────────────────────────
+
+export type RegisteredClientKind = 'service' | 'app'
+export type RegisteredClientState = 'pending' | 'approved' | 'revoked'
+
+/**
+ * A service or app that registered itself with this install.
+ *
+ * `thumbprint` identifies the key it registered with. The service
+ * prints the same value in its own log, and a super admin compares the
+ * two before approving: a match means the registration came from the
+ * service they deployed and not from somebody else on the network.
+ */
+export interface RegisteredClient {
+  client_id: string
+  kind: RegisteredClientKind
+  name: string
+  base_url: string
+  redirect_uris: string[]
+  thumbprint: string
+  state: RegisteredClientState
+  created_at: string
+  decided_at: string | null
+  /** What it ships to people's machines; `null` until it uploads one. */
+  extension: ServiceExtensionSummary | null
+  /** A newer version that asks for more, waiting for a super admin. */
+  held_version?: string | null
+}
+
+/** The extension a service ships, as the list of services shows it. */
+export interface ServiceExtensionSummary {
+  extension_id: string
+  version: string
+  name: string
+  description: string
+  published_at: string
+}
+
+/** One of the plugin's own agents, under the extension's namespace. */
+export interface ExtensionPluginAgent {
+  file: string
+  name: string
+  description: string
+}
+
+/** An agent the extension overrides, as its own file defines it while it runs. */
+export interface ExtensionAgentOverride {
+  agent: string
+  file: string
+  description: string
+  exclusive: boolean
+  when: string | null
+}
+
+export interface ExtensionPluginSkill {
+  name: string
+  description: string
+}
+
+export interface ExtensionPlugin {
+  agents?: ExtensionPluginAgent[]
+  agent_overrides?: ExtensionAgentOverride[]
+  skills?: ExtensionPluginSkill[]
+}
+
+/** A whole prompt an extension brings: `main`, `plan_mode`, `agent:<name>`. */
+export interface ExtensionImpactOverride {
+  target: string
+  /** Its sections; an agent's `frontmatter` is implied. */
+  sections: string[]
+  exclusive: boolean
+  when: string | null
+}
+
+/** One change an extension makes to a prompt. */
+export interface ExtensionImpactEdit {
+  target: string
+  op: 'append' | 'insert' | 'replace'
+  /** The section replaced, or inserted against. */
+  section: string | null
+  position: 'before' | 'after' | null
+  /** The new section's name, for an insert or an append. */
+  name: string | null
+  when: string | null
+}
+
+/** What an extension changes in igni, read off its manifest by igni server. */
+export interface ExtensionImpact {
+  extension_id: string
+  name: string
+  version: string
+  prompt_overrides: ExtensionImpactOverride[]
+  prompt_edits: ExtensionImpactEdit[]
+  anchors: string[]
+  commands: string[]
+}
+
+/** An edit that would land nowhere, and whose override leaves it out. */
+export interface ExtensionDropped {
+  claim: string
+  reason: string
+  by: string
+}
+
+/** Two or more extensions claiming one thing, and who has it by priority. */
+export interface ExtensionCollision {
+  claim: string
+  extensions: string[]
+  /**
+   * The highest in the priority order. `null` only for an exclusive
+   * override a higher extension's edits switched off, with no other
+   * override left — then nobody holds the whole prompt.
+   */
+  winner: string | null
+  /** The extensions that lost something in it. */
+  losers: string[]
+}
+
+/** One thing an extension does not get, and why — `lower priority than <extension>`. */
+export interface ExtensionSwitchedOff {
+  claim: string
+  reason: string
+}
+
+export interface ExtensionReview {
+  impact: ExtensionImpact
+  unknown_targets: string[]
+  igni_commands: string[]
+  collisions: ExtensionCollision[]
+  /** What it does not get, and why. */
+  switched_off: ExtensionSwitchedOff[]
+  /** Its edits another extension's override leaves out. */
+  dropped: ExtensionDropped[]
+  /** Other extensions' edits its own overrides leave out, by extension. */
+  drops_others: Record<string, ExtensionDropped[]>
+}
+
+/** One extension in the priority order. */
+export interface ExtensionPriorityEntry {
+  extension_id: string
+  name: string
+  service: string
+}
+
+/**
+ * The super admin's priority order of extensions, highest first,
+ * deployment-wide. The higher one wins every collision; prompt edits
+ * stack and extensions' hooks are asked in it.
+ */
+export interface ExtensionPriority {
+  entries: ExtensionPriorityEntry[]
+  /** Who set it; empty while it is the order services were approved in. */
+  set_by: string
+  set_at: string | null
+}
+
+/**
+ * Everything the extension would put on people's machines.
+ *
+ * `manifest` is the whole manifest as the service sent it, so it is read
+ * defensively (see `lib/extensionManifest`): any key may be missing.
+ */
+export interface ServiceExtensionDetail extends ServiceExtensionSummary {
+  sha256: string
+  manifest: Record<string, unknown>
+  plugin: ExtensionPlugin
+  /** Its impact on igni and every collision it is in. */
+  review?: ExtensionReview | null
+}
+
+/** One registration, with its extension in full. */
+export interface RegisteredClientDetail extends RegisteredClient {
+  extension_detail: ServiceExtensionDetail | null
+  /** The held version and what it adds, if one is waiting. */
+  held_update?: HeldExtensionUpdate | null
+}
+
+/** One thing a held version asks for that the approved version did not. */
+export interface AddedGrant {
+  kind: string
+  /** The kind in words: "Network egress", "Secret", "Prompt section". */
+  label: string
+  /** What is asked for: a host, a path, a tool's name, `main#rules`. */
+  item: string
+  /** What the approved version had, where this widens something it had. */
+  was: string | null
+}
+
+/**
+ * An approved service's upload that asks for more than the approved
+ * version. Machines keep receiving `approved_version` until a super
+ * admin approves this one; rejecting it discards it.
+ */
+export interface HeldExtensionUpdate {
+  client_id: string
+  service: string
+  extension_id: string
+  name: string
+  approved_version: string | null
+  version: string
+  sha256: string
+  uploaded_at: string
+  comparison: { wider: boolean; added: AddedGrant[] }
+}
+
+/** What a registered client is asking a person to sign in to. */
+export interface AuthorizationAsk {
+  client_name: string
+  organisations: { org_id: string; name: string }[]
+}
+
+// ─── Team ───────────────────────────────────────────────────────────
+
+export type TeamRole = 'admin' | 'member'
+export type TeamMemberStatus = 'active' | 'invited' | 'deactivated'
+
+export interface TeamMember {
+  id: string
+  user_id: string
+  email: string
+  full_name: string | null
+  role: TeamRole
+  status: TeamMemberStatus
+  total_sessions: number
+  total_tokens: number
+  last_active: string | null
+  joined_at: string
+}
+
+/**
+ * The answer to POST /portal/team/invite.
+ *
+ * ``invite_url`` is always populated, not only when email is off: it is
+ * not a secret — the invite is claimed by signing up with the invited
+ * address, so the link is derivable from the address alone — and an
+ * admin who would rather send it over Slack should not have to
+ * reconstruct it.
+ *
+ * ``emailed`` is false when this deployment has no SMTP relay, which is
+ * a supported configuration. Passing the link on is then the admin's
+ * job, and the UI has to say so rather than claiming a message was
+ * sent.
+ */
+export interface InvitedMember extends TeamMember {
+  invite_url: string
+  emailed: boolean
+}
+
+export interface TeamMemberList {
+  members: TeamMember[]
+  total: number
+}
+
+// ─── Groups ─────────────────────────────────────────────────────────
+
+export type EntryKind = 'agents' | 'mcps' | 'plugins' | 'settings'
+export type ContentType = 'markdown' | 'yaml' | 'json'
+
+/**
+ * Brand overrides a group's people see in the igni client.
+ *
+ * Every field is optional and every unset one falls back to what igni
+ * ships, so a theme that sets only `accent` leaves the rest alone. The
+ * server validates all of it: colours must be hex, and `brand_mark`
+ * must be a base64 `data:` URI — not a URL, because the desktop
+ * client's CSP only allows images from `data:`.
+ */
+export interface GroupTheme {
+  accent?: string | null
+  danger?: string | null
+  success?: string | null
+  brand_name?: string | null
+  brand_mark?: string | null
+}
+
+export interface OrgGroup {
+  id: string
+  org_id: string
+  name: string
+  description: string | null
+  /**
+   * Which model this group's people get when they do not name one —
+   * usually a LoRA adapter. Null means the deployment default, whatever
+   * the chosen node advertises first.
+   */
+  default_model: string | null
+  /**
+   * Brand overrides for this group's people. Null is igni's palette,
+   * which is every group that has not set one.
+   */
+  theme: GroupTheme | null
+  /**
+   * The group seeded with what igni ships. One per org, and the one
+   * people usually mean when they copy a group.
+   */
+  is_default: boolean
+  created_by_user_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface OrgGroupDetail extends OrgGroup {
+  member_count: number
+  entry_count: number
+}
+
+export interface OrgGroupList {
+  // The list endpoint counts members and entries for each group, and
+  // both are shown — on the row, and when picking a group to copy.
+  groups: OrgGroupDetail[]
+  total: number
+  offset?: number
+  limit?: number
+}
+
+export interface OrgGroupMember {
+  id: string
+  group_id: string
+  user_id: string
+  added_by_user_id: string
+  added_at: string
+  email: string | null
+  full_name: string | null
+}
+
+export interface OrgGroupMemberList {
+  members: OrgGroupMember[]
+  total: number
+}
+
+export interface OrgGroupEntry {
+  id: string
+  group_id: string
+  kind: EntryKind
+  entry_name: string
+  content: string
+  content_type: ContentType
+  enabled: boolean
+  created_by_user_id: string
+  created_at: string
+  updated_at: string
+  source_url: string | null
+  source_ref: string | null
+  source_subdir: string | null
+  /**
+   * Agents only: which model this one runs against. Null falls back to
+   * the group's default, then the deployment's.
+   */
+  model: string | null
+}
+
+export interface OrgGroupEntryList {
+  entries: OrgGroupEntry[]
+  total: number
+}
+
+/** One approved extension, and whether this group's people get it (off by default). */
+export interface GroupExtension {
+  extension_id: string
+  name: string
+  description: string
+  service_url: string
+  enabled: boolean
+}
+
+export interface GroupExtensionList {
+  extensions: GroupExtension[]
+}
+
+export interface OrgGroupSummary {
+  id: string
+  org_id: string
+  name: string
+}
+
+/** The one group a person of the organisation is in. Everybody is in exactly one. */
+export interface OrgGroupMembership {
+  user_id: string
+  group_id: string
+  group_name: string
+  is_default: boolean
+}
+
+export interface OrgGroupMembershipList {
+  memberships: OrgGroupMembership[]
+}
+
+// ─── The cloud: apps, VM profiles, commands ─────────────────────────
+
+/** An app: the organisation's other kind of producer, acting only as itself. */
+export interface OrgApp {
+  app_id: string
+  client_id: string
+  name: string
+  owner_user_id: string | null
+  owner_email: string | null
+  thumbprint: string
+  /** Null: the organisation's default VM profile. */
+  vm_profile_id: string | null
+  created_at: string
+}
+
+export interface OrgAppList {
+  apps: OrgApp[]
+}
+
+export interface VmPackages {
+  apt: string[]
+  pip: string[]
+  npm: string[]
+}
+
+/** Everything a VM profile says, as an org admin writes it. */
+export interface VmProfileSettings {
+  name: string
+  /** The most memory the VM may have: its size at boot. */
+  memory_mib: number
+  /** What it normally has; the node gives more, up to `memory_mib`, while it needs it. */
+  normal_memory_mib: number
+  /** What the node expects the VM to use, for placing it; null: the node's rule. */
+  expected_memory_mib: number | null
+  vcpus: number
+  /** Null: never paused. */
+  idle_before_pause_s: number | null
+  packages: VmPackages
+  setup_script: string | null
+}
+
+export interface VmProfile extends VmProfileSettings {
+  id: string
+  is_default: boolean
+  version: string
+  packages_version: string
+  within_caps: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface PlatformVmCaps {
+  max_memory_mib: number
+  max_vcpus: number
+  max_idle_before_pause_s: number | null
+  updated_at?: string | null
+}
+
+export interface OrgVmQuota {
+  org_id: string
+  awake_vm_seconds_per_month: number | null
+  enforced: boolean
+  updated_at: string | null
+}
+
+export interface ProducerAssignment {
+  id: string
+  name: string
+  vm_profile_id: string | null
+}
+
+export interface VmProfilesOverview {
+  org_id: string
+  caps: PlatformVmCaps
+  quota: OrgVmQuota
+  default_profile_id: string
+  profiles: VmProfile[]
+  groups: ProducerAssignment[]
+  apps: ProducerAssignment[]
+}
+
+export type ProducerKind = 'person' | 'app'
+
+export interface ProducerRef {
+  kind: ProducerKind
+  id: string
+}
+
+export interface VmRequester {
+  kind: string
+  id: string
+  acting_as: 'producer' | 'org_admin' | 'super_admin'
+}
+
+/** One command in one VM — and its audit record. */
+export interface VmCommandRecord {
+  command_id: string
+  org_id: string
+  producer: ProducerRef
+  command: string
+  timeout_s: number
+  job_id: string | null
+  wake: boolean
+  requested_by: VmRequester
+  state: 'queued' | 'handed_out' | 'running' | 'finished' | 'cancelled'
+  handed_to: string | null
+  created_at: string
+  handed_out_at: string | null
+  started_at: string | null
+  finished_at: string | null
+  exit_code: number | null
+  output: string | null
+  error: string | null
+}
+
+export type JobScopeKind = 'group' | 'profile' | 'org' | 'platform'
+
+export interface VmJobRecord {
+  job_id: string
+  org_id: string
+  scope: { kind: JobScopeKind; id: string | null }
+  command: string
+  timeout_s: number
+  requested_by: VmRequester
+  created_at: string
+  cancelled_at: string | null
+  handed_out: number
+  finished: number
+}
+
+/** A producer's VM credential, as the portal shows it — never the secret. */
+export interface VmCredential {
+  credential_id: string
+  org_id: string
+  producer: ProducerRef
+  created_at: string
+  last_used_at: string | null
+  idle_expires_at: string
+  awaiting_pickup: boolean
+  picked_up_at: string | null
+  generation: number
+}

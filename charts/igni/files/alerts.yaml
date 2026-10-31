@@ -1,0 +1,209 @@
+# Alert rules for a self-hosted igni deployment.
+#
+# LG-7. Prometheus rule groups, loadable three ways: as a file in your own
+# Prometheus (`rule_files:`), as the PrometheusRule this chart renders
+# (`monitoring.prometheusRule.enabled`), or as a reference for translating
+# into whatever you actually run.
+#
+# **We cannot monitor your deployment and would not want to.** The product
+# is self-hosted; nothing phones home and there is no dashboard of ours to
+# look at. What we can do is say which numbers matter and what a
+# reasonable threshold is, because we know which failures are silent and
+# you should not have to learn that from an incident.
+#
+# Every rule has a `for:` window, a severity, and a description that says
+# what to do — an alert whose text is its own expression wakes somebody up
+# with a puzzle. Thresholds assume one deployment serving one
+# organisation. Tune them; keep the reasoning.
+
+groups:
+  - name: igni.audit
+    rules:
+      # The rule that made LG-7 worth doing. The audit recorder fails
+      # open: a write failure logs and the request still succeeds, because
+      # refusing would turn a database hiccup into an outage on every
+      # privileged endpoint at once. The consequence is that a privileged
+      # action can succeed with no record of it, and this is the only
+      # thing that would ever notice.
+      #
+      # `> 0`, not a rate. One lost audit record is worth knowing about;
+      # this is not a capacity metric.
+      - alert: IgniAuditWriteFailing
+        expr: increase(igni_audit_write_failures_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: igni could not write an audit record
+          description: >-
+            {{ $value }} audit event(s) failed to write in the last 15 minutes.
+            Each is a privileged action that happened with no record of it. The
+            lost events are in the application log prefixed `AUDIT WRITE
+            FAILED`, with the actor and route — copy them out before log
+            retention removes them. Then find the cause: it is almost always
+            the same database the request itself used, so check /ready and
+            Postgres first.
+
+  - name: igni.availability
+    rules:
+      - alert: IgniDependencyDown
+        expr: igni_dependency_up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: igni cannot reach {{ $labels.dependency }}
+          description: >-
+            The last readiness check could not reach {{ $labels.dependency }}.
+            The API is returning 503 from /ready, so an orchestrator should
+            already have drained it — if traffic is still arriving, whatever
+            balances it is reading /health instead, which deliberately checks
+            nothing.
+
+      - alert: IgniServerErrors
+        expr: sum(rate(igni_server_errors_total[5m])) by (route) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: igni is returning 5xx on {{ $labels.route }}
+          description: >-
+            More than 3 server errors a minute on {{ $labels.route }} for ten
+            minutes. A 5xx here is a bug or an outage, never a client mistake —
+            client mistakes are 4xx and are not counted. The route label is a
+            template, so the failing identifiers are in the application log,
+            not here.
+
+      - alert: IgniReplicasDisagreeOnVersion
+        expr: count(count by (version) (igni_build_info)) > 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: igni replicas are running different versions
+          description: >-
+            More than one version is serving. Normal for a few minutes during
+            a rollout and not for thirty: a stuck deployment leaves half the
+            traffic on the old schema's expectations, and migrations run
+            before the new replicas start.
+
+  - name: igni.compliance
+    rules:
+      # These two are unusual as alerts: nothing is broken, and something
+      # a customer has committed to is not happening. They exist because a
+      # retention window that silently stopped being applied is the exact
+      # shape of an audit finding.
+      - alert: IgniRetentionNotRunning
+        expr: >-
+          igni_retention_last_success_timestamp_seconds > 0
+          and time() - igni_retention_last_success_timestamp_seconds > 172800
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: igni retention has not completed for two days
+          description: >-
+            The retention runner prunes daily and has not finished a round for
+            over 48 hours, so audit events are being kept past their declared
+            window — the thing GDPR Art. 5(1)(e) asks you
+            to be able to state. It holds a Postgres advisory lock while
+            running, so check whether another instance is stuck holding it.
+
+      # Deliberately separate from the rule above, which requires the
+      # gauge to be non-zero. A deployment where the runner never started
+      # reports 0, and `time() - 0` is fifty-odd years — which would fire
+      # the rule above with a nonsensical duration in it.
+      - alert: IgniRetentionNeverRan
+        expr: igni_retention_last_success_timestamp_seconds == 0
+        for: 6h
+        labels:
+          severity: info
+        annotations:
+          summary: igni retention has never run
+          description: >-
+            Expected if AUDIT_RETENTION_DAYS is 0, which means keep
+            everything forever — a lawful choice
+            only if you can defend it. If you did set a window, the runner is
+            not starting: check the API logs at startup.
+
+      # Added because a test refused to let the counter exist without a
+      # rule. Distinct from the two above: those detect a runner that
+      # stopped, this one a runner that is running and raising — the
+      # window is still not being applied, but the cause is different and
+      # so is the first thing to look at.
+      - alert: IgniRetentionFailing
+        expr: increase(igni_retention_failures_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: igni retention rounds are raising
+          description: >-
+            {{ $value }} retention round(s) failed in the last hour, so audit
+            events are being kept past their declared
+            window. The traceback is in the API log at `Retention round
+            failed`. The loop survives a failure by design and retries daily,
+            so this will not self-heal if the cause is a permission or a
+            schema problem.
+
+      - alert: IgniEmailCodesThrottled
+        expr: sum(rate(igni_email_codes_throttled_total[15m])) by (reason) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: igni is refusing to send verification codes ({{ $labels.reason }})
+          description: >-
+            Sustained refusals to send sign-in, sign-up or password-reset codes.
+            `cooldown` and `per_address_hourly` in volume mean somebody is
+            targeting one mailbox — the codes are being requested by an
+            unauthenticated caller, and each request would otherwise invalidate
+            the previous one, so this is a denial-of-sign-in attempt against a
+            specific account. `global_hourly` means the deployment-wide cap was
+            reached: either a genuine onboarding wave, in which case raise
+            EMAIL_CODES_HOURLY_LIMIT, or somebody spraying across many
+            addresses from your relay identity — which is how a sending domain
+            gets blacklisted.
+
+      - alert: IgniDbPoolExhausted
+        expr: increase(igni_db_pool_timeouts_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: igni requests are failing for want of a database connection
+          description: >-
+            {{ $value }} request(s) in the last 10 minutes gave up waiting for a
+            free connection from this process's pool. The pool is the whole
+            process's ceiling on concurrent queries — DB_POOL_SIZE +
+            DB_MAX_OVERFLOW, reported as `igni_db_pool_capacity` — so this is a
+            capacity limit here, not a fault in the database. Compare it with
+            `igni_db_pool_connections_in_use`: pinned at capacity means raise
+            the pool (and check the server's max_connections has room across
+            every replica); spiky means one slow query is holding connections
+            while everything else queues behind it. `/ready` reports this as
+            `busy` and deliberately stays ready, because draining a replica
+            that is merely busy sends its load to the next one.
+
+      - alert: IgniClockSkew
+        expr: abs(igni_clock_skew_seconds) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: An igni replica's clock is {{ $value }}s from the database's
+          description: >-
+            Three things compare a timestamp this process made against one the
+            database made, and all three fail quietly when the clocks disagree.
+            **Session revocation**: `users.tokens_valid_after` is stamped by
+            Postgres and compared against a token's `iat`, stamped by whichever
+            replica minted it — so a replica running ahead by more than a
+            second mints tokens that survive a withdrawal, which is the reason
+            this alert exists. **The audit trail**: `occurred_at` is the app's
+            clock and the trail is paginated on that column, so skew
+            mis-orders it and can skip a row at a page boundary. **Retention**:
+            windows are computed against the app clock, so a skewed replica
+            prunes the wrong day. Positive means the app is ahead of the
+            database, the direction that defeats revocation. Fix NTP on the
+            host rather than tuning this threshold — it is the revocation
+            margin, not a preference.

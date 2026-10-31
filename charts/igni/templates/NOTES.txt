@@ -1,0 +1,80 @@
+igni {{ .Chart.AppVersion }} installed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+The migration ran before anything else started. If the install failed at
+that step, the Job and its logs are still there:
+
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "igni.fullname" . }}-migrate
+
+Watch it come up:
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+{{ if .Values.ingress.enabled -}}
+The portal is at https://{{ .Values.ingress.host }} and the API at
+https://{{ .Values.ingress.host }}/v1. Point the CLI at the second one.
+{{- else -}}
+No Ingress is enabled, so nothing is published yet. To look at the portal
+without publishing it:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "igni.fullname" . }}-portal 3000:{{ .Values.service.portalPort }}
+{{- end }}
+
+Two things worth checking before you hand this to anyone.
+
+1. The startup checks. They warn rather than refuse for most things, and
+   the warnings are the useful part:
+
+     kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "igni.fullname" . }}-api | grep 'Deployment check'
+
+{{ if eq .Values.appEnv "dev" -}}
+   APP_ENV is `dev` in this release, which downgrades the safety checks
+   to warnings — including the one that refuses a portal auth bypass.
+   (Not SECRET_ENCRYPTION_KEY: that one is required everywhere.)
+   Do not leave it that way anywhere other people can reach.
+{{- else -}}
+   APP_ENV is `prod`, so the checks that matter refuse rather than warn.
+{{- end }}
+
+2. Retention. AUDIT_RETENTION_DAYS={{ .Values.retention.auditDays }}.
+{{ if eq (int .Values.retention.auditDays) 0 -}}
+   That is 0, which means keep forever and the retention runner does not
+   start at all. Defensible only if you can defend it: GDPR Art. 5(1)(e)
+   asks for a limit rather than a preference.
+{{- else -}}
+   The retention runner is active and prunes daily.
+{{- end }}
+
+Services (CodeIndex, Artifacts) each have their own hostname, never a
+path on this one: a service's URL is its identity — the audience of the
+tokens people get for it, and where this server calls it to erase or
+export somebody's data. Each is deployed with two addresses: its own
+public URL, and this server's: {{ include "igni.publicBaseUrl" . | default "(urls.publicBase is unset)" }}
+Its public signing keys are at /.well-known/jwks.json there. Nothing
+secret is shared: a service registers itself, uploads the extension it
+ships, and serves nobody until a super admin approves it on the portal's
+Services page; see docs/service-identity.md.
+{{- if .Values.artifacts.enabled }}
+
+Artifacts is published at {{ include "igni.artifactsPublicUrl" . }}
+{{- if .Values.ingress.enabled }} by the Ingress
+{{ include "igni.fullname" . }}-artifacts. Point that hostname's DNS at your ingress controller.
+{{- else }}. No Ingress is enabled, so
+publishing that host is yours to do.
+{{- end }}
+Deploy the service with its addresses from this release:
+
+  envFrom:
+    - configMapRef:
+        name: {{ include "igni.fullname" . }}-artifacts-env
+
+which sets PUBLIC_BASE_URL={{ include "igni.artifactsPublicUrl" . }} and
+IGNI_SERVER_BASE_URL={{ include "igni.apiInClusterUrl" . }}.
+GRAPH_CREDENTIALS_KEY, POSTGRES_URL and REDIS_URL are its own secrets.
+{{- if .Values.networkPolicy.enabled }}
+networkPolicy is on: igni's API calls {{ include "igni.artifactsPublicUrl" . }} for
+erasure and export, so add the address that hostname resolves to as a
+networkPolicy.egress entry (port 443, components: [api]). Artifacts calls
+the API in-cluster at {{ include "igni.apiInClusterUrl" . }}, so allow its
+namespace or pods in networkPolicy.apiIngressFrom.
+{{- end }}
+{{- end }}

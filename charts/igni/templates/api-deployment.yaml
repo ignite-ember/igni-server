@@ -1,0 +1,153 @@
+{{- include "igni.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "igni.fullname" . }}-api
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "igni.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "igni.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        {{/*
+        Roll the pods when configuration changes. Without these a
+        `helm upgrade` that alters only a ConfigMap value changes
+        nothing about the pod spec, so Kubernetes has no reason to
+        restart anything and the running pods keep the old settings —
+        an upgrade that reports success and does nothing.
+        */}}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{/*
+      Long enough to finish a completion. Kubernetes defaults this to 30
+      seconds and nothing set it, while `ai.upstreamTimeout` says the API
+      will wait 300 for a model — so a rolling upgrade killed any response
+      still streaming after half a minute.
+
+      Derived from that timeout unless overridden, so the two cannot drift
+      apart. 30 seconds of headroom for the shutdown itself.
+      */}}
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds | default (add (int .Values.ai.upstreamTimeout) 30) }}
+      {{/*
+      Kubernetes injects an environment variable per Service in the
+      namespace, and the chart tells you to bring your own Postgres and
+      Redis — so a Service named `redis` sets
+      `REDIS_PORT=tcp://10.96.112.222:6379`, which lands on
+      `Settings.redis_port: int` and kills the pod before it starts:
+
+          ValidationError: 1 validation error for Settings
+          redis_port
+            Input should be a valid integer, unable to parse string as
+            an integer [input_value='tcp://10.96.112.222:6379']
+
+      Nothing in igni discovers anything this way — every host comes from
+      configuration — so the links are pure hazard. Off on every pod
+      template in this chart, and a test asserts that. F1, found by
+      installing on kind with the obvious service names.
+      */}}
+      enableServiceLinks: false
+      serviceAccountName: {{ include "igni.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: {{ include "igni.apiImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 7777
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "igni.configMapName" . }}
+            - secretRef:
+                name: {{ include "igni.secretName" . }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            {{- toYaml .Values.api.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            {{- toYaml .Values.api.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            {{/*
+            The root filesystem is read-only, and /tmp is the one writable
+            path. `app/` itself writes nothing to disk at runtime, but
+            Python's `tempfile` and the libraries under the API assume a
+            writable temporary directory, and on a read-only root the first
+            one that reaches for it fails with an error that names neither.
+
+            `sizeLimit` matters here. Whatever lands in /tmp is node
+            ephemeral storage, and without a limit a runaway writer fills
+            the node's disk and evicts everything else scheduled on it,
+            including pods belonging to somebody else.
+            */}}
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.licence.existingSecret }}
+            {{- /* Read-only: the portal upload says to replace the Secret instead (docs/licence-file.md). */}}
+            - name: licence
+              mountPath: /etc/igni/licence
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 4Gi
+        {{- if .Values.licence.existingSecret }}
+        - name: licence
+          secret:
+            secretName: {{ .Values.licence.existingSecret | quote }}
+            items:
+              - key: licence.json
+                path: licence.json
+        {{- end }}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

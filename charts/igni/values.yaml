@@ -1,0 +1,659 @@
+# igni server — the open-source base of igni.
+#
+# Everything a customer must decide is at the top. Everything with a safe
+# default is below it. These have no default and the chart refuses to
+# render without them, naming each one: the images, the Postgres host,
+# the Redis host, an encryption key, and (outside appEnv dev) the
+# server's public https:// URL.
+#
+# Refusing beats defaulting for those. `docker-compose.prod.yml` learned
+# this the hard way — its image used to be `ember/ember-api:latest`, which
+# resolves to a Docker Hub namespace that is not ours, so a fresh host
+# pulled a stranger's image. A missing value that stops the install is a
+# five-minute problem; a plausible wrong default is a security incident.
+
+# ── Images ───────────────────────────────────────────────────────────
+#
+# No default repository. Ignite Ember publishes release images to
+# ghcr.io/ignite-ember/igni-api and ghcr.io/ignite-ember/igni-portal (and
+# in each release's signed offline bundle). Point these at wherever your
+# cluster pulls them from: a customer's own registry is the normal case
+# for a self-hosted install, and for an air-gapped one it is the only
+# case — which is why there is still no default, even now the published
+# location is ours: a default would send an air-gapped cluster to the
+# internet for its images.
+image:
+  # e.g. registry.example.com/igni/igni-api, or ghcr.io/ignite-ember/igni-api
+  repository: ""
+  # Defaults to .Chart.AppVersion. `latest` is refused: it cannot be
+  # rolled back to, and a tag that never changes gives Kubernetes no
+  # reason to restart pods on upgrade.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+portalImage:
+  # e.g. registry.example.com/igni/igni-portal, or ghcr.io/ignite-ember/igni-portal
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Names of pre-created `kubernetes.io/dockerconfigjson` secrets.
+imagePullSecrets: []
+
+# ── The data stores, both external ───────────────────────────────────
+#
+# This chart deploys no database and no Redis, and bundles no subchart for
+# either. Three reasons, in order of how much they cost you:
+#
+#   1. a bundled Postgres is a second thing to patch, scan and back up,
+#      and the backup that matters is the one you already run;
+#   2. a chart dependency is fetched over the network, which is precisely
+#      what an air-gapped install cannot do;
+#   3. every managed offering you would actually use in production — Cloud
+#      SQL, RDS, ElastiCache, Memorystore — is external by definition.
+#
+# So: bring your own, and put the credentials in `secrets` below or in an
+# existing Secret.
+postgres:
+  host: ""
+  port: 5432
+  user: igni
+  database: igni
+
+  # ── The connection pool ────────────────────────────────────────────
+  #
+  # `poolSize + maxOverflow` is the ceiling on concurrent queries **per
+  # process**, shared by every part of the application in that process.
+  # The number that has to fit your database is that ceiling multiplied
+  # by the processes: `api.replicaCount`, plus
+  # the migration job while it runs and the backup job if you enable it.
+  #
+  # The defaults come to 2 x 20 + 40 = 80, which fits inside a default
+  # Postgres `max_connections` of 100 with room for an operator's psql.
+  # A managed instance may allow far less — Cloud SQL's smallest tier
+  # permits 25 in total — so the API logs both numbers side by side at
+  # startup and warns if they cannot work.
+  poolSize: 5
+  maxOverflow: 15
+  # Seconds a request waits for a free connection before failing. Short
+  # on purpose: waiting 30 seconds and then failing means the client has
+  # already retried, which adds load to a pool that is full.
+  poolTimeout: 10
+
+redis:
+  host: ""
+  port: 6379
+  # Redis database number. 10 matches the application default; change it
+  # only if you are sharing an instance, and prefer not to.
+  db: 10
+
+# ── Where this deployment lives ──────────────────────────────────────
+#
+# Every one of these ends up in a link somebody clicks — an invitation
+# email, an OAuth callback. Wrong values do not fail at startup; they fail
+# when a person cannot sign in, so the server warns about each of them at
+# startup when appEnv is not `dev`.
+urls:
+  # This server's external address: the issuer (`iss`) of every token it
+  # signs, and the URL a service such as CodeIndex or Artifacts is
+  # deployed with, beside its own public URL — it fetches the public keys from
+  # `<publicBase>/.well-known/jwks.json` and finds every other endpoint
+  # from there (docs/service-identity.md). Empty with the ingress enabled
+  # means `https://<ingress.host>`. Outside appEnv dev it must be
+  # https://, and the chart refuses to render otherwise, as the server
+  # refuses to start: over plain HTTP the keys can be replaced in transit.
+  publicBase: ""
+  # The portal, as a browser reaches it. e.g. https://igni.example.com
+  portalBase: ""
+  # Where providers send OAuth callbacks. Usually the same host.
+  oauthRedirectBase: ""
+  # Where the OAuth flow lands the browser afterwards.
+  oauthFrontendBase: ""
+
+# ── Secrets ──────────────────────────────────────────────────────────
+#
+# Two ways to supply these, and the first is better:
+#
+#   secrets.existingSecret: "igni-secrets"
+#     You create the Secret. Nothing sensitive is ever in a values file,
+#     a Helm release object, or your shell history. The key names it must
+#     contain are listed in README.md.
+#
+#   secrets.create: true (the default)
+#     The chart creates the Secret from the values below. Convenient, and
+#     it means the values file is now a credential — treat it as one.
+#
+# `secretEncryptionKey` is the one that cannot be skipped. There is no
+# token-signing secret to supply: the server generates its own RSA
+# signing key on first start and keeps it in Postgres, encrypted under
+# this key. The server refuses to start without a valid one, and so does
+# this chart, which is the better place to find out. Generate one with:
+#
+#   python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+#
+# Rotating the signing key changes nothing in this file: run
+# `python tools/rotate_signing_key.py --stage` from a checkout of the
+# repository, with this deployment's Postgres settings and
+# SECRET_ENCRYPTION_KEY in its environment.
+secrets:
+  create: true
+  existingSecret: ""
+
+  # Fernet key encrypting the secrets this deployment stores in its own
+  # database, the token-signing key first among them. Required. Back it
+  # up separately from the database: a backup holding both defeats it.
+  secretEncryptionKey: ""
+  # Decrypt-only keys, comma-separated, set only while rotating
+  # `secretEncryptionKey`. The procedure is in
+  # `docs/COMPLIANCE_TRACKER.md` under DP-2; the short version is that
+  # the old key goes here, the release is upgraded, `python
+  # tools/rotate_secret_key.py --apply` re-encrypts the stored rows, and
+  # then this is cleared. Until it is, the old key still works.
+  secretEncryptionKeysPrevious: ""
+  postgresPassword: ""
+  smtpPassword: ""
+  # bcrypt hash, never a password.
+  superAdminPasswordHash: ""
+  # Bearer token a Prometheus scrape must present to read /metrics. Empty
+  # means the endpoint answers 404.
+  metricsToken: ""
+  # The OIDC client secret, paired with sso.issuer and sso.clientId.
+  oidcClientSecret: ""
+  # The Google OAuth client secret, paired with
+  # socialSignIn.googleClientId.
+  googleClientSecret: ""
+  # The bearer token your identity provider presents to /scim/v2, so
+  # it can create and deprovision accounts. Empty disables SCIM —
+  # every route answers 503 rather than accepting unauthenticated
+  # provisioning.
+  scimToken: ""
+
+# ── Application settings ─────────────────────────────────────────────
+
+# `prod` or `dev`. `dev` downgrades the startup safety checks to warnings
+# and must never be set on a deployment anybody else can reach.
+appEnv: prod
+logLevel: INFO
+
+# `text` for a person reading `kubectl logs`, `json` for a log shipper —
+# one object per line with the level and module as fields rather than
+# inside a rendered string. On
+# Kubernetes you almost certainly want `json`: something is already
+# collecting stdout, and it can only filter what it can parse.
+#
+# Left at `text` by default because changing it changes every line of
+# every existing deployment's logs on upgrade, which is not a thing to do
+# to somebody's saved queries without being asked.
+logFormat: text
+
+# Sign-in against your own identity provider: Keycloak, Okta, Entra,
+# Auth0, Authentik, Ping. One issuer URL configures the rest, because
+# OIDC discovery publishes it.
+#
+# All three of issuer, clientId and the secret, or none. With two set,
+# `/v1/auth/oidc` answers 404 and the sign-in page shows no SSO button —
+# the server warns about that at startup rather than leaving you to
+# guess.
+#
+# The issuer must be https. The signing keys for every login arrive over
+# that connection, so plaintext means anybody who can see the traffic can
+# sign in as anybody; the server refuses to start on it outside dev.
+sso:
+  issuer: ""
+  clientId: ""
+  # The secret goes in `secrets.oidcClientSecret` below, or in your
+  # existing Secret as OIDC_CLIENT_SECRET.
+  #
+  # What the button says. People recognise their provider's name, not
+  # the acronym.
+  displayName: SSO
+  # Which claim holds the address. Most providers use `email`; some use
+  # `preferred_username` or `upn`, and guessing wrongly means everybody
+  # signs in as somebody with no address.
+  emailClaim: email
+  # Let an SSO login claim an existing local account with the same
+  # address. Off by default: against a provider that does not verify
+  # addresses, on is account takeover by email match.
+  linkByEmail: false
+
+# ── Social sign-in ───────────────────────────────────────────────────
+#
+# The exception rather than the strategy. People authenticate through
+# `sso` above, or through email and password; this is for deployments
+# that additionally want a provider button.
+#
+# `[]` offers none, which is a supported configuration: the sign-in page
+# always has email and password, and SSO when configured. `google` is
+# the only value accepted.
+socialSignIn:
+  providers:
+    - google
+  googleClientId: ""
+  # The secret goes in `secrets.googleClientSecret` above, or in your
+  # existing Secret as OAUTH_GOOGLE_CLIENT_SECRET.
+
+# ── Documents (igni__artifacts) ──────────────────────────────────────
+#
+# The premium document service. Not deployed by this chart — it has its
+# own image, database and release cycle — and **served on its own
+# hostname**, never as a path on igni's:
+#
+#   https://<ingress.host>/...     ->  the API and the portal
+#   https://<artifacts.host>/...   ->  the artifacts Service named below
+#
+# A service's URL is its identity (docs/service-identity.md). It is the
+# audience of every token a person gets for the service, and where igni
+# calls `{service URL}/v1/igni/subjects/...` to erase or export somebody's
+# data. A path on igni's host would make the audience ambiguous — a token
+# for `https://igni.example.com/v1/artifacts` and one for igni itself share
+# an origin — and every path the service serves would be a path igni can
+# never use. So the host is required when this is enabled, and must differ
+# from `ingress.host`.
+#
+# Disabled is the free tier, and a supported shape rather than a broken
+# one: nothing is rendered for it.
+#
+# Nothing here connects the API to the service, and there is no secret to
+# share with it. The service is deployed with two addresses — its own
+# public URL and this server's — registers itself on first start, and is
+# trusted only once a super admin approves it on the portal's Services
+# page. Both addresses are rendered into the ConfigMap
+# `<release>-artifacts-env`, for the service's Deployment to `envFrom`:
+#
+#   PUBLIC_BASE_URL       https://<artifacts.host>
+#   IGNI_SERVER_BASE_URL  this release's API Service, in-cluster
+#
+# Its secrets — GRAPH_CREDENTIALS_KEY, POSTGRES_URL, REDIS_URL — are its
+# own and are not this chart's to hold. Nor is its embedder: that is
+# igni__artifacts' own image, deployed beside the service, which sets
+# EMBEDDER_URL itself (igni__artifacts docs/running-the-embedder.md).
+artifacts:
+  enabled: false
+  # Its own public hostname, e.g. artifacts.example.com. Required when
+  # enabled. Not a URL: the chart adds https:// itself.
+  host: ""
+  # The artifacts Service, in this release's namespace (an Ingress can only
+  # route to Services beside it).
+  serviceName: ""
+  servicePort: 8100
+  tls:
+    # The certificate for `host`. Required when `ingress.tls.enabled`:
+    # igni's own certificate names igni's host, not this one.
+    secretName: ""
+
+# The paid modules' licence (docs/licence-file.md): one signed file, issued
+# by Ignite Ember, in a Secret with the key `licence.json`. Mounted read-only
+# at /etc/igni/licence/licence.json in the API, which shows it on the portal;
+# mount the same Secret at the same path in every paid module and the Fleet
+# gateway, which enforce it. Renewing is replacing the Secret's content:
+# nothing restarts. Without one the free base runs and every paid module is
+# off.
+#
+#   kubectl create secret generic igni-licence --from-file=licence.json=<file>
+licence:
+  existingSecret: ""
+
+# Model gateway. Empty falls back to the in-cluster default name below.
+mcpGatewayUrl: ""
+
+ai:
+  # How long the API waits for a model to answer. Five minutes, because a
+  # long completion legitimately takes that. Whatever this is,
+  # `api.terminationGracePeriodSeconds` below has to be at least as
+  # large — a chart test enforces it.
+  upstreamTimeout: 300
+
+# Retention windows, in days. 0 means keep forever — which is a lawful
+# choice only if you can defend it, since GDPR Art. 5(1)(e) asks for a
+# limit rather than a preference. The retention runner does nothing at all
+# while this is 0.
+retention:
+  auditDays: 0
+
+# Email. Without it a new user cannot receive a sign-in code or an
+# invitation, so an install that skips this is usable only by whoever
+# already has an account.
+email:
+  enabled: false
+  # `smtp` or `ses`. `ses` resolves the standard AWS credential chain and
+  # so stores no mail secret at all — the right choice on EKS with IRSA.
+  backend: smtp
+  smtpHost: ""
+  smtpPort: 587
+  # `starttls` (587), `tls` (implicit, 465) or `none` (an internal relay
+  # on 25, the common air-gapped case — leave smtpUsername empty for it).
+  # These are different servers, not preferences.
+  smtpTlsMode: starttls
+  smtpUsername: ""
+  fromAddress: noreply@igni.local
+  fromName: igni
+  # SES only.
+  sesRegion: ""
+  # With no relay, write one-time codes to the API log so an operator can
+  # hand them on — the way in for first setup with no email. Off by
+  # default: anyone who can read the logs can then sign in as any user.
+  # The API warns at startup and on every code while it is on; turn it
+  # off once a relay or SSO is configured.
+  logSignInCodes: false
+  # Verification codes an anonymous caller can make this deployment send
+  # per hour, across all addresses. Per-address limits are always on: a
+  # 60-second cooldown and five per hour.
+  #
+  # The backstop against somebody spraying across many addresses from
+  # your relay identity. `0` disables it; raise it rather than discover
+  # sign-in switched off during a large onboarding.
+  codesHourlyLimit: 600
+
+# ── Workloads ────────────────────────────────────────────────────────
+
+api:
+  replicaCount: 2
+  # Requests are what the scheduler honours and what a marketplace review
+  # looks for. Limits are set on memory only: a CPU limit throttles an
+  # asyncio process into latency that looks like a network fault, while
+  # unbounded memory takes the node down with it.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  # Liveness asks /health, not /ready. This restarts the container, and a
+  # restart fixes a wedged process but not an unreachable database —
+  # pointing it at /ready turns a database blip into a simultaneous
+  # restart loop across every replica. /ready is for deciding where to
+  # send traffic, which is what the readiness probe below does.
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # How long Kubernetes waits for this pod to finish what it is doing
+  # before killing it. **The default is 30 seconds**, and this deployment
+  # is configured to wait `ai.upstreamTimeout` — 300 seconds — for a
+  # single model response. So every rolling upgrade used to SIGKILL any
+  # completion still streaming after half a minute, which for an AI
+  # coding agent is the ordinary case rather than the edge. The developer
+  # sees the stream stop mid-sentence, and the concurrency lease it held
+  # sits in Redis for the full 15-minute lease timeout, making that GPU
+  # look busier than it is.
+  #
+  # So: the request budget plus headroom for the shutdown itself. The
+  # cost is a slower rollout — Kubernetes will wait here for a pod with
+  # one long request left — and that is the right way round. Raise it
+  # **Derived from `ai.upstreamTimeout` when left empty**, which is the
+  # default: `upstreamTimeout + 30`, the request budget plus headroom for
+  # the shutdown itself. Derived rather than a number here, because a
+  # number is one somebody raises the timeout without noticing — and a
+  # chart test comparing the two would only ever have checked the
+  # defaults. Set it explicitly to override. F119.
+  terminationGracePeriodSeconds: ""
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+portal:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+migrations:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  # Kept for this long after finishing so `kubectl logs` still works.
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 1
+
+# `/metrics` in Prometheus text format, and the alert rules that go with
+# it. Both objects below need the Prometheus Operator's CRDs, so both are
+# off by default — rendering a ServiceMonitor into a cluster without
+# `monitoring.coreos.com` is an install that fails with `no matches for
+# kind`.
+#
+# Without the operator: set secrets.metricsToken, point your own scrape
+# config at the API Service with that bearer token, and load
+# `charts/igni/files/alerts.yaml` as a rule file. The endpoint answers 404
+# until a token is set — it is not published unauthenticated, because the
+# exposition lists every route in the product and the version each replica
+# is running.
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    # Labels your Prometheus selects ServiceMonitors by, e.g.
+    # `release: kube-prometheus-stack`.
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+  # The Grafana overview dashboard, as a ConfigMap for the Grafana
+  # sidecar to import. A ConfigMap needs no CRD and no Grafana, so this
+  # is the one monitoring object that is harmless to leave on — it just
+  # sits there if nothing is looking for it.
+  #
+  # The label is yours to set because the chart cannot know what your
+  # Grafana selects on, and a wrong guess is a dashboard that never
+  # appears with nothing to explain why.
+  dashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
+
+# Nightly pg_dump into a PersistentVolumeClaim you supply, verified
+# before it counts and pruned only after a success. The same script the
+# compose stack runs.
+#
+# Off by default and it is worth saying why: a backup written to storage
+# the chart chose for you, in whatever the cluster's default StorageClass
+# happens to be, can land on the same disk as the database. Then it
+# survives a dropped table and not a lost volume, which is the failure
+# people actually have. So you create the claim, and you decide where it
+# lives.
+#
+# If your cluster already backs up volumes or you use the database's own
+# managed snapshots, leave this off — two backup systems that each assume
+# the other is authoritative is its own failure mode.
+backup:
+  enabled: false
+  # Required when enabled. No default: see above.
+  existingClaim: ""
+  # UTC. 03:00 is a guess about your quiet hours, not a recommendation.
+  schedule: "0 3 * * *"
+  retainDays: 14
+  # Postgres's own image, so pg_dump is at least the server's version.
+  # Pin this to your server's major version.
+  image: postgres:17.6-alpine
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+# ── Networking ───────────────────────────────────────────────────────
+
+service:
+  type: ClusterIP
+  apiPort: 7777
+  portalPort: 3000
+
+# `/v1` goes to the API and everything else to the portal.
+#
+# Two paths rather than one because the CLI talks to `/v1` directly,
+# and sending that traffic through the portal's nginx
+# adds a hop and a second body-size limit to keep in agreement.
+#
+# `/docs`, `/redoc` and `/openapi.json` are deliberately *not* routed.
+# They are served by the API for anybody inside the cluster and are not
+# something to publish by default.
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  # The controller's own body limit has to admit what a service uploads:
+  # an extension bundle (400 MiB) and each of its assets (1 GiB), which
+  # the API streams into the database as they arrive. With ingress-nginx:
+  #   nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+  #   nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+  #   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+  #   nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  # Its default of 1 MB refuses both. The API still holds every other
+  # route to its own 32 MB.
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+# Deny-by-default ingress and egress for every pod of this release (API,
+# portal, migrate Job, backup CronJob), with explicit holes. Off by
+# default because a policy in a cluster whose CNI does not enforce it is
+# a false sense of safety, and one in a cluster that does enforce it cuts
+# whatever you have not listed here. Read
+# templates/networkpolicy.yaml before enabling it.
+networkPolicy:
+  enabled: false
+  # Required when enabled: where your ingress controller runs. The API
+  # and the portal accept traffic only from here (and the API from the
+  # portal). The render fails if namespaceSelector is empty, rather than
+  # allowing every namespace. Both maps are matchLabels, ANDed.
+  ingressFrom:
+    namespaceSelector: {}
+    #   kubernetes.io/metadata.name: ingress-nginx
+    podSelector: {}
+    #   app.kubernetes.io/name: ingress-nginx
+  # Where Prometheus runs, allowed to the API's port for /metrics.
+  # Required when monitoring.serviceMonitor.enabled is also true.
+  metricsFrom:
+    namespaceSelector: {}
+    #   kubernetes.io/metadata.name: monitoring
+    podSelector: {}
+  # Further NetworkPolicy peers allowed to the API on 7777: services that
+  # call it in-cluster rather than through the ingress — Artifacts, which
+  # is given IGNI_SERVER_BASE_URL=http://<release>-api.<ns>.svc:<port>.
+  apiIngressFrom: []
+  #   - namespaceSelector:
+  #       matchLabels:
+  #         kubernetes.io/metadata.name: igni-artifacts
+  # DNS egress (53/UDP and 53/TCP) is open to every destination unless
+  # you name the resolver here. It is not pinned by default because
+  # CoreDNS's labels differ between distributions and NodeLocal DNSCache
+  # answers on a link-local address that no pod selector matches.
+  dns:
+    to: []
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: kube-system
+    #     podSelector:
+    #       matchLabels:
+    #         k8s-app: kube-dns
+  # Egress, one entry per destination, each on its own ports. Applies to
+  # the api, migrate and backup pods unless `components` narrows it (any
+  # of api, portal, migrate, backup). `cidrs` and/or `to` (raw
+  # NetworkPolicy peers, for in-cluster destinations). `name` names the
+  # NetworkPolicy. An empty list with the policy enabled means no egress
+  # at all except DNS — and the portal's own path to the API.
+  egress: []
+  #   - name: postgres            # the migrate Job and backups need it too
+  #     cidrs: [10.0.10.5/32]
+  #     ports: [{port: 5432, protocol: TCP}]
+  #   - name: redis
+  #     cidrs: [10.0.10.6/32]
+  #     ports: [{port: 6379}]
+  #     components: [api]
+  #   - name: idp                 # OIDC discovery and JWKS, every SSO sign-in
+  #     cidrs: [10.0.20.0/28]
+  #     ports: [{port: 443}]
+  #     components: [api]
+  #   - name: smtp                # or invitations silently stop sending
+  #     cidrs: [10.0.30.4/32]
+  #     ports: [{port: 587}]
+  #     components: [api]
+  #   - name: inference           # the model nodes, and any gateway
+  #     cidrs: [10.0.40.0/24]
+  #     ports: [{port: 8000}, {port: 443}]
+  #     components: [api]
+  #   - name: services            # Artifacts, CodeIndex: erasure and export
+  #     cidrs: [10.0.50.10/32]
+  #     ports: [{port: 443}]
+  #     components: [api]
+  # The old form, kept so existing values files render: every port to
+  # each CIDR, for the api, migrate and backup pods. Prefer `egress`.
+  egressCidrs: []
+
+# Google Cloud Marketplace. Off unless the marketplace deployer is
+# installing this, because the Application object below is an `app.k8s.io`
+# CRD — rendering it into a cluster without the kubernetes-sigs
+# Application controller fails the install with `no matches for kind`.
+#
+# The deployer sets these; a person installing by hand has no reason to.
+marketplace:
+  enabled: false
+  partnerId: ''
+  productId: igni
+  partnerName: ''
+  docsUrl: ''
+  supportUrl: ''
+  # A 100x100 PNG, base64-encoded, which the console shows beside the
+  # deployment. Empty renders an annotation with no payload, which the
+  # console tolerates.
+  iconBase64: ''
+
+# ── Pod-level defaults ───────────────────────────────────────────────
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# The backend images run as uid 10001 and the portal as 101, both
+# numeric — `runAsNonRoot` cannot verify a *named* user and refuses the
+# pod with "image has non-numeric user", so the images were built with
+# numeric ones deliberately.
+#
+# `fsGroup` on the portal is not cosmetic. Its nginx renders a config
+# template into /etc/nginx/conf.d at startup, and with a read-only root
+# filesystem that path is an emptyDir — owned by root unless fsGroup says
+# otherwise, in which case nginx cannot write it, silently serves no
+# server block, and answers nothing while looking healthy. Verified by
+# running the image that way.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Anything not covered above. `extraEnv` for plain values, `extraEnvFrom`
+# for whole ConfigMaps or Secrets.
+extraEnv: []
+extraEnvFrom: []
+
+# Extra labels and annotations on every object this chart creates.
+commonLabels: {}
+commonAnnotations: {}

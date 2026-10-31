@@ -1,0 +1,55 @@
+# TLS terminator for the single-instance deployment. An overlay, not a
+# profile, and the reason is worth knowing before you reach for a profile
+# yourself.
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.tls.yml \
+#     --profile bundled up -d
+#
+# Compose interpolates variables in *every* service before it decides
+# which profiles are active. So a `${VAR:?...}` inside a profiled service
+# refuses to load the whole project even when that profile is off — this
+# service was a `tls` profile first, and bringing up the bundled stack
+# without a domain failed with
+#
+#   required variable IGNI_DOMAIN is missing a value
+#
+# for a container that was not going to start. A separate file is only
+# interpolated when you pass it, so the refusal lands on the person who
+# asked for TLS and nobody else.
+#
+# Requires the DNS record pointing at this host and port 80 reachable
+# before the first start: certificates are obtained on demand.
+
+services:
+  caddy:
+    container_name: igni__caddy
+    image: caddy:2.10-alpine
+    # The only service that binds every interface, and it says so rather
+    # than defaulting to it.
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    # Deliberately NOT env_file. The proxy needs a hostname and an email
+    # address; handing it the application's env file would put every
+    # credential in the deployment into the process that faces the
+    # internet.
+    environment:
+      - IGNI_DOMAIN=${IGNI_DOMAIN:?set IGNI_DOMAIN to the hostname this deployment serves, e.g. igni.example.com}
+      - IGNI_ACME_EMAIL=${IGNI_ACME_EMAIL:?set IGNI_ACME_EMAIL to an address Let’s Encrypt can reach about expiring certificates}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates. Without this volume every restart asks for a new
+      # one and hits the rate limit on the fifth.
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: always
+    networks:
+      - igni_network
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  igni_network:
+    driver: bridge

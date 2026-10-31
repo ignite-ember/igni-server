@@ -1,0 +1,368 @@
+# Google Cloud Marketplace deployer parameters for igni.
+#
+# F109. A GCP Kubernetes listing is three artefacts: this file, which
+# describes the form a customer fills in and how its answers map onto
+# Helm values; an Application CRD resource so the deployment appears in
+# the console as one thing (charts/igni/templates/application.yaml); and
+# a deployer image built on Google's `deployer_helm` base, which renders
+# the chart with those values inside the customer's cluster.
+#
+# ## The one thing to understand about this file
+#
+# Every value the chart refuses to render without has to be obtainable
+# here. `charts/igni/templates/_helpers.tpl` refuses on eight of them,
+# deliberately — a plausible wrong default for an image repository is how
+# `docker-compose.prod.yml` once pointed at a stranger's Docker Hub
+# namespace. But a refusal a customer cannot answer is a listing that
+# produces a failed deploy, so the mapping between the two is checked by
+# a test rather than by reading.
+#
+# ## Not verified against Google's tooling
+#
+# The schema shape below is written from the v2 specification as I
+# understand it, and it has **not** been run through `mpdev` — that needs
+# a marketplace project, a registered listing and a published deployer
+# image, none of which exist yet. Treat the structure as a first draft
+# that will need `mpdev verify` before submission; treat the *parameter
+# set* as correct, because that half is checked against the chart.
+
+x-google-marketplace:
+  schemaVersion: v2
+  applicationApiVersion: v1beta1
+
+  # Bumped per listing submission, independently of the chart version and
+  # the application version. Three numbers that mean different things.
+  publishedVersion: '0.1.0'
+  publishedVersionMetadata:
+    releaseNote: >-
+      First release. Self-hosted AI coding agent: API, admin portal, and
+      a database migration that runs before anything serves.
+    recommended: false
+
+  # The images the deployer publishes and substitutes. Marketplace
+  # rewrites these to its own registry paths at deploy time, which is
+  # what makes the chart's "no default repository" rule workable here —
+  # the customer never types a registry, and the chart never guesses one.
+  images:
+    '':
+      properties:
+        image.repository:
+          type: REPO_WITH_REGISTRY
+        image.tag:
+          type: TAG
+    portal:
+      properties:
+        portalImage.repository:
+          type: REPO_WITH_REGISTRY
+        portalImage.tag:
+          type: TAG
+
+  # The deployer needs to create the objects the chart renders and
+  # nothing more. Listed explicitly rather than taking cluster-admin:
+  # a marketplace review asks about this, and "it needs everything" is
+  # both untrue and the answer that gets queried.
+  deployerServiceAccount:
+    roles:
+      - type: ClusterRole
+        rulesType: CUSTOM
+        rules:
+          - apiGroups: ['apps']
+            resources: ['deployments']
+            verbs: ['*']
+          - apiGroups: ['batch']
+            resources: ['jobs', 'cronjobs']
+            verbs: ['*']
+          - apiGroups: ['']
+            resources: ['services', 'configmaps', 'secrets', 'serviceaccounts', 'persistentvolumeclaims']
+            verbs: ['*']
+          - apiGroups: ['networking.k8s.io']
+            resources: ['ingresses', 'networkpolicies']
+            verbs: ['*']
+          - apiGroups: ['app.k8s.io']
+            resources: ['applications']
+            verbs: ['*']
+
+  clusterConstraints:
+    # The chart uses `batch/v1` CronJob and `networking.k8s.io/v1`
+    # Ingress, both stable well before this.
+    k8sVersion: '>=1.25.0'
+    resources:
+      - replicas: 2
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        affinity:
+          simpleNodeAffinity:
+            type: REQUIRE_ONE_NODE_PER_REPLICA
+
+properties:
+  name:
+    type: string
+    x-google-marketplace:
+      type: NAME
+  namespace:
+    type: string
+    x-google-marketplace:
+      type: NAMESPACE
+
+  # ── The four things the chart will not start without ──────────────
+  #
+  # The images are handled above. These are the rest.
+
+  postgres.host:
+    type: string
+    title: PostgreSQL host
+    description: >-
+      Hostname or IP of a PostgreSQL 15+ instance this cluster can reach —
+      a Cloud SQL private IP, or a Postgres you run. This application
+      deploys no database: a bundled one is a second thing to patch, scan
+      and back up, and the backup that matters is the one you already run.
+  postgres.port:
+    type: integer
+    title: PostgreSQL port
+    default: 5432
+  postgres.user:
+    type: string
+    title: PostgreSQL user
+    default: igni
+  postgres.database:
+    type: string
+    title: PostgreSQL database name
+    default: igni
+  secrets.postgresPassword:
+    type: string
+    title: PostgreSQL password
+    description: >-
+      Leave empty if your instance authenticates some other way — an IAM
+      database user, or a client certificate.
+    x-google-marketplace:
+      type: MASKED_FIELD
+
+  redis.host:
+    type: string
+    title: Redis host
+    description: >-
+      Hostname or IP of a Redis 6+ instance — a Memorystore private IP,
+      or your own. Used as the Celery broker, for concurrency leases, and
+      for one-time sign-in codes.
+  redis.port:
+    type: integer
+    title: Redis port
+    default: 6379
+
+  # ── Where the deployment lives ────────────────────────────────────
+
+  urls.publicBase:
+    type: string
+    title: Server URL
+    description: >-
+      This server's https:// address, e.g. https://igni.example.com. It is
+      the issuer of every token, and the URL CodeIndex and Artifacts are
+      deployed with, beside their own. Leave empty to use https://<ingress hostname>
+      when an Ingress is created; otherwise the deploy refuses without it.
+    default: ''
+  urls.portalBase:
+    type: string
+    title: Portal URL
+    description: >-
+      The address a browser will use, e.g. https://igni.example.com. It
+      appears in invitation emails and OAuth callbacks, so a wrong value
+      does not fail at startup — it fails when somebody cannot sign in.
+    default: ''
+  urls.oauthRedirectBase:
+    type: string
+    title: OAuth callback base URL
+    description: Usually the same as the portal URL.
+    default: ''
+  urls.oauthFrontendBase:
+    type: string
+    title: Post-login URL
+    description: Usually the same as the portal URL.
+    default: ''
+
+  ingress.enabled:
+    type: boolean
+    title: Create an Ingress
+    description: >-
+      Routes /v1 and /.well-known to the API and everything else to the
+      portal. Leave off to expose the services yourself.
+    default: false
+  ingress.host:
+    type: string
+    title: Ingress hostname
+    description: Required if an Ingress is created.
+    default: ''
+
+  # ── Data protection ───────────────────────────────────────────────
+
+  secrets.secretEncryptionKey:
+    type: string
+    title: Secret encryption key
+    description: >-
+      Encrypts the secrets this deployment keeps in its own database,
+      including the key the server signs every token with. Generated for
+      you. Back it up separately from the database: a backup containing
+      both defeats the encryption.
+    x-google-marketplace:
+      # Generated rather than asked for: the chart and the server both
+      # refuse without it, and asking a person to mint a Fernet key and
+      # paste it into a browser form is the worse way to satisfy that.
+      # A Fernet key is 32 bytes in base64, and that is what this asks
+      # for — 32 ASCII characters, base64-encoded to the 44 the chart
+      # checks for. Unverified against mpdev, like the rest of the file.
+      type: GENERATED_PASSWORD
+      generatedPassword:
+        length: 32
+        includeSymbols: false
+        base64: true
+
+  retention.auditDays:
+    type: integer
+    title: Audit record retention (days)
+    description: >-
+      0 keeps everything forever, which is a lawful choice only if you
+      can defend it — GDPR Art. 5(1)(e) asks for a limit rather than a
+      preference.
+    default: 0
+
+  # ── Scale ─────────────────────────────────────────────────────────
+
+  api.replicaCount:
+    type: integer
+    title: API replicas
+    default: 2
+  portal.replicaCount:
+    type: integer
+    title: Portal replicas
+    default: 2
+
+  # ── Sign-in ───────────────────────────────────────────────────────
+
+  sso.issuer:
+    type: string
+    title: OIDC issuer URL
+    description: >-
+      Your identity provider's issuer, e.g.
+      https://login.example.com/realms/main. Must be HTTPS: the signing
+      keys for every login arrive over that connection. Leave empty for
+      local accounts only.
+    default: ''
+  sso.clientId:
+    type: string
+    title: OIDC client ID
+    default: ''
+  secrets.oidcClientSecret:
+    type: string
+    title: OIDC client secret
+    x-google-marketplace:
+      type: MASKED_FIELD
+  sso.displayName:
+    type: string
+    title: SSO button label
+    description: What the sign-in button says. People recognise their provider's name.
+    default: SSO
+
+  # ── Documents (igni__artifacts) ───────────────────────────────────
+
+  artifacts.enabled:
+    type: boolean
+    title: Publish igni__artifacts on its own hostname
+    description: >-
+      The document service is deployed separately, with its own image and
+      database. Turn this on once it runs in this namespace, to publish it
+      on the hostname below — its own, never a path on this server's: a
+      service's URL is its identity, the audience of the tokens issued for
+      it. Nothing secret is shared with it: it registers itself with this
+      server and a super admin approves it on the portal's Services page.
+    default: false
+  artifacts.host:
+    type: string
+    title: Document service hostname
+    description: >-
+      Its own hostname, e.g. artifacts.example.com — not igni's. Required
+      if the document service is published. Deploy the service with the
+      ConfigMap <name>-artifacts-env, which sets its PUBLIC_BASE_URL to
+      https:// on this host.
+    default: ''
+  artifacts.serviceName:
+    type: string
+    title: Document service name
+    description: The Kubernetes Service igni__artifacts runs behind, in this namespace.
+    default: ''
+
+  # ── Email ─────────────────────────────────────────────────────────
+
+  email.enabled:
+    type: boolean
+    title: Send email
+    description: >-
+      Without it, nobody can receive a sign-in code or an invitation, so
+      the deployment is usable only by whoever already has an account or
+      signs in through SSO — unless sign-in codes are written to the log
+      (below).
+    default: false
+  email.logSignInCodes:
+    type: boolean
+    title: Write sign-in codes to the log when no email is configured
+    description: >-
+      For first setup without email only. Codes go to the application log
+      for an operator to hand on, which makes those logs credential
+      material: anyone who can read them can sign in as any user. The
+      server warns while it is on. Turn it off once email or SSO works.
+    default: false
+  email.backend:
+    type: string
+    title: Email backend
+    enum: ['smtp', 'ses']
+    default: smtp
+  email.smtpHost:
+    type: string
+    title: SMTP host
+    default: ''
+  email.smtpPort:
+    type: integer
+    title: SMTP port
+    default: 587
+  email.smtpUsername:
+    type: string
+    title: SMTP username
+    default: ''
+  secrets.smtpPassword:
+    type: string
+    title: SMTP password
+    x-google-marketplace:
+      type: MASKED_FIELD
+  email.fromAddress:
+    type: string
+    title: From address
+    default: noreply@igni.local
+
+  # ── Observability ─────────────────────────────────────────────────
+
+  logFormat:
+    type: string
+    title: Log format
+    description: >-
+      json emits one object per line, which is what a log collector can
+      filter on. Almost certainly what you want in a cluster.
+    enum: ['text', 'json']
+    default: json
+  secrets.metricsToken:
+    type: string
+    title: Metrics scrape token
+    description: >-
+      Bearer token for GET /metrics. Empty means the endpoint answers
+      404 — the exposition names every route in the product and each
+      replica's version, so it is not published unauthenticated.
+    x-google-marketplace:
+      type: GENERATED_PASSWORD
+      generatedPassword:
+        length: 32
+        includeSymbols: false
+        base64: false
+
+required:
+  - name
+  - namespace
+  - postgres.host
+  - redis.host

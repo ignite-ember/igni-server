@@ -1,0 +1,293 @@
+{
+  "__inputs": [],
+  "title": "igni",
+  "uid": "igni-overview",
+  "tags": [
+    "igni"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Audit writes",
+      "type": "timeseries",
+      "description": "The failure series should be flat at zero. Anything above it is a privileged action that happened with no record of it \u2014 the recorder fails open on purpose, because refusing would take every privileged endpoint down with the database. The written series is here as the denominator: zero failures reads the same on a healthy deployment and on one where the middleware stopped firing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(igni_audit_events_written_total[5m])) * 60",
+          "legendFormat": "written/min",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "sum(rate(igni_audit_write_failures_total[5m])) * 60",
+          "legendFormat": "FAILED/min",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Requests by status class",
+      "type": "timeseries",
+      "description": "4xx is clients getting it wrong and is normal traffic \u2014 a bad token, a stale page. 5xx is us, and every one of them is either a bug or an outage. Watch the ratio rather than the absolute number: a rise in 4xx with flat 5xx usually means a client or an integration changed, not that anything here broke.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(igni_http_requests_total[5m])) by (status) * 60",
+          "legendFormat": "{{status}}/min",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Server errors by route",
+      "type": "timeseries",
+      "description": "Route templates, never raw paths \u2014 the identifiers are in the logs, filterable by `logger` and `repo` if LOG_FORMAT=json.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(igni_server_errors_total[5m])) by (route) * 60",
+          "legendFormat": "{{route}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Latency by route (p95)",
+      "type": "timeseries",
+      "description": "Buckets run to 120s because a chat completion legitimately takes longer than the library default's 10s ceiling.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(igni_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "{{route}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Dependencies",
+      "type": "stat",
+      "description": "From the same check /ready uses, so it is only as fresh as the last probe. 0 means the API is already answering 503 there.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 8,
+        "h": 6
+      },
+      "targets": [
+        {
+          "expr": "igni_dependency_up",
+          "legendFormat": "{{dependency}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Retention: hours since last success",
+      "type": "stat",
+      "description": "Prunes daily. A number in the hundreds of thousands means it has never run, which is expected when both retention windows are 0 \u2014 keep everything forever, a lawful choice only if you can defend it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 16,
+        "w": 8,
+        "h": 6
+      },
+      "targets": [
+        {
+          "expr": "(time() - igni_retention_last_success_timestamp_seconds) / 3600",
+          "legendFormat": "hours",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Versions serving",
+      "type": "stat",
+      "description": "More than one for more than a few minutes is a stuck rollout.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 16,
+        "w": 8,
+        "h": 6
+      },
+      "targets": [
+        {
+          "expr": "count by (version) (igni_build_info)",
+          "legendFormat": "{{version}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Retention failures",
+      "type": "timeseries",
+      "description": "Distinct from the panel above: this is a runner that is running and raising, rather than one that stopped. The traceback is in the API log.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(igni_retention_failures_total[1h]))",
+          "legendFormat": "per hour",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ],
+  "description": "Overview for a self-hosted igni deployment. Eight panels, one per thing that goes wrong quietly. Generated from the metric definitions in app/monitoring/metrics.py \u2014 see tools/gen_dashboard.py; a test asserts every expression here names a metric the application actually emits."
+}

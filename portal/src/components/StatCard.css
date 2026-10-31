@@ -1,0 +1,25 @@
+.stat-card {
+  flex: 1;
+  min-width: var(--base-size-128);
+  /* Equal heights even if one card's sub-line wraps. */
+  justify-content: flex-start;
+  border: var(--borderWidth-thin) solid var(--borderColor-default);
+  border-radius: var(--borderRadius-medium);
+  background-color: var(--bgColor-muted);
+}
+
+.stat-card-value {
+  font-size: var(--text-title-size-medium, 1.25rem);
+  /* Primer's Heading carried this; the value is a Text now (F137), so
+     the weight has to come from here or every stat card goes light. */
+  font-weight: var(--base-text-weight-semibold, 600);
+  line-height: 1.2;
+}
+
+.stat-card-value--bad {
+  color: var(--fgColor-danger);
+}
+
+.stat-card-muted {
+  color: var(--fgColor-muted);
+}

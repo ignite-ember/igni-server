@@ -1,0 +1,85 @@
+{{- if .Values.marketplace.enabled }}
+{{- include "igni.validate" . -}}
+{{/*
+The Application CRD, which is how a Google Cloud Marketplace deployment
+appears in the console as one object rather than eleven unrelated ones.
+
+Off by default, for the same reason the ServiceMonitor is: `app.k8s.io`
+is a CRD, and rendering it into a cluster that does not have the
+kubernetes-sigs Application controller installed fails the install with
+`no matches for kind "Application"`. The marketplace deployer installs
+that CRD; a customer running `helm install` by hand almost certainly has
+not.
+
+`componentKinds` is what the console reads to find the pieces. It lists
+kinds, not names, so it does not need updating when a workload is
+renamed — only when a *kind* is added, which is the smaller and more
+noticeable change.
+*/}}
+apiVersion: app.k8s.io/v1beta1
+kind: Application
+metadata:
+  name: {{ include "igni.fullname" . }}
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+  annotations:
+    kubernetes-engine.cloud.google.com/icon: >-
+      data:image/png;base64,{{ .Values.marketplace.iconBase64 }}
+    marketplace.cloud.google.com/deploy-info: >-
+      {"partner_id": "{{ .Values.marketplace.partnerId }}",
+       "product_id": "{{ .Values.marketplace.productId }}",
+       "partner_name": "{{ .Values.marketplace.partnerName }}"}
+spec:
+  descriptor:
+    type: igni
+    version: {{ .Chart.AppVersion | quote }}
+    description: >-
+      Self-hosted AI coding agent. Everything runs in this cluster:
+      nothing is sent to the vendor, and a test in the source fails the
+      build if that stops being true.
+    maintainers:
+      - name: {{ .Values.marketplace.partnerName }}
+        url: {{ .Values.marketplace.supportUrl }}
+    links:
+      - description: Documentation
+        url: {{ .Values.marketplace.docsUrl }}
+      - description: Support
+        url: {{ .Values.marketplace.supportUrl }}
+    notes: |-
+      The database migration ran before anything started serving. If the
+      install failed there, its logs are still in the cluster:
+
+          kubectl -n {{ .Release.Namespace }} logs job/{{ include "igni.fullname" . }}-migrate
+
+      Then check the API's startup warnings, which name every setting
+      that is missing or unsafe for a deployment anybody else can reach:
+
+          kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "igni.fullname" . }}-api | grep 'Deployment check'
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "igni.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  componentKinds:
+    - group: apps
+      kind: Deployment
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: Secret
+    - group: batch
+      kind: Job
+{{- if .Values.backup.enabled }}
+    - group: batch
+      kind: CronJob
+{{- end }}
+{{- if .Values.ingress.enabled }}
+    - group: networking.k8s.io
+      kind: Ingress
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+{{- end }}
+{{- end }}
