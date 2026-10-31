@@ -165,7 +165,7 @@ jobs:
       # Tagged with the commit SHA so the artefact and the image it
       # describes cannot drift apart.
       - name: SBOM — backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: ${{ env.REGISTRY }}/igni-api:${{ steps.meta.outputs.tag }}
@@ -261,7 +261,7 @@ jobs:
       # So: one SBOM for what the container is, and one for what the
       # bundle was built from.
       - name: SBOM — portal image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: ${{ env.REGISTRY }}/igni-portal:${{ steps.meta.outputs.tag }}
@@ -269,7 +269,7 @@ jobs:
           output: sbom-portal-image.cdx.json
 
       - name: SBOM — portal npm tree
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: portal

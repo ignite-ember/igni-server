@@ -141,7 +141,7 @@ jobs:
         run: docker build -f portal/Dockerfile -t igni-portal:ci portal/
 
       - name: Trivy — backend vulnerabilities (report only)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: igni-api:ci
           format: table
@@ -149,7 +149,7 @@ jobs:
           exit-code: '0'
 
       - name: Trivy — portal vulnerabilities (report only)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: igni-portal:ci
           format: table
@@ -157,7 +157,7 @@ jobs:
           exit-code: '0'
 
       - name: Trivy — backend misconfiguration (gates)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: igni-api:ci
           scanners: misconfig
@@ -169,7 +169,7 @@ jobs:
       # be broken during a release. Uploaded because an SBOM diff on a
       # dependency-bump PR is the clearest possible review artefact.
       - name: SBOM — backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: igni-api:ci
@@ -177,7 +177,7 @@ jobs:
           output: sbom-api-image.cdx.json
 
       - name: SBOM — portal image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: image
           image-ref: igni-portal:ci
@@ -188,7 +188,7 @@ jobs:
       # scan of that container cannot see it — 71 Alpine packages and zero
       # of the 242 npm ones. See the comment in cd.yml.
       - name: SBOM — portal npm tree
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: portal
