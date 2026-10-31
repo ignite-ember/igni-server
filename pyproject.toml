@@ -34,7 +34,7 @@ dependencies = [
     "prometheus-client>=0.20.0",
     "pydantic-settings>=2.8.0",
     "pydantic==2.11.8",
-    "pydantic_core==2.33.2",
+    "pydantic_core==2.50.1",
     "pydantic[email]==2.11.8",
     "redis>=5.2.0",
     "uvicorn[standard]>=0.34.0",
