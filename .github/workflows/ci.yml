@@ -446,7 +446,9 @@ jobs:
   # Docker, and these specs assert behaviour, not pixels.
   portal-functional:
     name: Portal against the API
-    runs-on: ubuntu-latest
+    # 24.04, not ubuntu-latest: Playwright 1.60 has no browser build for
+    # Ubuntu 26.04 yet. Move with the next Playwright that supports it.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: portal
