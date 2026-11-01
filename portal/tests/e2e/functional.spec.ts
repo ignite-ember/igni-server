@@ -150,7 +150,9 @@ test.describe('navigation', () => {
 
     const before = context.pages().length
     await page.locator('.sidebar-root a', { hasText: 'Team' }).first()
-      .click({ modifiers: ['Meta'] })
+      // Cmd on macOS, Ctrl elsewhere: on Linux, Meta-click is not
+      // "open in a new tab", and CI runs on Linux.
+      .click({ modifiers: ['ControlOrMeta'] })
     await page.waitForTimeout(1000)
 
     expect(context.pages().length, 'cmd-click opened no new tab').toBeGreaterThan(before)
