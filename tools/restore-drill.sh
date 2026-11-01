@@ -156,11 +156,16 @@ step "A shared plane and two organisations at head, with something in each"
 docker run -d --name "$PG" --network "$NET" \
   -e POSTGRES_USER=igni -e POSTGRES_PASSWORD="$PASSWORD" -e POSTGRES_DB=igni \
   "$PGIMAGE" >/dev/null
-for _ in $(seq 1 60); do
+# Up to three minutes: a busy CI runner has taken over a minute to
+# initialise a fresh cluster, and this is the drill's only slow step.
+for _ in $(seq 1 180); do
   docker exec "$PG" pg_isready -U igni -d igni >/dev/null 2>&1 && break
   sleep 1
 done
-docker exec "$PG" pg_isready -U igni -d igni >/dev/null 2>&1 || fail "Postgres never became ready"
+if ! docker exec "$PG" pg_isready -U igni -d igni >/dev/null 2>&1; then
+  docker logs --tail 40 "$PG" >&2 || true
+  fail "Postgres never became ready"
+fi
 
 # The migrate job's two steps, in its order: the shared plane, then the
 # template every organisation's database is copied from.

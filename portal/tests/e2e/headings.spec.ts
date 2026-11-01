@@ -38,8 +38,9 @@ async function signedIn(page: import('@playwright/test').Page) {
  * own. Collection routes only — the detail pages need seeded ids, and
  * `PageHeader.Title` is shared with them.
  */
+// Not `/`: since the public site moved out it only redirects to
+// `/dashboard`, which is here (`portal-routes.test.tsx` covers the redirect).
 const ROUTES = [
-  '/',
   '/dashboard',
   '/team',
   '/groups',
@@ -56,7 +57,7 @@ test.describe('page titles', () => {
   }) => {
     // Asserted rather than assumed: a typo in the list above would
     // otherwise make this pass by checking nothing.
-    expect(ROUTES.length).toBeGreaterThanOrEqual(9)
+    expect(ROUTES.length).toBeGreaterThanOrEqual(8)
 
     await signedIn(page)
 

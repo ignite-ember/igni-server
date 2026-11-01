@@ -6,5 +6,13 @@
   "GET /v1/portal/groups?offset=0&limit=10": {
     "status": 200,
     "body": "{\n \"groups\": [\n  {\n   \"id\": \"d3713926-fc5f-451e-ad0b-3d926bd16d96\",\n   \"org_id\": \"demo-org-001\",\n   \"name\": \"contractors\",\n   \"description\": \"Contractors and agency staff. Narrower tool access, smaller default model.\",\n   \"default_model\": \"igni-1.0-27b\",\n   \"is_default\": false,\n   \"created_by_user_id\": \"demo-user-001\",\n   \"created_at\": \"2026-07-27T13:41:42.040373Z\",\n   \"updated_at\": \"2026-08-30T10:13:04.312949Z\",\n   \"member_count\": 1,\n   \"entry_count\": 6\n  },\n  {\n   \"id\": \"1bf06691-0297-4b47-a2d6-6570145dc6be\",\n   \"org_id\": \"demo-org-001\",\n   \"name\": \"engineers\",\n   \"description\": \"the shared engineers\",\n   \"default_model\": null,\n   \"is_default\": false,\n   \"created_by_user_id\": \"demo-user-001\",\n   \"created_at\": \"2026-07-27T13:49:47.432694Z\",\n   \"updated_at\": \"2026-07-27T13:49:47.432694Z\",\n   \"member_count\": 0,\n   \"entry_count\": 0\n  },\n  {\n   \"id\": \"230fd446-8cff-4aa1-8943-42f636fc790a\",\n   \"org_id\": \"demo-org-001\",\n   \"name\": \"Default\",\n   \"description\": \"What igni ships, as a starting point. Edit or delete any of it here — members pick the changes up on their next sync.\",\n   \"default_model\": null,\n   \"is_default\": true,\n   \"created_by_user_id\": \"demo-user-001\",\n   \"created_at\": \"2026-08-30T14:09:20.229203Z\",\n   \"updated_at\": \"2026-08-30T14:09:20.229203Z\",\n   \"member_count\": 0,\n   \"entry_count\": 29\n  }\n ],\n \"total\": 3,\n \"offset\": 0,\n \"limit\": 10\n}"
+  },
+  "GET /v1/portal/licence/notice": {
+    "status": 200,
+    "body": "{\"warnings\": []}"
+  },
+  "GET /v1/portal/deployment/notices": {
+    "status": 200,
+    "body": "{\"notices\": []}"
   }
 }

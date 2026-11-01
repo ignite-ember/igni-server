@@ -394,9 +394,10 @@ async def check_no_bypass_identity_in_database(*, raise_on_unsafe: bool = True) 
         f'({BYPASS_USER_ID!r} / {BYPASS_ORG_ID!r}) and APP_ENV={settings.app_env!r}. '
         f'That is a real administrator account with an empty password, created by '
         f'PORTAL_AUTH_BYPASS on some machine that pointed at this database. Anyone '
-        f'who can read a one-time code — from the server log when email is disabled, '
+        f'who can read a one-time code — from the server log when LOG_SIGN_IN_CODES is on, '
         f'or from its mailbox — can sign in as an admin.',
-        'remove both rows before serving:\n'
+        # Text for the operator to run by hand, never executed here (B608).
+        'remove both rows before serving:\n'  # nosec B608
         f"           DELETE FROM organizations WHERE id = '{BYPASS_ORG_ID}';\n"
         f"           DELETE FROM users WHERE user_id = '{BYPASS_USER_ID}';\n"
         '         If this *is* a development database, set APP_ENV=dev.',

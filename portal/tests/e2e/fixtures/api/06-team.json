@@ -6,5 +6,13 @@
   "GET /v1/portal/me": {
     "status": 200,
     "body": "{\n \"user_id\": \"demo-user-001\",\n \"email\": \"alex.chen@example.invalid\",\n \"full_name\": \"Alex Chen\",\n \"role\": \"admin\",\n \"created_at\": \"2026-07-27T13:19:13.282408Z\",\n \"pending_email\": null,\n \"auth_provider\": \"email\",\n \"org_id\": \"demo-org-001\",\n \"org_slug\": \"demo\",\n \"org_display_name\": \"Demo Org\",\n \"organizations\": [\n  {\n   \"id\": \"demo-org-001\",\n   \"slug\": \"demo\",\n   \"display_name\": \"Demo Org\",\n   \"role\": \"admin\"\n  }\n ]\n}"
+  },
+  "GET /v1/portal/licence/notice": {
+    "status": 200,
+    "body": "{\"warnings\": []}"
+  },
+  "GET /v1/portal/deployment/notices": {
+    "status": 200,
+    "body": "{\"notices\": []}"
   }
 }

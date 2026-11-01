@@ -6,5 +6,13 @@
   "GET /v1/auth/methods": {
     "status": 200,
     "body": "{\n \"password\": true,\n \"oauth_providers\": [\n  \"google\"\n ],\n \"sso\": {\n  \"enabled\": false,\n  \"label\": \"SSO\",\n  \"start_url\": \"/v1/auth/oidc\"\n }\n}"
+  },
+  "GET /v1/portal/licence/notice": {
+    "status": 200,
+    "body": "{\"warnings\": []}"
+  },
+  "GET /v1/portal/deployment/notices": {
+    "status": 200,
+    "body": "{\"notices\": []}"
   }
 }

@@ -50,7 +50,7 @@ dependencies = [
     # second place naming one version; left alone rather than removed in
     # the same change, since nothing here is broken by it.
     "sqlalchemy[asyncio]>=2.0.40,<2.1",
-    "psycopg2-binary==2.9.10",
+    "psycopg2-binary==2.9.13",
     "asyncpg>=0.30.0",
     "python-multipart>=0.0.20",
     "cryptography>=42.0.0",
@@ -88,7 +88,7 @@ dev = [
   "mypy==1.18.1",
   "mypy-extensions==1.1.0",
   "platformdirs==4.4.0",
-  "pip-audit==2.9.0",
+  "pip-audit==2.10.1",
   "bandit==1.8.6",
   "types-cachetools>=5.0.0",
   "types-pyyaml>=6.0.0",
