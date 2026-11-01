@@ -124,7 +124,7 @@ jobs:
           fi
 
       # skopeo, cosign and docker all read the credentials this writes.
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -254,7 +254,7 @@ jobs:
           fi
 
       # skopeo, cosign and docker all read the credentials this writes.
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -381,7 +381,7 @@ jobs:
       # The module images are other repositories' packages: GITHUB_TOKEN
       # reads them only while they are public or grant this repository
       # read access (package settings, "Manage Actions access").
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

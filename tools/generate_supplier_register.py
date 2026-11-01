@@ -82,7 +82,7 @@ SUPPLIERS: tuple[Supplier, ...] = (
         'request and daily against the default branch (V-4, V-7), and the scheduled scan gates.',
     ),
     Supplier(
-        'node:24-alpine',
+        'node:26-alpine',
         'Build stage for the portal bundle',
         'Compiles the React application in `portal/Dockerfile`. Discarded afterwards — a '
         'multi-stage build, so node is not in the shipped image.',

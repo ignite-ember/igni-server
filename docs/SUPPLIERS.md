@@ -49,7 +49,7 @@ shipped something malicious, because a list of names is not an assessment.
 | Supplier | What it is | Pinned in |
 |---|---|---|
 | `python:3.13-slim` | Base image for the API and worker | `containers/be/Dockerfile` |
-| `node:24-alpine` | Build stage for the portal bundle | `portal/Dockerfile` |
+| `node:26-alpine` | Build stage for the portal bundle | `portal/Dockerfile` |
 | `nginxinc/nginx-unprivileged:alpine` | Runtime image for the portal | `portal/Dockerfile` |
 | `nginx:1.27-alpine` | The local edge for igni's own host in the compose stack | `containers/docker-compose.local.yml` |
 | `gcr.io/cloud-marketplace-tools/k8s/deployer_helm:0.13` | Google Cloud Marketplace deployer | `marketplace/Dockerfile` |
@@ -65,7 +65,7 @@ Both stages of `containers/be/Dockerfile`. Slim rather than alpine because the w
 
 **Exposure.** The largest single supply-chain exposure in the product: it is the OS under the process that holds the database credentials and the encryption key. Scanned on every pull request and daily against the default branch (V-4, V-7), and the scheduled scan gates.
 
-### `node:24-alpine`
+### `node:26-alpine`
 
 Compiles the React application in `portal/Dockerfile`. Discarded afterwards — a multi-stage build, so node is not in the shipped image.
 
