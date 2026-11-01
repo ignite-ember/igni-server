@@ -30,13 +30,13 @@ import hashlib
 import re
 from typing import Self
 
-from jose import jws, JWSError  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationError
 
 from app.db.sql.extension_assets import ExtensionAssetDB
 from app.db.sql.models.extension_asset import ExtensionAsset
 from app.db.sql.models.registered_client import APPROVED, RegisteredClient, SERVICE
 from app.db.sql.registered_clients import RegisteredClientDB
+from app.security import jose
 from app.services.identity.jwk import JwkSet, PublicJwk
 
 #: The largest single asset a service may upload.
@@ -141,14 +141,14 @@ class AssetSignature:
         """The claim, if one of the client's registered keys signed it."""
         keys = JwkSet.model_validate(client.jwks)
         try:
-            kid = str(jws.get_unverified_header(signature).get('kid') or '')
-        except JWSError as exc:
+            kid = str(jose.unverified_header(signature).get('kid') or '')
+        except jose.TokenError as exc:
             raise AssetRefused('the signature is not a compact JWS') from exc
         candidates: list[PublicJwk] = [k for k in keys.keys if k.kid == kid] if kid else list(keys.keys)
         for key in candidates:
             try:
-                payload = jws.verify(signature, key.as_dict(), algorithms=[_ALGORITHM_FOR[key.kty]])
-            except JWSError:
+                payload = jose.verify_jws(signature, key.as_dict(), algorithms=[_ALGORITHM_FOR[key.kty]])
+            except jose.TokenError:
                 continue
             try:
                 return AssetClaim.model_validate_json(payload)

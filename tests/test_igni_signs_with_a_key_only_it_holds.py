@@ -19,10 +19,12 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import json
 
 from cryptography.fernet import Fernet
-from jose import jwt
+import jwt
 import pytest
 from sqlalchemy import create_engine, text
 
@@ -99,7 +101,7 @@ class TestAnybodyCanCheckButOnlyIgniCanSign:
         kid = jwt.get_unverified_header(token)['kid']
         key = next(k for k in published['keys'] if k['kid'] == kid)
 
-        claims = jwt.decode(token, key, algorithms=['RS256'], audience=JWTService().issuer)
+        claims = jwt.decode(token, jwt.PyJWK(key), algorithms=['RS256'], audience=JWTService().issuer)
 
         assert claims['sub'] == 'somebody'
         assert claims['iss'] == JWTService().issuer
@@ -143,19 +145,24 @@ class TestAForgeryIsRefused:
         published key as the secret. Refused by the pinned algorithm list
         before any key is consulted."""
         public = SigningKeys.ring().published.keys[0]
-        forged = jwt.encode(
-            {
-                'sub': 'somebody',
-                'aud': JWTService().issuer,
-                'iss': JWTService().issuer,
-                'token_use': 'session',
-                'iat': datetime.now(timezone.utc),
-                'exp': datetime.now(timezone.utc) + timedelta(hours=1),
-            },
-            json.dumps(public.as_dict()),
-            algorithm='HS256',
-            headers={'kid': public.kid},
-        )
+        now = int(datetime.now(timezone.utc).timestamp())
+        claims = {
+            'sub': 'somebody',
+            'aud': JWTService().issuer,
+            'iss': JWTService().issuer,
+            'token_use': 'session',
+            'iat': now,
+            'exp': now + 3600,
+        }
+        # Built by hand: PyJWT refuses to HMAC with a JWK, and the point is
+        # that the *verifier* refuses it whatever made it.
+        segments = [
+            base64.urlsafe_b64encode(json.dumps(part).encode()).rstrip(b'=')
+            for part in ({'alg': 'HS256', 'typ': 'JWT', 'kid': public.kid}, claims)
+        ]
+        signing_input = b'.'.join(segments)
+        mac = hmac.new(json.dumps(public.as_dict()).encode(), signing_input, hashlib.sha256).digest()
+        forged = (signing_input + b'.' + base64.urlsafe_b64encode(mac).rstrip(b'=')).decode()
 
         assert JWTService().decode_token(forged).user_id is None
 

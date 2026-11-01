@@ -11,7 +11,7 @@ organisation's quota, and is in the gateway's feed with kind `space`
 from __future__ import annotations
 
 from cryptography.fernet import Fernet
-from jose import jwt
+import jwt
 import pytest
 
 from app.config import settings
@@ -124,7 +124,7 @@ class TestActingAsASpace:
         exchanged = await shop.as_space(space['space_id'])
 
         assert exchanged.status_code == 200, exchanged.text
-        claims = jwt.get_unverified_claims(exchanged.json()['access_token'])
+        claims = jwt.decode(exchanged.json()['access_token'], options={'verify_signature': False})
         assert (claims['token_use'], claims['kind'], claims['sub']) == ('space', 'space', space['space_id'])
         assert (claims['app'], claims['org'], claims['external_id']) == (shop.app_id, shop.acme.org_id, 'cust-1')
         assert 'group' not in claims
@@ -187,7 +187,7 @@ class TestItsVm:
 
         assert first.status_code == 200, first.text
         assert second.status_code == 404
-        claims = jwt.get_unverified_claims(exchanged.json()['access_token'])
+        claims = jwt.decode(exchanged.json()['access_token'], options={'verify_signature': False})
         assert (claims['token_use'], claims['sub']) == ('space', space['space_id'])
 
     async def test_the_feed_lists_it_with_its_owner_and_its_apps_profile(self, client, shop):
@@ -313,7 +313,7 @@ class TestATokenForAService:
 
         assert response.status_code == 200, response.text
         assert response.json()['issued_token_type'] == ACCESS
-        claims = jwt.get_unverified_claims(response.json()['access_token'])
+        claims = jwt.decode(response.json()['access_token'], options={'verify_signature': False})
         assert (claims['token_use'], claims['aud'], claims['sub']) == ('app', SERVICE_URL, shop.app_id)
         assert (claims['kind'], claims['org'], claims['name']) == ('app', shop.acme.org_id, 'Tutor')
 
@@ -323,7 +323,7 @@ class TestATokenForAService:
 
         response = await _for_service(client, token)
 
-        claims = jwt.get_unverified_claims(response.json()['access_token'])
+        claims = jwt.decode(response.json()['access_token'], options={'verify_signature': False})
         assert (claims['token_use'], claims['aud'], claims['sub']) == ('space', SERVICE_URL, space['space_id'])
         assert (claims['kind'], claims['app'], claims['external_id']) == ('space', shop.app_id, 'cust-1')
         assert claims['org'] == shop.acme.org_id

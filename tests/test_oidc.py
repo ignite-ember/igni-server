@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import jwt
-from jose.backends import RSAKey
+import jwt
+from jwt.algorithms import RSAAlgorithm
 import pytest
 
 from app.services.auth.oidc import OidcClaims, OidcClient, OidcError, OidcNotConfigured
@@ -56,7 +56,7 @@ SIGNING_KEY, _PUBLIC_KEY = _keypair()
 #: the wrong key, and its public half never reaches the JWKS.
 OTHER_SIGNING_KEY, _ = _keypair()
 
-_jwk = RSAKey(_PUBLIC_KEY, 'RS256').to_dict()
+_jwk = RSAAlgorithm.to_jwk(serialization.load_pem_public_key(_PUBLIC_KEY.encode()), as_dict=True)
 _jwk['kid'] = 'test'
 JWKS = {'keys': [_jwk]}
 
@@ -155,7 +155,7 @@ class TestIdTokenValidation:
             await offline_client.validate_id_token(_id_token(exp=past), nonce=NONCE)
 
     async def test_a_replayed_nonce_is_rejected(self, offline_client):
-        """jose does not check nonce; this is our own guard, and without
+        """Nothing checks nonce for us; this is our own guard, and without
         it a token obtained from the same IdP elsewhere could be replayed
         into our callback."""
         with pytest.raises(OidcError, match='nonce'):
@@ -179,7 +179,7 @@ class TestIdTokenValidation:
 
 class TestClaimMapping:
     async def test_a_missing_subject_is_rejected(self, offline_client):
-        """Omitted rather than null: jose rejects a null ``sub`` itself,
+        """Omitted rather than null: PyJWT rejects a null ``sub`` itself,
         before our own check runs, so an absent claim is the only way to
         reach it."""
         token = jwt.encode(

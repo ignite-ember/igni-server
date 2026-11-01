@@ -103,6 +103,26 @@ jobs:
             'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])' \
           )" >> "$GITHUB_OUTPUT"
 
+      # Nothing is pushed unsigned. The push below happens before the
+      # signature, so without the environment's signing key an image would
+      # reach the registry with no signature, and on main under a release
+      # tag. Until the key ceremony has put the keys in this environment
+      # (docs/OFFLINE_UPDATES.md), the job stops here, before the push.
+      - name: The signing key is in this environment
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          missing=()
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || missing+=(secret COSIGN_PRIVATE_KEY)
+          [ -n "${COSIGN_PASSWORD}" ] || missing+=(secret COSIGN_PASSWORD)
+          [ -n "${COSIGN_PUBLIC_KEY}" ] || missing+=(variable COSIGN_PUBLIC_KEY)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::No image is pushed unsigned. Missing in environment '${{ needs.resolve-env.outputs.env }}': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
+            exit 1
+          fi
+
       # skopeo, cosign and docker all read the credentials this writes.
       - uses: docker/login-action@v3
         with:
@@ -165,7 +185,7 @@ jobs:
       # Tagged with the commit SHA so the artefact and the image it
       # describes cannot drift apart.
       - name: SBOM — backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ${{ env.REGISTRY }}/igni-api:${{ steps.meta.outputs.tag }}
@@ -212,6 +232,26 @@ jobs:
 
       - id: meta
         run: echo "tag=${{ needs.resolve-env.outputs.prefix }}${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      # Nothing is pushed unsigned. The push below happens before the
+      # signature, so without the environment's signing key an image would
+      # reach the registry with no signature, and on main under a release
+      # tag. Until the key ceremony has put the keys in this environment
+      # (docs/OFFLINE_UPDATES.md), the job stops here, before the push.
+      - name: The signing key is in this environment
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          missing=()
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || missing+=(secret COSIGN_PRIVATE_KEY)
+          [ -n "${COSIGN_PASSWORD}" ] || missing+=(secret COSIGN_PASSWORD)
+          [ -n "${COSIGN_PUBLIC_KEY}" ] || missing+=(variable COSIGN_PUBLIC_KEY)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::No image is pushed unsigned. Missing in environment '${{ needs.resolve-env.outputs.env }}': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
+            exit 1
+          fi
 
       # skopeo, cosign and docker all read the credentials this writes.
       - uses: docker/login-action@v3
@@ -261,7 +301,7 @@ jobs:
       # So: one SBOM for what the container is, and one for what the
       # bundle was built from.
       - name: SBOM — portal image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ${{ env.REGISTRY }}/igni-portal:${{ steps.meta.outputs.tag }}
@@ -269,7 +309,7 @@ jobs:
           output: sbom-portal-image.cdx.json
 
       - name: SBOM — portal npm tree
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: portal

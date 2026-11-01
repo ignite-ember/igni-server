@@ -11,11 +11,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from jose import jwt, JWTError  # type: ignore[import-untyped]
-
 from app.db.redis.authorization_codes import SpentAssertionDB
 from app.db.sql.models.registered_client import APPROVED, PENDING, RegisteredClient
 from app.db.sql.registered_clients import RegisteredClientDB
+from app.security import jose
 from app.services.identity.errors import OAuthError
 from app.services.identity.jwk import JwkSet, PublicJwk
 
@@ -43,9 +42,9 @@ class ClientAssertions:
             raise OAuthError.invalid_client(f'authenticate with client_assertion_type={ASSERTION_TYPE}')
 
         try:
-            unverified = jwt.get_unverified_claims(assertion)
-            header = jwt.get_unverified_header(assertion)
-        except JWTError as exc:
+            unverified = jose.unverified_claims(assertion)
+            header = jose.unverified_header(assertion)
+        except jose.TokenError as exc:
             raise OAuthError.invalid_client('the client assertion is not a JWT') from exc
 
         client_id = str(unverified.get('iss') or '')
@@ -85,14 +84,15 @@ class ClientAssertions:
     @staticmethod
     def _verified(assertion: str, key: PublicJwk, *, client_id: str, audiences: set[str]) -> dict[str, Any]:
         try:
-            claims: dict[str, Any] = jwt.decode(
+            claims: dict[str, Any] = jose.decode(
                 assertion,
                 key.as_dict(),
                 algorithms=[_ALGORITHM_FOR[key.kty]],
                 issuer=client_id,
-                options={'verify_aud': False, 'require_exp': True, 'require_jti': True},
+                require=('exp', 'jti'),
+                verify_aud=False,
             )
-        except JWTError as exc:
+        except jose.TokenError as exc:
             raise OAuthError.invalid_client(f'the client assertion did not verify: {exc}') from exc
         audience = claims.get('aud')
         named = {audience} if isinstance(audience, str) else set(audience or [])

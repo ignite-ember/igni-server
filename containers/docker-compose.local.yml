@@ -17,7 +17,10 @@ services:
       - ../alembic_tenant:/app/alembic_tenant
       - ../alembic.ini:/app/alembic.ini
     env_file:
-      - .env
+      # Optional, so `docker compose config` works on a fresh checkout
+      # (CI checks it there). The development stack runs without one.
+      - path: .env
+        required: false
     # This file *is* the development stack, so it says so rather than
     # depending on what .env happens to contain. dist.env ships
     # APP_ENV=prod deliberately (dev disarms the startup safety checks,
@@ -55,7 +58,10 @@ services:
       # Local-stub Secret Manager backing file lives under scripts/
       - ../scripts:/app/scripts
     env_file:
-      - .env
+      # Optional, so `docker compose config` works on a fresh checkout
+      # (CI checks it there). The development stack runs without one.
+      - path: .env
+        required: false
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

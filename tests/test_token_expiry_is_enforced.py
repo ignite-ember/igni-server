@@ -6,7 +6,7 @@ expired one to check it was refused. The nearest thing was a string
 comparison against the words "Invalid or expired token", which is the
 message, not the behaviour.
 
-`python-jose` validates `exp` by default. "By default" is exactly the
+PyJWT validates `exp` by default. "By default" is exactly the
 kind of assumption this review keeps finding wrong: an `options={}`
 passed to `jwt.decode` for some other reason, or a move to a different
 library, turns every token in the field into a permanent credential, and
@@ -57,10 +57,10 @@ class TestTheDecoder:
         """Pinned because DEC-10 left it open as a deliberate question,
         and a number nobody asserts is a number that drifts. If this
         changes, it should change because somebody decided to."""
-        import jose.jwt as jose_jwt
+        import jwt as jose_jwt
 
         token = JWTService().create_token('somebody')
-        claims = jose_jwt.get_unverified_claims(token)
+        claims = jose_jwt.decode(token, options={'verify_signature': False})
         lifetime = claims['exp'] - claims['iat']
         assert lifetime == int(timedelta(days=30).total_seconds()), f'{lifetime}s'
 

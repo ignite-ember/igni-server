@@ -42,7 +42,6 @@ import re
 import tarfile
 from typing import Any
 
-from jose import jws, JWSError  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 import yaml
 
@@ -50,6 +49,7 @@ from app.db.sql.models.registered_client import APPROVED, RegisteredClient, SERV
 from app.db.sql.models.service_extension import HELD, LIVE, ServiceExtension
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.service_extensions import ServiceExtensionDB
+from app.security import jose
 from app.services.identity.extension_assets import AssetRefused, BundleAssets, ExtensionAssets
 from app.services.identity.extension_grants import compare_grants, ExtensionGrants, GrantsComparison
 from app.services.identity.impact import ExtensionImpact, IgniCommands, ImpactRefused
@@ -235,14 +235,14 @@ class BundleSignature:
         """The claim, if one of the client's registered keys signed it."""
         keys = JwkSet.model_validate(client.jwks)
         try:
-            kid = str(jws.get_unverified_header(signature).get('kid') or '')
-        except JWSError as exc:
+            kid = str(jose.unverified_header(signature).get('kid') or '')
+        except jose.TokenError as exc:
             raise ExtensionRefused('the signature is not a compact JWS') from exc
         candidates: list[PublicJwk] = [k for k in keys.keys if k.kid == kid] if kid else list(keys.keys)
         for key in candidates:
             try:
-                payload = jws.verify(signature, key.as_dict(), algorithms=[_ALGORITHM_FOR[key.kty]])
-            except JWSError:
+                payload = jose.verify_jws(signature, key.as_dict(), algorithms=[_ALGORITHM_FOR[key.kty]])
+            except jose.TokenError:
                 continue
             try:
                 return BundleClaim.model_validate_json(payload)

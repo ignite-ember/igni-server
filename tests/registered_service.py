@@ -15,7 +15,7 @@ import json
 import tarfile
 import uuid
 
-from jose import jws, jwt
+import jwt
 
 from app.db.sql.models.registered_client import APPROVED, RegisteredClient
 from app.db.sql.registered_clients import RegisteredClientDB
@@ -135,7 +135,7 @@ class ExtensionBundle:
             'sha256': sha256 or hashlib.sha256(self.archive).hexdigest(),
         }
         return str(
-            jws.sign(
+            jwt.PyJWS().encode(
                 json.dumps(claim).encode(),
                 service.pair.private_pem(),
                 algorithm='RS256',
@@ -163,7 +163,7 @@ class ExtensionAssetFile:
     def signed_by(self, service: RegisteredService, *, size: int | None = None, sha256: str = '') -> str:
         claim = {'asset': sha256 or self.sha256, 'size': len(self.content) if size is None else size}
         return str(
-            jws.sign(
+            jwt.PyJWS().encode(
                 json.dumps(claim).encode(),
                 service.pair.private_pem(),
                 algorithm='RS256',

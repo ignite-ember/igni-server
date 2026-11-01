@@ -16,6 +16,9 @@ permissions:
 jobs:
   signed-off:
     name: Every commit is signed off
+    # Sign-off is for contributions to the public repository. The private
+    # development repository's commits are not contributions and carry none.
+    if: github.repository == 'ignite-ember/igni-server'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

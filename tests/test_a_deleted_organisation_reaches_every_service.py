@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import uuid
 
 import httpx
-from jose import jwt
+import jwt
 import pytest
 
 from app.db.sql.organisation_deletion_notices import OrganisationDeletionNoticeDB
@@ -41,7 +41,7 @@ class _Services:
     def claims(self, request: httpx.Request, audience: str) -> dict:
         token = request.headers['authorization'].removeprefix('Bearer ')
         key = SigningKeys.ring().published.keys[0].as_dict()
-        return jwt.decode(token, key, algorithms=['RS256'], audience=audience, issuer=JWTService().issuer)
+        return jwt.decode(token, jwt.PyJWK(key), algorithms=['RS256'], audience=audience, issuer=JWTService().issuer)
 
 
 @pytest.fixture
@@ -123,7 +123,7 @@ class TestDelivering:
         claims = services.claims(request, codeindex.base_url)
         assert claims['token_use'] == 'igni'
         assert claims['org'] == admin['org_id']
-        with pytest.raises(jwt.JWTClaimsError):
+        with pytest.raises(jwt.InvalidAudienceError):
             services.claims(request, artifacts.base_url)
         assert await OrganisationDeletionNoticeDB().outstanding() == []
 

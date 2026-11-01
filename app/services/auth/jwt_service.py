@@ -18,10 +18,10 @@ from enum import StrEnum
 import logging
 from typing import Any
 
-from jose import jwt, JWTError  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
 from app.config import settings
+from app.security import jose
 from app.services.identity.key_ring import KeyRing, SigningKeys
 
 logger = logging.getLogger(__name__)
@@ -194,27 +194,27 @@ class JWTService:
                 'exp': now + lifetime,
             }
         )
-        return str(jwt.encode(payload, ring.private_pem(), algorithm='RS256', headers={'kid': ring.kid}))
+        return jose.encode(payload, ring.private_pem(), algorithm='RS256', headers={'kid': ring.kid})
 
     def verify(self, token: str, *, audience: str, use: TokenUse) -> dict[str, Any] | None:
         """The payload of a valid token of this kind for `audience`, or `None`."""
         try:
-            header = jwt.get_unverified_header(token)
-        except JWTError:
+            header = jose.unverified_header(token)
+        except jose.TokenError:
             return None
         key = self._ring().verifying_key(str(header.get('kid', '')))
         if key is None:
             return None
         try:
-            payload: dict[str, Any] = jwt.decode(
+            payload: dict[str, Any] = jose.decode(
                 token,
                 key.as_dict(),
                 algorithms=self.ALGORITHMS,
                 audience=audience,
                 issuer=self.issuer,
-                options={'require_iat': True, 'require_exp': True, 'require_sub': True},
+                require=('iat', 'exp', 'sub'),
             )
-        except JWTError:
+        except jose.TokenError:
             return None
         if payload.get('token_use') != str(use):
             return None

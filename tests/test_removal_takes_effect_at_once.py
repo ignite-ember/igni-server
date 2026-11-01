@@ -13,7 +13,7 @@ import time
 from unittest.mock import AsyncMock, patch
 
 from cryptography.fernet import Fernet
-from jose import jwt
+import jwt
 import pytest
 
 from app.config import settings
@@ -228,7 +228,7 @@ async def test_revocations_are_exact_to_the_millisecond(client, world):
         await client.get('/platform/revocations', params={'since': start}, headers=world['gateway'])
     ).json()['revocations']
     await asyncio.sleep(0.01)
-    later = jwt.get_unverified_claims(make_token(ada, org_id=acme.org_id))
+    later = jwt.decode(make_token(ada, org_id=acme.org_id), options={'verify_signature': False})
 
     assert later['iat_ms'] > entry['not_before_ms']
     assert later['iat'] * 1000 <= later['iat_ms'] < later['iat'] * 1000 + 1000
@@ -253,7 +253,7 @@ async def test_a_service_starts_following_with_a_token_for_no_organisation(clien
     )
 
     assert without.json()['error'] == 'invalid_request'
-    claims = jwt.get_unverified_claims(follower['Authorization'].removeprefix('Bearer '))
+    claims = jwt.decode(follower['Authorization'].removeprefix('Bearer '), options={'verify_signature': False})
     assert (claims['token_use'], claims['scope']) == ('service', 'revocations')
     assert 'org' not in claims
     assert [o['org_id'] for o in served.json()['organisations']] == [acme.org_id]

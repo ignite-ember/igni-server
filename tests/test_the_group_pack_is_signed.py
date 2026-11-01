@@ -24,7 +24,7 @@ import base64
 import json
 import uuid
 
-from jose import jwt
+import jwt
 import pytest
 
 from app.config import settings
@@ -94,7 +94,7 @@ class TestThePackIsSigned:
         published = (await client.get('http://test/.well-known/jwks.json')).json()
         key = next(k for k in published['keys'] if k['kid'] == header['kid'])
 
-        claims = jwt.decode(signed, key, algorithms=['RS256'], options={'verify_aud': False})
+        claims = jwt.decode(signed, jwt.PyJWK(key), algorithms=['RS256'], options={'verify_aud': False})
         assert claims['iss'] == settings.public_base_url.rstrip('/')
         assert claims['sub'] == two_members_in_a_group['alice']
         assert claims['org'] == two_members_in_a_group['org_id']
@@ -121,7 +121,7 @@ class TestThePackIsSigned:
         edited['policy']['entries'] = []
         forged_payload = base64.urlsafe_b64encode(json.dumps(edited).encode()).rstrip(b'=').decode()
         with pytest.raises(Exception):
-            jwt.decode(f'{head}.{forged_payload}.{signature}', key, algorithms=['RS256'])
+            jwt.decode(f'{head}.{forged_payload}.{signature}', jwt.PyJWK(key), algorithms=['RS256'])
 
     async def test_a_later_pack_has_a_later_version(self, client, two_members_in_a_group):
         first = _segment((await _pack(client, two_members_in_a_group['alice'])).json()['signed_pack'], 1)
@@ -167,7 +167,7 @@ class TestNoPackIsSignedToo:
         assert body['no_pack'] is True
         published = (await client.get('http://test/.well-known/jwks.json')).json()
         key = next(k for k in published['keys'] if k['kid'] == _segment(body['signed_pack'], 0)['kid'])
-        claims = jwt.decode(body['signed_pack'], key, algorithms=['RS256'], options={'verify_aud': False})
+        claims = jwt.decode(body['signed_pack'], jwt.PyJWK(key), algorithms=['RS256'], options={'verify_aud': False})
         assert claims['sub'] == user_id
         assert claims['no_pack'] is True and claims['policy'] is None
         assert claims['token_use'] == PACK_USE

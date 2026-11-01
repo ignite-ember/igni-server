@@ -24,9 +24,9 @@ because a permissive check reads exactly like a working one.
   what stops a token obtained elsewhere from being replayed into our
   callback.
 
-`python-jose` checks signature, `iss`, `aud` and `exp` when given the
-right arguments. It does **not** check `nonce` — that one is ours, and
-it is done explicitly below.
+`app.security.jose.decode` checks signature, `iss`, `aud` and `exp`. It
+does **not** check `nonce` — that one is ours, and it is done explicitly
+below.
 
 ## What this deliberately does not do
 
@@ -48,10 +48,10 @@ from urllib.parse import urlencode
 
 import httpx
 from httpx._client import USE_CLIENT_DEFAULT, UseClientDefault
-from jose import jwt, JWTError  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
 from app.config import settings
+from app.security import jose
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +90,10 @@ class OidcNotConfigured(RuntimeError):
 #:
 #: It is here because that protection is incidental: it comes from two
 #: guards inside a dependency rather than from anything this code says.
-#: Naming the set costs nothing and means a jose upgrade, or a move to
-#: another library, cannot quietly reopen it.
+#: Naming the set costs nothing and means a library change cannot quietly
+#: reopen it. That change has since happened (python-jose to PyJWT, for
+#: PYSEC-2026-4298), and `app.security.jose` now refuses any non-asymmetric
+#: algorithm outright, whoever asks for it.
 ID_TOKEN_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512', 'PS256', 'PS384', 'PS512']
 
 
@@ -376,23 +378,18 @@ class OidcClient:
         """
         keys = await self._jwks_keys(force=self._kid_is_unknown(id_token, await self._jwks_keys()))
         try:
-            claims = jwt.decode(
+            claims = jose.decode(
                 id_token,
                 keys,
                 algorithms=ID_TOKEN_ALGORITHMS,
                 audience=self._client_id,
                 issuer=self._issuer,
-                options={
-                    'verify_signature': True,
-                    'verify_aud': True,
-                    'verify_iss': True,
-                    'verify_exp': True,
-                },
+                require=('exp', 'iss', 'aud'),
             )
-        except JWTError as exc:
+        except jose.TokenError as exc:
             raise OidcError(f'The OIDC id_token failed validation: {exc}') from exc
 
-        # jose does not check nonce; this is the replay guard and it has
+        # Nothing checks nonce for us; this is the replay guard and it has
         # to be explicit.
         if claims.get('nonce') != nonce:
             raise OidcError('The OIDC id_token nonce does not match this login')
@@ -419,8 +416,8 @@ class OidcClient:
         of every login and hand an attacker a way to hammer it.
         """
         try:
-            header = jwt.get_unverified_header(id_token)
-        except JWTError:
+            header = jose.unverified_header(id_token)
+        except jose.TokenError:
             return False
 
         kid = header.get('kid')

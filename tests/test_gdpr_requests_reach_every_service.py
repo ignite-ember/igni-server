@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 
 import httpx
-from jose import jwt
+import jwt
 import pytest
 
 from app.services.auth.jwt_service import JWTService
@@ -45,7 +45,7 @@ class _Services:
         """What the service checks, against igni's published key."""
         token = request.headers['authorization'].removeprefix('Bearer ')
         key = SigningKeys.ring().published.keys[0].as_dict()
-        return jwt.decode(token, key, algorithms=['RS256'], audience=audience, issuer=JWTService().issuer)
+        return jwt.decode(token, jwt.PyJWK(key), algorithms=['RS256'], audience=audience, issuer=JWTService().issuer)
 
 
 @pytest.fixture
@@ -103,7 +103,7 @@ class TestErasure:
         await client.post('/portal/erasure', headers=admin['headers'], json={'email': 'jane@example.com'})
 
         to_codeindex = next(r for r in services.calls if r.url.host == 'codeindex.example.com')
-        with pytest.raises(jwt.JWTClaimsError):
+        with pytest.raises(jwt.InvalidAudienceError):
             services.claims(to_codeindex, artifacts.base_url)
         assert services.claims(to_codeindex, codeindex.base_url)
 

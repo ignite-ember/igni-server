@@ -20,7 +20,7 @@ import json
 import threading
 from urllib.parse import parse_qs, urlsplit
 
-from jose import jwt
+import jwt
 from pydantic import BaseModel, ConfigDict
 
 from app.services.identity.jwk import RsaKeyPair

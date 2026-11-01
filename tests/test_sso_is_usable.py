@@ -186,7 +186,7 @@ class TestKeyRotation:
     def test_an_unknown_kid_asks_for_the_keys_again(self):
         """Otherwise a provider that rotates its signing key refuses every
         login for up to an hour, reporting a signature failure."""
-        import jose.jwt as jose_jwt
+        import jwt as jose_jwt
 
         token = jose_jwt.encode({'sub': 'x'}, 'secret', algorithm='HS256', headers={'kid': 'new-key'})
 
@@ -195,7 +195,7 @@ class TestKeyRotation:
     def test_a_known_kid_does_not(self):
         """The refetch has to stay rare: it puts the provider on the
         critical path of a login."""
-        import jose.jwt as jose_jwt
+        import jwt as jose_jwt
 
         token = jose_jwt.encode({'sub': 'x'}, 'secret', algorithm='HS256', headers={'kid': 'old-key'})
 
@@ -205,7 +205,7 @@ class TestKeyRotation:
         """Conservative by construction: this decides whether to refetch,
         and a path that can be pushed into refetching on every request is
         a way to hammer somebody's IdP."""
-        import jose.jwt as jose_jwt
+        import jwt as jose_jwt
 
         token = jose_jwt.encode({'sub': 'x'}, 'secret', algorithm='HS256')
 
@@ -217,7 +217,7 @@ class TestKeyRotation:
     def test_an_empty_key_set_does_not(self):
         """Nothing is known, so nothing can be said to be unknown — and
         the normal validation will fail informatively anyway."""
-        import jose.jwt as jose_jwt
+        import jwt as jose_jwt
 
         token = jose_jwt.encode({'sub': 'x'}, 'secret', algorithm='HS256', headers={'kid': 'k'})
 

@@ -36,7 +36,6 @@ import logging
 import uuid
 
 from fastapi import HTTPException
-from jose import jwt, JWTError  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
 from app.db.redis.authorization_codes import AuthorizationCodeDB
@@ -44,6 +43,7 @@ from app.db.sql.models.registered_client import APP, PLATFORM, RegisteredClient,
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.revoked_grants import RevokedGrantDB
 from app.db.sql.team import TeamDB
+from app.security import jose
 from app.security.membership_sessions import MembershipSessions
 from app.security.service_caller import REVOCATIONS_SCOPE
 from app.security.subject import require_existing_user
@@ -251,8 +251,8 @@ class TokenGrants:
         refresh token that verified never reaches here.
         """
         try:
-            use = jwt.get_unverified_claims(token).get('token_use')
-        except JWTError:
+            use = jose.unverified_claims(token).get('token_use')
+        except jose.TokenError:
             return False
         return isinstance(use, str) and use != str(TokenUse.REFRESH) and use in {str(u) for u in TokenUse}
 

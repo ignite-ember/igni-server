@@ -43,9 +43,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from jose import jwt  # type: ignore[import-untyped]
-
 from app.api.base_v1.schema.portal.groups import OrgGroupPack
+from app.security import jose
 from app.services.auth.jwt_service import JWTService
 from app.services.identity.key_ring import KeyRing, SigningKeys
 
@@ -109,7 +108,7 @@ class GroupPackSigner:
             **body,
         }
         return str(
-            jwt.encode(
+            jose.encode(
                 claims,
                 ring.private_pem(),
                 algorithm='RS256',

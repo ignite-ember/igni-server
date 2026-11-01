@@ -13,7 +13,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet
-from jose import jwt
+import jwt
 import pytest
 
 from app.config import settings
@@ -59,7 +59,7 @@ class TestAPersonsVm:
         response = await _sign_in(client, session)
 
         body = response.json()
-        claims = jwt.get_unverified_claims(body['access_token'])
+        claims = jwt.decode(body['access_token'], options={'verify_signature': False})
         assert body['expires_in'] == 900
         assert body['vm_credential'].startswith(f'igvm1.{acme.org_id}.')
         assert (claims['token_use'], claims['kind'], claims['sub'], claims['org']) == (
@@ -249,7 +249,7 @@ class TestAnAppsVm:
         assert 'vm_credential' not in enabled.json()
         assert first.status_code == 200
         assert second.status_code == 404
-        claims = jwt.get_unverified_claims(exchanged.json()['access_token'])
+        claims = jwt.decode(exchanged.json()['access_token'], options={'verify_signature': False})
         assert (claims['token_use'], claims['kind'], claims['sub']) == ('app', 'app', app.client_id)
         assert 'group' not in claims
         listed = (await client.get('/portal/vm-credentials', headers=acme.admin)).json()['credentials']

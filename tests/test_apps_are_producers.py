@@ -11,7 +11,7 @@ gives it.
 
 from __future__ import annotations
 
-from jose import jwt
+import jwt
 import pytest
 
 from app.services.auth.jwt_service import JWTService
@@ -130,7 +130,7 @@ class TestItsToken:
 
         headers = await acme.app_token(app)
 
-        claims = jwt.get_unverified_claims(headers['Authorization'].split()[1])
+        claims = jwt.decode(headers['Authorization'].split()[1], options={'verify_signature': False})
         assert claims['token_use'] == 'app'
         assert claims['kind'] == 'app'
         assert claims['sub'] == app.client_id
@@ -159,7 +159,7 @@ class TestItsToken:
         assert (await client.get('/extensions', headers=headers)).status_code == 401
 
     async def test_a_person_session_says_person(self, acme):
-        claims = jwt.get_unverified_claims(make_token(acme.admin_id, org_id=acme.org_id))
+        claims = jwt.decode(make_token(acme.admin_id, org_id=acme.org_id), options={'verify_signature': False})
 
         assert claims['kind'] == 'person'
 
@@ -225,7 +225,7 @@ class TestPlatformClients:
     async def test_a_platform_client_gets_a_token_naming_no_organisation(self, client):
         headers = await platform(client)
 
-        claims = jwt.get_unverified_claims(headers['Authorization'].split()[1])
+        claims = jwt.decode(headers['Authorization'].split()[1], options={'verify_signature': False})
         assert claims['token_use'] == 'platform'
         assert 'org' not in claims
 

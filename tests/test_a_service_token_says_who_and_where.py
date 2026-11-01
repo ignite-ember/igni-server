@@ -13,7 +13,7 @@ from datetime import timedelta
 import hashlib
 from urllib.parse import parse_qs, urlsplit
 
-from jose import jwt
+import jwt
 import pytest
 
 from app.db.sql.team import TeamDB
@@ -32,7 +32,7 @@ CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest())
 
 
 def _claims(token: str) -> dict:
-    return jwt.get_unverified_claims(token)
+    return jwt.decode(token, options={'verify_signature': False})
 
 
 async def _token(client, form: dict):
