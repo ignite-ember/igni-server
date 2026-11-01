@@ -436,7 +436,46 @@ jobs:
       - name: Portal E2E
         env:
           IGNI_E2E_STRICT: '1'
+          IGNI_E2E_WITHOUT_API: '1'
         run: npx playwright test
+
+  # The functional specs drive the real API through the portal: create a
+  # group, reload, delete it; change a display name and see it persist.
+  # Every other E2E spec mocks the API, so without this job those six
+  # skipped on every run. Not in the Playwright container: the API runs in
+  # Docker, and these specs assert behaviour, not pixels.
+  portal-functional:
+    name: Portal against the API
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - run: npm ci --legacy-peer-deps
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: Start a throwaway API
+        working-directory: .
+        run: tools/portal-e2e-stack.sh up
+
+      - name: Functional E2E
+        env:
+          IGNI_E2E_STRICT: '1'
+        run: npx playwright test tests/e2e/functional.spec.ts
+
+      - name: Stop the API
+        if: always()
+        working-directory: .
+        run: tools/portal-e2e-stack.sh down
 
   # ── The chart, on a cluster ──────────────────────────────────────────
   #

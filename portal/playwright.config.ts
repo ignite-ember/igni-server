@@ -11,6 +11,10 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './tests/e2e',
+  // The functional specs need a real API behind the portal. CI runs them
+  // in their own job, which starts one (tools/portal-e2e-stack.sh); the
+  // job without an API leaves them out rather than skipping them.
+  testIgnore: process.env.IGNI_E2E_WITHOUT_API ? ['**/functional.spec.ts'] : [],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

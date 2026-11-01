@@ -156,14 +156,22 @@ step "A shared plane and two organisations at head, with something in each"
 docker run -d --name "$PG" --network "$NET" \
   -e POSTGRES_USER=igni -e POSTGRES_PASSWORD="$PASSWORD" -e POSTGRES_DB=igni \
   "$PGIMAGE" >/dev/null
-# Up to three minutes: a busy CI runner has taken over a minute to
-# initialise a fresh cluster, and this is the drill's only slow step.
+# A fresh cluster starts twice: once to initialise, then for real. Probe
+# only after the entrypoint says initialisation is complete. Probing every
+# second through the first server's shutdown is what stalled it on a CI
+# runner (the log ended mid-shutdown, after the checkpoint), while the same
+# drill passed locally.
 for _ in $(seq 1 180); do
+  docker logs "$PG" 2>&1 | grep -q 'PostgreSQL init process complete' && break
+  sleep 1
+done
+for _ in $(seq 1 60); do
   docker exec "$PG" pg_isready -U igni -d igni >/dev/null 2>&1 && break
   sleep 1
 done
 if ! docker exec "$PG" pg_isready -U igni -d igni >/dev/null 2>&1; then
-  docker logs --tail 40 "$PG" >&2 || true
+  docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$PG" >&2 || true
+  docker logs --tail 60 "$PG" >&2 || true
   fail "Postgres never became ready"
 fi
 
@@ -306,12 +314,14 @@ ok "tenants.number is still unique"
 
 step "Does the application come up on it?"
 docker run -d --name "$REDIS" --network "$NET" redis:7.4-alpine >/dev/null
-# A throwaway encryption key, required even with APP_ENV=dev. The drill's
-# rows hold no signing key, so the server generates one under this.
+# A throwaway encryption key, required even with APP_ENV=dev, made for
+# this run. The drill's rows hold no signing key, so the server generates
+# one under this.
+drill_key="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
 docker run -d --name "$API" --network "$NET" -p "${PORT}:7777" \
   -e APP_ENV=dev -e POSTGRES_HOST="$PG" -e POSTGRES_USER=igni -e POSTGRES_PASSWORD="$PASSWORD" \
   -e POSTGRES_DB=restored -e REDIS_HOST="$REDIS" \
-  -e SECRET_ENCRYPTION_KEY=DUuX49F9ROzfR-UMMTjm65pV86qN7IyUSzC0gkFQDh0= \
+  -e SECRET_ENCRYPTION_KEY="$drill_key" \
   "$IMAGE" >/dev/null
 for _ in $(seq 1 60); do
   curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 && break

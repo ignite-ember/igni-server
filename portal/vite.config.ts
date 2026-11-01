@@ -6,7 +6,9 @@ export default defineConfig({
   server: {
     proxy: {
       '/v1': {
-        target: 'http://localhost:7777',
+        // IGNI_API_URL lets the E2E stack (tools/portal-e2e-stack.sh) run
+        // on another port beside a developer's own stack.
+        target: process.env.IGNI_API_URL ?? 'http://localhost:7777',
         changeOrigin: true,
       },
     },
