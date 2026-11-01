@@ -142,7 +142,8 @@ async def test_an_apps_life(world):
     await world.call('POST', f'/portal/apps/{world.app}/vm-credential')
     await _escaped()
     await world.call('DELETE', f'/portal/apps/{world.app}')
-    assert await _escaped() == 0
+    # Deleting an app is discarding it, which numbers its removal itself (§18.5): nothing is left to drain.
+    assert await ProducerFeed().reconcile() == 0
 
 
 async def test_lowering_the_caps(world):
@@ -184,7 +185,8 @@ async def test_a_spaces_life(world):
     assert (await world.client.delete(f'/apps/{world.app}/spaces/a', headers=app)).status_code == 204
     assert await _escaped() == 0
     await world.call('DELETE', f'/portal/apps/{world.app}')
-    assert await _escaped() == 0
+    # Discarding the app numbers its and its spaces' removal itself (§18.5).
+    assert await ProducerFeed().reconcile() == 0
 
 
 async def test_growing_a_volume(world):

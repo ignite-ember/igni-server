@@ -15,6 +15,7 @@ from sqlalchemy import and_, CompoundSelect, delete, func, insert, or_, select, 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.sql import SQLAlchemySessionManager
+from app.db.sql.models.app_space import SPACE
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.organization import Organization
 from app.db.sql.models.producer_feed import ProducerFeedEntry, ProducerFeedMark
@@ -119,11 +120,18 @@ class FeedNumbering:
     @staticmethod
     def _differs(row: ProducerFeedEntry, state: ProducerState) -> bool:
         """The profile itself is compared by its version, which changes exactly when it does."""
-        return row.vm_profile is None or (row.active, row.profile_version, row.packages_version, row.volume_gib) != (
+        return row.vm_profile is None or (
+            row.active,
+            row.profile_version,
+            row.packages_version,
+            row.volume_gib,
+            row.legal_hold,
+        ) != (
             state.active,
             state.profile_version,
             state.packages_version,
             state.volume_gib,
+            state.legal_hold,
         )
 
     async def record(self, org_id: str, kind: str, ids: list[str], census: Census) -> int:
@@ -170,6 +178,7 @@ class FeedNumbering:
                 row.packages_version = state.packages_version
                 row.vm_profile = state.profile.model_dump(mode='json')
                 row.volume_gib = state.volume_gib
+                row.legal_hold = state.legal_hold
             else:
                 row.active = False
                 if removed:
@@ -196,6 +205,7 @@ class FeedNumbering:
                         'seq': next(numbers),
                         'removed': False,
                         'erased': False,
+                        'legal_hold': state.legal_hold,
                     }
                     for state in fresh
                 ],
@@ -206,7 +216,7 @@ class FeedNumbering:
     def _remove(self, row: ProducerFeedEntry, census: Census, now: datetime) -> None:
         """Removed now: its erasure scheduled after its retention, or not at all while held."""
         days = census.erase_after_days.get(row.producer_id, 0)
-        held = row.producer_id in census.held
+        held = row.producer_id in census.held or (row.owner_app_id or '') in census.held_apps
         row.removed = True
         row.removed_at = now
         row.erase_after_days = days
@@ -244,12 +254,20 @@ class FeedNumbering:
         """A legal hold placed (no erasure) or released (erasure after the retention, or now if it has run out).
 
         An incarnation already erased — its `erase_at` passed — is past
-        holding, and is left as it is.
+        holding, and is left as it is. The live incarnation, if any, is
+        listed again with `legal_hold`, so the gateway stops (or resumes)
+        erasing its VM after inactivity (§12.3) at once.
         """
         now = datetime.now(timezone.utc)
         moved: list[ProducerFeedEntry] = []
+        relisted: list[ProducerFeedEntry] = []
         for row in await self._person_rows(user_id, org_id):
-            if not row.removed or (row.erase_at is not None and row.erase_at <= now):
+            if not row.removed:
+                if row.legal_hold != held:
+                    row.legal_hold = held
+                    relisted.append(row)
+                continue
+            if row.erase_at is not None and row.erase_at <= now:
                 continue
             if held:
                 erase_at = None
@@ -259,9 +277,127 @@ class FeedNumbering:
             if erase_at != row.erase_at:
                 row.erase_at = erase_at
                 moved.append(row)
-        await self._renumber(moved)
+        await self._renumber([*moved, *relisted])
         await self._session.flush()
         return [self._scheduled(row, 'held' if held else 'released') for row in moved]
+
+    async def reschedule_app(self, org_id: str, app_id: str, *, held: bool) -> list[Scheduled]:
+        """A legal hold placed on an app or released: the app's rows and its spaces'.
+
+        Live rows carry `legal_hold`, so the gateway stops (or resumes)
+        erasing them after inactivity. A removed row not yet due is held
+        (no erasure) or, released, erased now: an app or a space is erased
+        at once when removed. One whose `erase_at` has passed is past holding.
+        """
+        now = datetime.now(timezone.utc)
+        rows = (
+            (
+                await self._session.execute(
+                    select(ProducerFeedEntry).where(
+                        ProducerFeedEntry.org_id == org_id,
+                        or_(
+                            and_(ProducerFeedEntry.producer_kind == APP, ProducerFeedEntry.producer_id == app_id),
+                            and_(ProducerFeedEntry.producer_kind == SPACE, ProducerFeedEntry.owner_app_id == app_id),
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        moved: list[ProducerFeedEntry] = []
+        relisted: list[ProducerFeedEntry] = []
+        for row in rows:
+            if not row.removed:
+                if row.legal_hold != held:
+                    row.legal_hold = held
+                    relisted.append(row)
+                continue
+            if row.erase_at is not None and row.erase_at <= now:
+                continue
+            erase_at = None if held else now
+            if erase_at != row.erase_at:
+                row.erase_at = erase_at
+                row.legal_hold = held
+                moved.append(row)
+        await self._renumber([*moved, *relisted])
+        await self._session.flush()
+        return [self._scheduled(row, 'held' if held else 'released') for row in moved]
+
+    async def discard_person(
+        self, org_id: str, user_id: str, incarnation: str | None, *, by_user_id: str
+    ) -> list[ProducerFeedEntry]:
+        """A removed member's incarnations (or the one named) erased now instead of after the retention.
+
+        The caller has made sure no legal hold stands. One already due is
+        left as it is; it is returned with the rest.
+        """
+        now = datetime.now(timezone.utc)
+        found = [
+            row
+            for row in await self._person_rows(user_id, org_id)
+            if row.removed and row.erasure_done_at is None and incarnation in (None, row.incarnation)
+        ]
+        moved: list[ProducerFeedEntry] = []
+        for row in found:
+            if row.erase_at is not None and row.erase_at <= now:
+                continue
+            row.erase_at = now
+            row.discarded_by_user_id = by_user_id
+            row.discarded_at = now
+            moved.append(row)
+        await self._renumber(moved)
+        await self._session.flush()
+        self.scheduled.extend(self._scheduled(row, 'discarded') for row in moved)
+        return found
+
+    async def label_discarded(self, org_id: str, kind: str, producer_id: str, *, label: str, by_user_id: str) -> None:
+        """An app discarded on the portal: its removed row keeps its name and who discarded it."""
+        await self._session.execute(
+            update(ProducerFeedEntry)
+            .where(
+                ProducerFeedEntry.org_id == org_id,
+                ProducerFeedEntry.producer_kind == kind,
+                ProducerFeedEntry.producer_id == producer_id,
+                ProducerFeedEntry.removed.is_(True),
+                ProducerFeedEntry.discarded_at.is_(None),
+            )
+            .values(discarded_label=label, discarded_by_user_id=by_user_id, discarded_at=datetime.now(timezone.utc))
+        )
+
+    async def erasure_state(self, org_id: str, kind: str, producer_id: str, incarnation: str) -> datetime | None:
+        """When this removed incarnation's erasure was reported done; None if not (or no such row)."""
+        return (
+            await self._session.execute(
+                select(ProducerFeedEntry.erasure_done_at).where(
+                    ProducerFeedEntry.org_id == org_id,
+                    ProducerFeedEntry.producer_kind == kind,
+                    ProducerFeedEntry.producer_id == producer_id,
+                    ProducerFeedEntry.incarnation == incarnation,
+                    ProducerFeedEntry.removed.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+
+    async def erasure_done(
+        self, org_id: str, kind: str, producer_id: str, incarnation: str
+    ) -> ProducerFeedEntry | None:
+        """The gateway erased this removed incarnation: when, for the portal and the trail. Idempotent."""
+        row = (
+            await self._session.execute(
+                select(ProducerFeedEntry).where(
+                    ProducerFeedEntry.org_id == org_id,
+                    ProducerFeedEntry.producer_kind == kind,
+                    ProducerFeedEntry.producer_id == producer_id,
+                    ProducerFeedEntry.incarnation == incarnation,
+                    ProducerFeedEntry.removed.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if row is not None and row.erasure_done_at is None:
+            row.erasure_done_at = datetime.now(timezone.utc)
+            await self._session.flush()
+        return row
 
     async def erase_person(self, user_id: str) -> list[Scheduled]:
         """A person erased on request: every incarnation of theirs removed and erased now.
@@ -360,6 +496,16 @@ class ProducerFeedDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         )
         async with self.session_scope() as session:
             return sorted(str(org_id) for org_id in (await session.execute(query)).scalars().all() if org_id)
+
+    async def removed_in(self, org_id: str) -> list[ProducerFeedEntry]:
+        """Every removed incarnation of the organisation's producers the feed still keeps, newest first."""
+        async with self.session_scope() as session:
+            rows = await session.execute(
+                select(ProducerFeedEntry)
+                .where(ProducerFeedEntry.org_id == org_id, ProducerFeedEntry.removed.is_(True))
+                .order_by(ProducerFeedEntry.removed_at.desc().nulls_last())
+            )
+            return list(rows.scalars().all())
 
     async def removed_incarnations(self, org_id: str, user_id: str) -> list[ProducerFeedEntry]:
         """A person's removed incarnations in the organisation not yet erased: due later, or held."""

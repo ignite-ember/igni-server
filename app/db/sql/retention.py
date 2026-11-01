@@ -8,7 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.sql import SQLAlchemySessionManager
-from app.db.sql.models.retention import LegalHold, OrgRetention, PlatformRetention
+from app.db.sql.models.retention import AppLegalHold, LegalHold, OrgRetention, PlatformRetention
 from app.db.sql.producer_feed import chunks
 from app.utils.singleton import SingletonMeta
 
@@ -77,5 +77,46 @@ class RetentionDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         async with self.session_scope() as session:
             result = await session.execute(
                 delete(LegalHold).where(LegalHold.org_id == org_id, LegalHold.user_id == user_id)
+            )
+            return bool(result.rowcount)  # type: ignore[attr-defined]
+
+    # ── Holds on apps (they cover the app's spaces) ──────────────────
+
+    async def app_holds(self, org_id: str) -> list[AppLegalHold]:
+        async with self.session_scope() as session:
+            rows = await session.execute(
+                select(AppLegalHold).where(AppLegalHold.org_id == org_id).order_by(AppLegalHold.placed_at)
+            )
+            return list(rows.scalars().all())
+
+    async def app_hold(self, org_id: str, app_id: str) -> AppLegalHold | None:
+        async with self.session_scope() as session:
+            return await session.get(AppLegalHold, (org_id, app_id))
+
+    async def held_apps(self, org_id: str) -> set[str]:
+        """Every app of the organisation under a legal hold."""
+        async with self.session_scope() as session:
+            rows = await session.execute(select(AppLegalHold.app_id).where(AppLegalHold.org_id == org_id))
+            return {str(app_id) for app_id in rows.scalars().all()}
+
+    async def put_app_hold(self, hold: AppLegalHold) -> None:
+        values = {
+            'org_id': hold.org_id,
+            'app_id': hold.app_id,
+            'reason': hold.reason,
+            'placed_by_user_id': hold.placed_by_user_id,
+            'placed_at': datetime.now(timezone.utc),
+        }
+        async with self.session_scope() as session:
+            await session.execute(
+                insert(AppLegalHold)
+                .values(**values)
+                .on_conflict_do_update(constraint='pk_app_legal_holds', set_=values)
+            )
+
+    async def release_app(self, org_id: str, app_id: str) -> bool:
+        async with self.session_scope() as session:
+            result = await session.execute(
+                delete(AppLegalHold).where(AppLegalHold.org_id == org_id, AppLegalHold.app_id == app_id)
             )
             return bool(result.rowcount)  # type: ignore[attr-defined]

@@ -20,6 +20,9 @@ MAX_SETUP_SCRIPT = 65536
 #: The largest volume anything may name, in GiB — the caps set the real limit.
 MAX_VOLUME_GIB = 65536
 
+#: The most days anything may name for erasure after inactivity — the caps set the real limit.
+MAX_IDLE_DAYS = 3650
+
 
 class VmProfileSettings(BaseModel):
     """Everything a profile says — what an org admin writes, whole."""
@@ -51,6 +54,13 @@ class VmProfileSettings(BaseModel):
     #: How far an org admin may grow one producer's volume, in GiB.
     volume_max_gib: int = Field(
         default_factory=lambda: settings.cloud_vm.standard_volume_max_gib, ge=1, le=MAX_VOLUME_GIB
+    )
+    #: Apps and their spaces only: a VM not woken for this many days has
+    #: its state and volume erased; the app stays, and its next wake
+    #: starts fresh. Null is never; a legal hold on the app stops it. A
+    #: person's VM is never erased this way while they are a member (§12.2).
+    erase_after_idle_days: int | None = Field(
+        default_factory=lambda: settings.cloud_vm.standard_erase_after_idle_days, ge=1, le=MAX_IDLE_DAYS
     )
 
     @model_validator(mode='after')
@@ -90,6 +100,9 @@ class PlatformVmCapsBody(BaseModel):
     max_idle_before_pause_s: int | None = Field(default=None, ge=0)
     #: The largest volume a profile may let a VM have (`volume_max_gib`), in GiB.
     max_volume_gib: int = Field(default=200, ge=1, le=MAX_VOLUME_GIB)
+    #: The longest `erase_after_idle_days`; null allows any, never
+    #: included. Set, every profile must erase an unwoken VM within it.
+    max_erase_after_idle_days: int | None = Field(default=None, ge=1, le=MAX_IDLE_DAYS)
 
 
 class PlatformVmCapsResponse(PlatformVmCapsBody):

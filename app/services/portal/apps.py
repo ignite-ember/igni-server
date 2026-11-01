@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 
 from app.api.base_v1.schema.portal.apps import (
+    DiscardedApp,
     OrgAppList,
     OrgAppResponse,
     RegisterAppRequest,
@@ -31,6 +32,10 @@ from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.service_extensions import ServiceExtensionDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
+from app.db.sql.vm_credentials import VmCredentialsDB
+from app.db.sql.vm_profiles import VmProfilesDB
+from app.services.cloud.erasures import Erasures
+from app.services.cloud.producer_feed import ProducerFeed
 from app.services.cloud.spaces import Spaces
 from app.services.cloud.vm_credentials import VmCredentials
 from app.services.identity.jwk import PublicJwk
@@ -150,6 +155,42 @@ class OrgApps:
         thumbprint = await self._key_is_free(keys, but=app_id)
         await self._clients.replace_keys(app_id, jwks={'keys': [key.as_dict() for key in keys]}, thumbprint=thumbprint)
         return await self.get(org_id, app_id)
+
+    async def discard(self, org_id: str, app_id: str, *, by_user_id: str, start_fresh: bool = False) -> DiscardedApp:
+        """The app removed at once, its VM erased in the background; optionally a fresh app in its place.
+
+        Removed now: its tokens and credential stop, its spaces go with it,
+        its VM can never be woken again, and the feed lists it removed at
+        once, so the gateway frees its place under the licence and erases
+        its VM straight away — unless a legal hold stands on it
+        (`docs/service-identity.md` §18.5).
+        """
+        client = await self.client(org_id, app_id)
+        app = await self._apps.get(org_id, app_id)
+        _, profile_id = await VmProfilesDB().of_app(org_id, app_id)
+        extensions = await self._extensions.enabled_in(org_id, app_id)
+        cloud = bool(await VmCredentialsDB().active(org_id, producer_kind=APP, producer_id=app_id))
+        await self.remove(org_id, app_id)
+        await ProducerFeed().discarded_app(org_id, app_id, name=client.name, by_user_id=by_user_id)
+        erasures = await Erasures().of(org_id, APP, app_id)
+        fresh = None
+        if start_fresh:
+            owner = app.owner_user_id if app and app.owner_user_id else by_user_id
+            if await TeamDB().get_active_member(org_id, owner) is None:
+                owner = by_user_id
+            fresh = await self.register(
+                org_id,
+                RegisterAppRequest(name=client.name, owner_user_id=owner, jwks=dict(client.jwks or {})),
+                by_user_id=by_user_id,
+            )
+            if profile_id is not None:
+                await VmProfilesDB().assign_app(org_id, fresh.app_id, profile_id)
+            for extension_id in sorted(extensions):
+                await self._extensions.enable(org_id, fresh.app_id, extension_id, by_user_id)
+            if cloud:
+                await VmCredentials().enable_app(org_id, fresh.app_id, by_user_id=by_user_id)
+            fresh = await self.get(org_id, fresh.app_id)
+        return DiscardedApp(discarded=erasures[0] if erasures else None, fresh_app=fresh)
 
     async def remove(self, org_id: str, app_id: str) -> None:
         """Forget the app: its token requests stop at once, and its tokens expire within minutes."""

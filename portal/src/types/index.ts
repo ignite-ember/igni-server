@@ -613,6 +613,11 @@ export interface VmProfileSettings {
   idle_before_pause_s: number | null
   packages: VmPackages
   setup_script: string | null
+  /**
+   * Apps and their spaces only: an app's VM not woken for this many days
+   * has its memory, snapshots, volume and keys erased. Null: never.
+   */
+  erase_after_idle_days?: number | null
 }
 
 export interface VmProfile extends VmProfileSettings {
@@ -629,6 +634,10 @@ export interface PlatformVmCaps {
   max_memory_mib: number
   max_vcpus: number
   max_idle_before_pause_s: number | null
+  /** The largest volume a profile may let a VM grow to, in GiB. */
+  max_volume_gib?: number
+  /** The longest `erase_after_idle_days` a profile may have; null: no maximum. */
+  max_erase_after_idle_days?: number | null
   updated_at?: string | null
 }
 
@@ -715,4 +724,36 @@ export interface VmCredential {
   awaiting_pickup: boolean
   picked_up_at: string | null
   generation: number
+}
+
+/** A legal hold on an app: its VM (and its spaces') is not erased while it stands. */
+export interface AppHold {
+  org_id: string
+  app_id: string
+  reason: string
+  placed_by_user_id: string | null
+  placed_at: string
+}
+
+export type ErasureState = 'scheduled' | 'held' | 'erasing' | 'erased'
+
+/** A removed producer's VM on its way to erasure: a former member, a discarded app or space. */
+export interface Erasure {
+  producer: { kind: 'person' | 'app' | 'space'; id: string }
+  name: string | null
+  incarnation: string
+  removed_at: string | null
+  erase_at: string | null
+  state: ErasureState
+  erased_at: string | null
+  legal_hold: boolean
+  /** Exports of this incarnation's data pending or ready. */
+  exports: number
+  discarded_by_user_id: string | null
+  discarded_at: string | null
+}
+
+export interface ErasureList {
+  org_id: string
+  erasures: Erasure[]
 }

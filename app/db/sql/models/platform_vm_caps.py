@@ -24,6 +24,9 @@ class PlatformVmCaps(Base):
     max_idle_before_pause_s: Mapped[int | None] = Column(Integer, nullable=True)
     #: The largest `volume_max_gib` a profile may have.
     max_volume_gib: Mapped[int] = Column(Integer, nullable=False, server_default=text('200'), default=200)
+    #: The longest `erase_after_idle_days` a profile may have; null allows
+    #: any, including never. Set, a profile must erase within it.
+    max_erase_after_idle_days: Mapped[int | None] = Column(Integer, nullable=True)
     updated_by_user_id: Mapped[str | None] = Column(
         Text, ForeignKey('users.user_id', ondelete='SET NULL'), nullable=True
     )

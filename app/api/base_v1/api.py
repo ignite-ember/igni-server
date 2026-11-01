@@ -31,6 +31,7 @@ from .endpoints.platform import (
     producers as platform_producers,
     vm_commands as platform_vm_commands,
     vm_credentials as platform_vm_credentials,
+    vm_resets as platform_vm_resets,
 )
 from .endpoints.portal import (
     access_review,
@@ -132,6 +133,7 @@ platform_router.include_router(platform_producer_events.router, tags=['Platform 
 platform_router.include_router(platform_producers.router, tags=['Platform - Producers'])
 platform_router.include_router(platform_producer_exports.router, tags=['Platform - Retention'])
 platform_router.include_router(platform_vm_credentials.router, tags=['Platform - VM credentials'])
+platform_router.include_router(platform_vm_resets.router, tags=['Platform - VM resets'])
 router.include_router(platform_router)
 
 # Commands in producers' VMs, asked for by producers, org admins and the

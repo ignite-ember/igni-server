@@ -138,6 +138,7 @@ async def test_the_first_poll_lists_every_producer_with_its_profile(client, acme
         'volume_gib': standard['volume_gib'],
         'erase_at': None,
         'owner': None,
+        'legal_hold': False,
         'changed_at': row['changed_at'],
     }
     assert await feed.poll() == []

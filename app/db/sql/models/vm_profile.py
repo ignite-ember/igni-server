@@ -11,7 +11,7 @@ whenever anything in it does (`docs/service-identity.md` §11.3, §12).
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import Boolean, Column, func, Index, Integer, Text, text, TIMESTAMP, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, func, Index, Integer, Text, text, TIMESTAMP, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped
 
@@ -23,6 +23,7 @@ class VmProfile(TenantBase):
     __table_args__ = (
         UniqueConstraint('name', name='uq_vm_profiles_name'),
         Index('uq_vm_profiles_one_default', 'is_default', unique=True, postgresql_where=text('is_default')),
+        CheckConstraint('erase_after_idle_days IS NULL OR erase_after_idle_days >= 1', name='ck_vm_profiles_idle_days'),
     )
 
     id: Mapped[str] = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -48,6 +49,11 @@ class VmProfile(TenantBase):
     #: A new VM's volume, in GiB, and how far an org admin may grow one.
     volume_gib: Mapped[int] = Column(Integer, nullable=False, server_default=text('10'), default=10)
     volume_max_gib: Mapped[int] = Column(Integer, nullable=False, server_default=text('50'), default=50)
+    #: An app's or a space's VM not woken for this many days has its
+    #: state and volume erased (the app stays; its next wake starts
+    #: fresh); null is never. Never applied to a person's VM. At most the
+    #: platform's `max_erase_after_idle_days` (`docs/service-identity.md` §12.2).
+    erase_after_idle_days: Mapped[int | None] = Column(Integer, nullable=True)
     created_by_user_id: Mapped[str | None] = Column(Text, nullable=True)
     updated_by_user_id: Mapped[str | None] = Column(Text, nullable=True)
     created_at: Mapped[datetime] = Column(

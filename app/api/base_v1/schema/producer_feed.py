@@ -45,6 +45,10 @@ class ProducerFeedItem(BaseModel):
     #: Who owns the producer: a space's app (`{"kind": "app", "id"}`), so
     #: the node provisions it with its owner; null for a person or an app.
     owner: ProducerRef | None = None
+    #: A legal hold stands on the person in this organisation (§18.2):
+    #: nothing of their VM is erased for inactivity (§12.3) while it does.
+    #: Always false for an app or a space.
+    legal_hold: bool = False
     #: When igni server saw the change.
     changed_at: datetime
 

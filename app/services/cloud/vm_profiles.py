@@ -1,8 +1,10 @@
 """VM profiles: what each producer's microVM gets, and the limits on them.
 
 An org admin defines named profiles — memory (the most a VM may have,
-and what it normally has), vCPUs, how long idle before suspend (or never), whether to drop caches before suspend,
-and the packages built into the profile's read-only layer — and assigns
+and what it normally has), vCPUs, how long idle before a pause (or never),
+how long an app's unwoken VM is kept before it is erased, and the
+packages built
+into the profile's read-only layer — and assigns
 one to each group and each app. A person gets their one group's; a group
 or app with none gets the organisation's default profile. A super admin
 sets the platform's caps, which every profile must fit, and may define
@@ -60,6 +62,7 @@ class VmDefaults:
             max_vcpus=c.cap_max_vcpus,
             max_idle_before_pause_s=c.cap_max_idle_before_pause_s,
             max_volume_gib=c.cap_max_volume_gib,
+            max_erase_after_idle_days=c.cap_max_erase_after_idle_days,
         )
 
     @staticmethod
@@ -80,6 +83,7 @@ class VmCaps:
             max_vcpus=row.max_vcpus,
             max_idle_before_pause_s=row.max_idle_before_pause_s,
             max_volume_gib=row.max_volume_gib,
+            max_erase_after_idle_days=row.max_erase_after_idle_days,
             updated_at=row.updated_at,
         )
 
@@ -103,6 +107,11 @@ class VmCaps:
             return f'A VM may stay awake idle for at most {longest} seconds on this platform'
         if settings.volume_max_gib > caps.max_volume_gib:
             return f'A volume may grow to at most {caps.max_volume_gib} GiB on this platform'
+        most_days = caps.max_erase_after_idle_days
+        if most_days is not None and (
+            settings.erase_after_idle_days is None or settings.erase_after_idle_days > most_days
+        ):
+            return f'A VM not woken for {most_days} days must have its workspace erased on this platform'
         return None
 
     @staticmethod
@@ -113,6 +122,10 @@ class VmCaps:
         if longest is not None:
             idle = longest if idle is None else min(idle, longest)
         memory = min(settings.memory_mib, caps.max_memory_mib)
+        days = settings.erase_after_idle_days
+        most_days = caps.max_erase_after_idle_days
+        if most_days is not None:
+            days = most_days if days is None else min(days, most_days)
         return settings.model_copy(
             update={
                 'memory_mib': memory,
@@ -124,6 +137,7 @@ class VmCaps:
                 'idle_before_pause_s': idle,
                 'volume_max_gib': min(settings.volume_max_gib, caps.max_volume_gib),
                 'volume_gib': min(settings.volume_gib, caps.max_volume_gib),
+                'erase_after_idle_days': days,
             }
         )
 
@@ -135,9 +149,19 @@ class ProfileVersion:
     def _digest(value: object) -> str:
         return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()[:32]
 
+    #: Fields added after versions were first handed out, and their values
+    #: then: left out of the digest while they have them, so adding a field
+    #: does not change every producer's version (which the gateway would
+    #: answer by re-provisioning every VM).
+    LATER_FIELDS: dict[str, object] = {'erase_after_idle_days': None}
+
     @classmethod
     def of(cls, profile_id: str, effective: VmProfileSettings) -> str:
-        return cls._digest({'id': profile_id, **effective.model_dump(mode='json')})
+        values = effective.model_dump(mode='json')
+        for field, then in cls.LATER_FIELDS.items():
+            if values.get(field) == then:
+                values.pop(field)
+        return cls._digest({'id': profile_id, **values})
 
     @classmethod
     def packages(cls, effective: VmProfileSettings) -> str:
@@ -164,6 +188,7 @@ class VmProfiles:
             setup_script=profile.setup_script,
             volume_gib=profile.volume_gib,
             volume_max_gib=profile.volume_max_gib,
+            erase_after_idle_days=profile.erase_after_idle_days,
         )
 
     @staticmethod
@@ -180,6 +205,7 @@ class VmProfiles:
             packages=effective.packages,
             setup_script=effective.setup_script,
             volume_max_gib=effective.volume_max_gib,
+            erase_after_idle_days=effective.erase_after_idle_days,
         )
 
     def response(self, profile: VmProfile, caps: PlatformVmCapsBody) -> VmProfileResponse:

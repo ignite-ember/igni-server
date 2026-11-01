@@ -241,6 +241,7 @@ ACTIVITIES: tuple[Activity, ...] = (
             'producer_feed_marks',
             'producer_volumes',
             'legal_holds',
+            'app_legal_holds',
             'revocations',
             'producer_exports',
             'platform_retention',

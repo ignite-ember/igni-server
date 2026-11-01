@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.api.base_v1.schema.retention import ErasureRecord
+
 
 class RegisterAppRequest(BaseModel):
     """An org admin registering an app.
@@ -48,3 +50,18 @@ class OrgAppResponse(BaseModel):
 
 class OrgAppList(BaseModel):
     apps: list[OrgAppResponse]
+
+
+class DiscardAppRequest(BaseModel):
+    #: Register a new app at once with the old one's name, key, owner,
+    #: VM profile, extensions and cloud credential: a fresh VM, same app.
+    start_fresh: bool = False
+
+
+class DiscardedApp(BaseModel):
+    """An app discarded: gone at once, its VM erased in the background (`docs/service-identity.md` §18.5)."""
+
+    #: Where its erasure stands; null for an app whose VM never existed.
+    discarded: ErasureRecord | None
+    #: The new app, when `start_fresh` asked for one.
+    fresh_app: OrgAppResponse | None = None

@@ -37,10 +37,16 @@ class CloudVmConfig(BaseModel):
     standard_idle_before_pause_s: int | None = Field(default=10, ge=0, description='None: never paused')
     standard_volume_gib: int = Field(default=10, ge=1)
     standard_volume_max_gib: int = Field(default=50, ge=1)
+    standard_erase_after_idle_days: int | None = Field(
+        default=None, ge=1, description='None: a VM not woken for a while is never erased for it'
+    )
     cap_max_memory_mib: int = Field(default=8192, ge=128)
     cap_max_vcpus: int = Field(default=4, ge=1)
     cap_max_idle_before_pause_s: int | None = Field(default=3600, ge=0, description='None: any, never included')
     cap_max_volume_gib: int = Field(default=200, ge=1)
+    cap_max_erase_after_idle_days: int | None = Field(
+        default=None, ge=1, description='None: no maximum, never erasing included'
+    )
 
 
 class AIConfig(BaseModel):

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
-from app.api.base_v1.schema.retention import HeldIncarnation, LegalHoldList, LegalHoldResponse
-from app.db.sql.models.retention import LegalHold
+from app.api.base_v1.schema.retention import AppLegalHoldResponse, HeldIncarnation, LegalHoldList, LegalHoldResponse
+from app.db.sql.models.registered_client import APP
+from app.db.sql.models.retention import AppLegalHold, LegalHold
 from app.db.sql.producer_feed import ProducerFeedDB
 from app.db.sql.retention import RetentionDB
+from app.db.sql.vm_profiles import VmProfilesDB
 from app.security.org_authority import OrgAuthority
 from app.services.cloud.producer_feed import ProducerFeed
 
@@ -39,7 +41,42 @@ class LegalHolds:
         )
 
     async def list(self, org_id: str) -> LegalHoldList:
-        return LegalHoldList(holds=[await self.response(hold) for hold in await self._db.holds(org_id)])
+        return LegalHoldList(
+            holds=[await self.response(hold) for hold in await self._db.holds(org_id)],
+            apps=[self.app_response(hold) for hold in await self._db.app_holds(org_id)],
+        )
+
+    @staticmethod
+    def app_response(hold: AppLegalHold) -> AppLegalHoldResponse:
+        return AppLegalHoldResponse(
+            org_id=hold.org_id,
+            app_id=hold.app_id,
+            reason=hold.reason,
+            placed_by_user_id=hold.placed_by_user_id,
+            placed_at=hold.placed_at,
+        )
+
+    async def place_on_app(self, authority: OrgAuthority, app_id: str, reason: str) -> AppLegalHoldResponse:
+        """An app of the organisation — or one discarded whose erasure has not started — and its spaces."""
+        exists, _ = await VmProfilesDB().of_app(authority.org_id, app_id)
+        waiting = any(
+            row.producer_kind == APP and row.producer_id == app_id and row.erasure_done_at is None
+            for row in await ProducerFeedDB().removed_in(authority.org_id)
+        )
+        if not exists and not waiting:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such app here, or it is erased')
+        await self._db.put_app_hold(
+            AppLegalHold(org_id=authority.org_id, app_id=app_id, reason=reason, placed_by_user_id=authority.user_id)
+        )
+        await ProducerFeed().reschedule_app(authority.org_id, app_id, held=True)
+        hold = await self._db.app_hold(authority.org_id, app_id)
+        assert hold is not None
+        return self.app_response(hold)
+
+    async def release_app(self, authority: OrgAuthority, app_id: str) -> None:
+        if not await self._db.release_app(authority.org_id, app_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No legal hold on this app here')
+        await ProducerFeed().reschedule_app(authority.org_id, app_id, held=False)
 
     async def place(self, authority: OrgAuthority, user_id: str, reason: str) -> LegalHoldResponse:
         await self._db.put_hold(

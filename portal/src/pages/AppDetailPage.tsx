@@ -1,19 +1,43 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Banner, Button, FormControl, PageHeader, Select, Stack, Text, Textarea, ToggleSwitch } from '@primer/react'
+import {
+  Banner,
+  Button,
+  Checkbox,
+  ConfirmationDialog,
+  FormControl,
+  PageHeader,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+  ToggleSwitch,
+} from '@primer/react'
 import { Blankslate, DataTable, SkeletonText, Table } from '@primer/react/experimental'
 import { AppsIcon } from '@primer/octicons-react'
 import client from '../api/client'
 import { refusalOf } from '../api/refusal'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { parsePublicJwks } from '../lib/publicJwks'
-import type { GroupExtensionList, OrgApp, UserMe, VmProfilesOverview } from '../types'
+import type { AppHold, Erasure, GroupExtensionList, OrgApp, UserMe, VmProfilesOverview } from '../types'
+
+interface Discarded {
+  discarded: Erasure
+  fresh_app: OrgApp | null
+}
+
+interface LegalHolds {
+  holds: unknown[]
+  apps?: AppHold[]
+}
 
 /**
  * One app: its own list of extensions (off until switched on here, and
- * nothing to do with any group's), its VM profile, a key rotation, and
- * removing it.
+ * nothing to do with any group's), its VM profile, a key rotation, a
+ * legal hold, and discarding it — removed at once, its place under the
+ * licence freed, its VM erased in the background.
  */
 export function AppDetailPage() {
   const { appId = '' } = useParams<{ appId: string }>()
@@ -21,6 +45,9 @@ export function AppDetailPage() {
   const queryClient = useQueryClient()
   const [feedback, setFeedback] = useState<{ variant: 'success' | 'critical'; message: string } | null>(null)
   const [newKey, setNewKey] = useState('')
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [startFresh, setStartFresh] = useState(false)
+  const [holdReason, setHoldReason] = useState('')
 
   const me = useQuery({
     queryKey: ['me'],
@@ -42,6 +69,13 @@ export function AppDetailPage() {
     queryFn: () => client.get<VmProfilesOverview>(`/portal/orgs/${orgId}/vm-profiles`).then((r) => r.data),
     enabled: !!orgId,
   })
+
+  const holds = useQuery({
+    queryKey: ['legal-holds', orgId],
+    queryFn: () => client.get<LegalHolds>(`/portal/orgs/${orgId}/legal-holds`).then((r) => r.data),
+    enabled: !!orgId,
+  })
+  const hold = (holds.data?.apps ?? []).find((h) => h.app_id === appId) ?? null
 
   const done = (message: string) => setFeedback({ variant: 'success', message })
   const failed = (error: unknown) => setFeedback({ variant: 'critical', message: refusalOf(error) })
@@ -82,11 +116,30 @@ export function AppDetailPage() {
     },
     onError: failed,
   })
-  const remove = useMutation({
-    mutationFn: () => client.delete(`/portal/apps/${appId}`),
+  const placeHold = useMutation({
+    mutationFn: () => client.put(`/portal/orgs/${orgId}/legal-holds/apps/${appId}`, { reason: holdReason.trim() }),
     onSuccess: () => {
+      setHoldReason('')
+      queryClient.invalidateQueries({ queryKey: ['legal-holds', orgId] })
+      done('Legal hold placed. Nothing of this app is erased while it stands, even once it is discarded.')
+    },
+    onError: failed,
+  })
+  const releaseHold = useMutation({
+    mutationFn: () => client.delete(`/portal/orgs/${orgId}/legal-holds/apps/${appId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['legal-holds', orgId] })
+      done('Legal hold released.')
+    },
+    onError: failed,
+  })
+  const discard = useMutation({
+    mutationFn: (fresh: boolean) =>
+      client.post<Discarded>(`/portal/apps/${appId}/discard`, { start_fresh: fresh }).then((r) => r.data),
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['apps'] })
-      navigate('/apps')
+      queryClient.invalidateQueries({ queryKey: ['erasures', orgId] })
+      navigate(result.fresh_app ? `/apps/${result.fresh_app.app_id}` : '/apps')
     },
     onError: failed,
   })
@@ -227,11 +280,74 @@ export function AppDetailPage() {
         </Stack>
       </Stack>
 
+      <Stack gap="condensed">
+        <Text weight="semibold">Legal hold</Text>
+        {hold ? (
+          <>
+            <Text size="small">
+              Held since {new Date(hold.placed_at).toLocaleDateString()}: {hold.reason}. Nothing of this app&apos;s VM
+              or its spaces is erased while the hold stands — not after inactivity, not when it is discarded.
+            </Text>
+            <Stack direction="horizontal">
+              <Button onClick={() => releaseHold.mutate()} disabled={releaseHold.isPending}>
+                Release legal hold
+              </Button>
+            </Stack>
+          </>
+        ) : (
+          <form
+            aria-label="Place a legal hold"
+            onSubmit={(e) => {
+              e.preventDefault()
+              placeHold.mutate()
+            }}
+          >
+            <Stack direction="horizontal" gap="normal" align="end" wrap="wrap">
+              <FormControl>
+                <FormControl.Label>Reason for a legal hold</FormControl.Label>
+                <FormControl.Caption>While it stands, nothing of this app&apos;s VM or its spaces is erased.</FormControl.Caption>
+                <TextInput value={holdReason} onChange={(e) => setHoldReason(e.target.value)} />
+              </FormControl>
+              <Button type="submit" disabled={!holdReason.trim() || placeHold.isPending || !orgId}>
+                Place legal hold
+              </Button>
+            </Stack>
+          </form>
+        )}
+      </Stack>
+
       <Stack direction="horizontal">
-        <Button variant="danger" onClick={() => remove.mutate()} disabled={remove.isPending}>
-          Remove app
+        <Button variant="danger" onClick={() => setConfirmDiscard(true)} disabled={discard.isPending}>
+          Discard app
         </Button>
       </Stack>
+
+      {confirmDiscard && (
+        <ConfirmationDialog
+          title={`Discard ${app.data.name}?`}
+          confirmButtonContent="Discard app"
+          cancelButtonContent="Cancel"
+          confirmButtonType="danger"
+          onClose={(gesture) => {
+            setConfirmDiscard(false)
+            if (gesture === 'confirm') discard.mutate(startFresh)
+          }}
+        >
+          <Stack gap="normal">
+            <Text>
+              The app is removed now: its VM can never be woken again and its credential stops working. Its place under
+              your licence is freed at once, so you can start a new app straight away. Its memory, snapshots, volume and
+              keys are erased in the background — unless a legal hold is placed on it. Its conversations in your
+              organisation&apos;s database are erased with it.
+            </Text>
+            {hold && <Text weight="semibold">A legal hold stands: its data is kept until the hold is released.</Text>}
+            <FormControl>
+              <Checkbox checked={startFresh} onChange={(e) => setStartFresh(e.target.checked)} />
+              <FormControl.Label>Start a fresh app with the same name, key and settings</FormControl.Label>
+            </FormControl>
+          </Stack>
+        </ConfirmationDialog>
+      )}
     </Stack>
   )
 }

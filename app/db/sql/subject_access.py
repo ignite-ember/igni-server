@@ -297,10 +297,18 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 o=org_id,
                 u=user_id,
             ),
+            # A legal hold they placed on an app (§18.2).
+            'app_legal_holds': await self._rows(
+                'SELECT app_id, reason, placed_by_user_id, placed_at FROM app_legal_holds '
+                'WHERE org_id = :o AND placed_by_user_id = :u',
+                o=org_id,
+                u=user_id,
+            ),
             # What the gateway was last told about their VM in this organisation.
             'producer_feed': await self._rows(
                 'SELECT producer_kind, producer_id, active, removed, removed_at, erase_at, changed_at, '
-                'seen_removed_at, erased FROM producer_feed '
+                'seen_removed_at, erased, legal_hold, erasure_done_at, discarded_by_user_id, discarded_at '
+                'FROM producer_feed '
                 "WHERE org_id = :o AND producer_kind = 'person' AND producer_id = :u",
                 o=org_id,
                 u=user_id,

@@ -66,6 +66,63 @@ describe('VmProfilesPage', () => {
     expect(sent!.expected_memory_mib).toBe(1536)
   })
 
+  test("shows how each profile treats an app's unused VM", async () => {
+    server.use(http.get('/v1/portal/orgs/demo-org-001/vm-profiles', () => HttpResponse.json(OVERVIEW)))
+
+    renderWithProviders(<VmProfilesPage />)
+
+    expect(await screen.findByText('Erased after 30 days unused')).toBeInTheDocument()
+    expect(screen.getByText('Kept')).toBeInTheDocument()
+  })
+
+  test('erases an app\'s VM after days unused, explaining it is for apps only', async () => {
+    let sent: Record<string, unknown> | null = null
+    server.use(
+      http.get('/v1/portal/orgs/demo-org-001/vm-profiles', () => HttpResponse.json(OVERVIEW)),
+      http.post('/v1/portal/orgs/demo-org-001/vm-profiles', async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(BROWSER, { status: 201 })
+      }),
+    )
+
+    renderWithProviders(<VmProfilesPage />)
+    await userEvent.click(await screen.findByRole('button', { name: 'New profile' }))
+    expect(screen.getByText(/Apps and their spaces only/)).toBeInTheDocument()
+    expect(screen.getByText(/never erased this way while they are a member/)).toBeInTheDocument()
+    await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Quarterly')
+    await userEvent.type(screen.getByRole('spinbutton', { name: /days unused/ }), '30')
+    await userEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+
+    await expect.poll(() => sent?.name).toBe('Quarterly')
+    expect(sent!.erase_after_idle_days).toBe(30)
+  })
+
+  test('leaves it empty for never, and says what the platform requires', async () => {
+    let sent: Record<string, unknown> | null = null
+    server.use(
+      http.get('/v1/portal/orgs/demo-org-001/vm-profiles', () =>
+        HttpResponse.json({ ...OVERVIEW, caps: { ...OVERVIEW.caps, max_erase_after_idle_days: 90 } }),
+      ),
+      http.post('/v1/portal/orgs/demo-org-001/vm-profiles', async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          { detail: 'A VM not woken for 90 days must have its workspace erased on this platform' },
+          { status: 400 },
+        )
+      }),
+    )
+
+    renderWithProviders(<VmProfilesPage />)
+    await userEvent.click(await screen.findByRole('button', { name: 'New profile' }))
+    expect(screen.getByText(/This platform requires at most 90 days/)).toBeInTheDocument()
+    await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Forever')
+    await userEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+
+    await expect.poll(() => sent?.name).toBe('Forever')
+    expect(sent!.erase_after_idle_days).toBeNull()
+    expect(await screen.findByText(/must have its workspace erased/)).toBeInTheDocument()
+  })
+
   test('gives a group a profile', async () => {
     let assigned: unknown = null
     server.use(

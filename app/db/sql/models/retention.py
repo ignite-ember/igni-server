@@ -65,3 +65,23 @@ class LegalHold(Base):
     placed_at: Mapped[datetime] = Column(
         TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class AppLegalHold(Base):
+    """An app's VM — and its spaces' — are not erased while this stands, even once the app is discarded.
+
+    Discarding the app still removes it at once and frees its place under
+    the licence; only the erasure waits (`docs/service-identity.md` §18.2).
+    """
+
+    __tablename__ = 'app_legal_holds'
+    __table_args__ = (PrimaryKeyConstraint('org_id', 'app_id', name='pk_app_legal_holds'),)
+
+    #: No foreign keys: a hold outlives the app — that is its point.
+    org_id: Mapped[str] = Column(Text, nullable=False)
+    app_id: Mapped[str] = Column(Text, nullable=False)
+    reason: Mapped[str] = Column(Text, nullable=False)
+    placed_by_user_id: Mapped[str] = Column(Text, nullable=False)
+    placed_at: Mapped[datetime] = Column(
+        TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )

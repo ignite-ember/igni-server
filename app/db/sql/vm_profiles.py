@@ -50,6 +50,7 @@ class VmProfilesDB(TenantData):
                     setup_script=standard.setup_script,
                     volume_gib=standard.volume_gib,
                     volume_max_gib=standard.volume_max_gib,
+                    erase_after_idle_days=standard.erase_after_idle_days,
                 )
                 .on_conflict_do_nothing()
             )

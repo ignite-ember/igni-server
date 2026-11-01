@@ -190,6 +190,7 @@ class ProducerFeed:
             volume_gib=row.volume_gib,
             erase_at=row.erase_at,
             owner=ProducerRef(kind=APP, id=row.owner_app_id) if row.owner_app_id else None,
+            legal_hold=row.legal_hold,
             changed_at=row.changed_at,
         )
 
@@ -222,9 +223,42 @@ class ProducerFeed:
         await ErasureAudit().record(scheduled)
         await FeedSignals().notify()
 
+    async def reschedule_app(self, org_id: str, app_id: str, *, held: bool) -> None:
+        """A legal hold placed on an app or released: the app's rows and its spaces'."""
+        await self.drain()
+        async with self._db.numbering() as numbering:
+            scheduled = await numbering.reschedule_app(org_id, app_id, held=held)
+        await ErasureAudit().record(scheduled)
+        await FeedSignals().notify()
+
+    async def discard_person(self, org_id: str, user_id: str, incarnation: str | None, *, by_user_id: str) -> None:
+        """A removed member's VM erased now: its `erase_at` is moved to now, and the gateway hears at once."""
+        async with self._db.numbering() as numbering:
+            await numbering.discard_person(org_id, user_id, incarnation, by_user_id=by_user_id)
+        await ErasureAudit().record(numbering.scheduled)
+        await FeedSignals().notify()
+
+    async def discarded_app(self, org_id: str, app_id: str, *, name: str, by_user_id: str) -> None:
+        """An app just removed by its discard: listed removed at once, keeping its name for the portal."""
+        await self.drain()
+        async with self._db.numbering() as numbering:
+            await numbering.label_discarded(org_id, APP, app_id, label=name, by_user_id=by_user_id)
+        await FeedSignals().notify()
+
+    async def erasure_done(
+        self, org_id: str, kind: str, producer_id: str, incarnation: str
+    ) -> tuple[ProducerFeedEntry | None, bool]:
+        """The gateway erased a removed incarnation's VM. Whether this report is the first."""
+        async with self._db.numbering() as numbering:
+            before = await numbering.erasure_state(org_id, kind, producer_id, incarnation)
+            row = await numbering.erasure_done(org_id, kind, producer_id, incarnation)
+        return row, row is not None and before is None
+
     async def reschedule(self, org_id: str, user_id: str, *, held: bool) -> None:
         """A legal hold placed or released on a person in one organisation."""
         await self.drain()
         async with self._db.numbering() as numbering:
             scheduled = await numbering.reschedule(org_id, user_id, held=held)
         await ErasureAudit().record(scheduled)
+        # The person's live row carries the hold too (§12.3): the gateway hears of it now.
+        await FeedSignals().notify()

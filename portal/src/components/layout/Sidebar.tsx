@@ -47,6 +47,8 @@ const orgItems = [
   { label: 'Commands in VMs', path: 'vm-commands', icon: TerminalIcon },
   // Your own VM's credential, or — for an admin — everyone's.
   { label: 'VM credentials', path: 'vm-credentials', icon: KeyIcon },
+  // Former members' and discarded apps' VMs on their way to erasure.
+  { label: 'Erasures', path: 'erasures', icon: TrashIcon, adminOnly: true },
   // Every endpoint behind this page is `require_admin`, so the entry is
   // hidden for a member rather than shown and then refused — the flaw
   // F103 found on the login page, where three provider buttons appeared

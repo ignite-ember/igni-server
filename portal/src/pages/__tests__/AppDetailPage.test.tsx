@@ -26,6 +26,7 @@ function page() {
   return renderWithProviders(
     <Routes>
       <Route path="/apps/:appId" element={<AppDetailPage />} />
+      <Route path="/apps" element={<p>The apps</p>} />
     </Routes>,
     { route: '/apps/app-1' },
   )
@@ -93,6 +94,92 @@ describe('AppDetailPage', () => {
 
     await expect.poll(() => issued).toBe(true)
     expect(await screen.findByText(/nobody sees it/)).toBeInTheDocument()
+  })
+
+  function common() {
+    server.use(
+      http.get('/v1/portal/apps/app-1', () => HttpResponse.json(BOT)),
+      http.get('/v1/portal/apps/app-1/extensions', () => HttpResponse.json({ extensions: [] })),
+      http.get('/v1/portal/orgs/demo-org-001/vm-profiles', () => HttpResponse.json(OVERVIEW)),
+    )
+  }
+
+  test('discards the app only after the confirm, saying what goes and what is freed', async () => {
+    let sent: unknown = null
+    common()
+    server.use(
+      http.get('/v1/portal/orgs/demo-org-001/legal-holds', () => HttpResponse.json({ holds: [], apps: [] })),
+      http.post('/v1/portal/apps/app-1/discard', async ({ request }) => {
+        sent = await request.json()
+        return HttpResponse.json({ discarded: { state: 'erasing' }, fresh_app: null })
+      }),
+    )
+
+    page()
+    await userEvent.click(await screen.findByRole('button', { name: 'Discard app' }))
+    expect(await screen.findByText(/its VM can never be woken again/)).toBeInTheDocument()
+    expect(screen.getByText(/Its place under your licence is freed at once/)).toBeInTheDocument()
+    expect(sent).toBeNull()
+    await userEvent.click(screen.getAllByRole('button', { name: 'Discard app' }).at(-1)!)
+
+    await expect.poll(() => sent).toEqual({ start_fresh: false })
+  })
+
+  test('discards and starts a fresh app, opening it', async () => {
+    let sent: unknown = null
+    common()
+    server.use(
+      http.get('/v1/portal/orgs/demo-org-001/legal-holds', () => HttpResponse.json({ holds: [], apps: [] })),
+      http.post('/v1/portal/apps/app-1/discard', async ({ request }) => {
+        sent = await request.json()
+        return HttpResponse.json({ discarded: { state: 'erasing' }, fresh_app: { ...BOT, app_id: 'app-2', client_id: 'app-2' } })
+      }),
+      http.get('/v1/portal/apps/app-2', () => HttpResponse.json({ ...BOT, app_id: 'app-2', client_id: 'app-2', name: 'Fresh bot' })),
+      http.get('/v1/portal/apps/app-2/extensions', () => HttpResponse.json({ extensions: [] })),
+    )
+
+    page()
+    await userEvent.click(await screen.findByRole('button', { name: 'Discard app' }))
+    await userEvent.click(await screen.findByRole('checkbox', { name: /Start a fresh app with the same name, key and settings/ }))
+    await userEvent.click(screen.getAllByRole('button', { name: 'Discard app' }).at(-1)!)
+
+    await expect.poll(() => sent).toEqual({ start_fresh: true })
+    expect(await screen.findByText('Fresh bot')).toBeInTheDocument()
+  })
+
+  test('places a legal hold on the app and releases it', async () => {
+    let placed: unknown = null
+    let released = false
+    let held = false
+    common()
+    server.use(
+      http.get('/v1/portal/orgs/demo-org-001/legal-holds', () =>
+        HttpResponse.json({
+          holds: [],
+          apps: held
+            ? [{ org_id: 'demo-org-001', app_id: 'app-1', reason: 'Litigation', placed_by_user_id: 'u', placed_at: '2026-11-01T10:00:00Z' }]
+            : [],
+        }),
+      ),
+      http.put('/v1/portal/orgs/demo-org-001/legal-holds/apps/app-1', async ({ request }) => {
+        placed = await request.json()
+        held = true
+        return HttpResponse.json({ org_id: 'demo-org-001', app_id: 'app-1', reason: 'Litigation', placed_by_user_id: 'u', placed_at: '2026-11-01T10:00:00Z' })
+      }),
+      http.delete('/v1/portal/orgs/demo-org-001/legal-holds/apps/app-1', () => {
+        released = true
+        held = false
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    page()
+    await userEvent.type(await screen.findByRole('textbox', { name: /Reason for a legal hold/ }), 'Litigation')
+    await userEvent.click(screen.getByRole('button', { name: 'Place legal hold' }))
+    await expect.poll(() => placed).toEqual({ reason: 'Litigation' })
+    await userEvent.click(await screen.findByRole('button', { name: 'Release legal hold' }))
+
+    await expect.poll(() => released).toBe(true)
   })
 
   test('says so when the app is not there', async () => {

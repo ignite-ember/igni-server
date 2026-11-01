@@ -9,6 +9,10 @@ from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.base_v1.schema.portal.user import PortalAccount
 from app.api.base_v1.schema.retention import (
+    AppLegalHoldResponse,
+    DiscardedMember,
+    DiscardRequest,
+    ErasureList,
     LegalHoldBody,
     LegalHoldList,
     LegalHoldResponse,
@@ -21,6 +25,7 @@ from app.middlewares.audit import set_audit_detail, set_audit_target
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
+from app.services.cloud.erasures import Erasures
 from app.services.cloud.legal_holds import LegalHolds
 from app.services.cloud.retention_rules import Retention
 
@@ -58,6 +63,45 @@ async def set_retention(
 @router.get('/orgs/{org_id}/legal-holds', response_model=LegalHoldList)
 async def list_holds(authority: OrgAuthority = Depends(require_org_authority)) -> LegalHoldList:
     return await LegalHolds().list(authority.org_id)
+
+
+@router.put('/orgs/{org_id}/legal-holds/apps/{app_id}', response_model=AppLegalHoldResponse)
+async def place_app_hold(
+    request: Request, app_id: str, body: LegalHoldBody, authority: OrgAuthority = Depends(require_org_authority)
+) -> AppLegalHoldResponse:
+    """The app's VM and its spaces' are not erased while it stands — after inactivity or once discarded."""
+    set_audit_target(request, target_type='app_legal_hold', target_id=app_id)
+    set_audit_detail(request, {'reason': body.reason})
+    return await LegalHolds().place_on_app(authority, app_id, body.reason)
+
+
+@router.delete('/orgs/{org_id}/legal-holds/apps/{app_id}', status_code=status.HTTP_204_NO_CONTENT)
+async def release_app_hold(
+    request: Request, app_id: str, authority: OrgAuthority = Depends(require_org_authority)
+) -> Response:
+    set_audit_target(request, target_type='app_legal_hold', target_id=app_id)
+    await LegalHolds().release_app(authority, app_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/orgs/{org_id}/erasures', response_model=ErasureList)
+async def list_erasures(authority: OrgAuthority = Depends(require_org_authority)) -> ErasureList:
+    """Every removed or discarded producer's VM the feed still keeps, and where its erasure stands (§18.5)."""
+    return await Erasures().list(authority.org_id)
+
+
+@router.post('/orgs/{org_id}/members/{user_id}/discard', response_model=DiscardedMember)
+async def discard_member(
+    request: Request,
+    user_id: str,
+    body: DiscardRequest | None = None,
+    authority: OrgAuthority = Depends(require_org_authority),
+) -> DiscardedMember:
+    """A removed member's VM erased now, instead of at the end of the retention. Never a current member's."""
+    incarnation = body.incarnation if body else None
+    set_audit_target(request, target_type='person_vm', target_id=user_id)
+    set_audit_detail(request, {'why': 'discarded', 'incarnation': incarnation})
+    return await Erasures().discard_member(authority, user_id, incarnation)
 
 
 @router.put('/orgs/{org_id}/legal-holds/{user_id}', response_model=LegalHoldResponse)

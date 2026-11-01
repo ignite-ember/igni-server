@@ -50,3 +50,7 @@ class EffectiveVmProfile(BaseModel):
     setup_script: str | None
     #: How far the producer's volume may be grown, in GiB.
     volume_max_gib: int
+    #: Days without a wake after which an app's or a space's VM state
+    #: and volume are erased; null is never. Not applied to a person's
+    #: VM (§12.2). Absent on a row written before profiles had it: never.
+    erase_after_idle_days: int | None = None

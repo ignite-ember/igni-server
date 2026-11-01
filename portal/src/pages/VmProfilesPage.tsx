@@ -30,6 +30,7 @@ const BLANK: VmProfileSettings = {
   expected_memory_mib: null,
   packages: { apt: [], pip: [], npm: [] },
   setup_script: null,
+  erase_after_idle_days: null,
 }
 
 /** One package per line or separated by spaces — how people paste a list. */
@@ -44,16 +45,24 @@ function idleLabel(seconds: number | null): string {
   return seconds === null ? 'never' : `${seconds} s`
 }
 
+/** How a profile treats an app's VM nobody wakes. */
+function idleErasureLabel(days: number | null | undefined): string {
+  return days == null ? 'Kept' : `Erased after ${days} ${days === 1 ? 'day' : 'days'} unused`
+}
+
 function ProfileForm({
   initial,
   onSave,
   onCancel,
   saving,
+  maxIdleDays,
 }: {
   initial: VmProfileSettings
   onSave: (settings: VmProfileSettings) => void
   onCancel: () => void
   saving: boolean
+  /** The platform's longest `erase_after_idle_days`; null: none. */
+  maxIdleDays: number | null
 }) {
   const [name, setName] = useState(initial.name)
   const [memory, setMemory] = useState(String(initial.memory_mib))
@@ -66,6 +75,9 @@ function ProfileForm({
   const [pip, setPip] = useState(initial.packages.pip.join('\n'))
   const [npm, setNpm] = useState(initial.packages.npm.join('\n'))
   const [script, setScript] = useState(initial.setup_script ?? '')
+  const [eraseDays, setEraseDays] = useState(
+    initial.erase_after_idle_days == null ? '' : String(initial.erase_after_idle_days),
+  )
 
   return (
     <form
@@ -81,6 +93,7 @@ function ProfileForm({
           expected_memory_mib: expected.trim() ? Number(expected) : null,
           packages: { apt: packageList(apt), pip: packageList(pip), npm: packageList(npm) },
           setup_script: script.trim() ? script : null,
+          erase_after_idle_days: eraseDays.trim() ? Number(eraseDays) : null,
         })
       }}
     >
@@ -116,6 +129,23 @@ function ProfileForm({
           <FormControl.Label>Expected memory (MiB)</FormControl.Label>
           <TextInput type="number" min={128} value={expected} onChange={(e) => setExpected(e.target.value)} />
           <FormControl.Caption>What a VM is expected to use, for placing it on a node. Empty: the node&apos;s own estimate.</FormControl.Caption>
+        </FormControl>
+        <FormControl required={maxIdleDays !== null}>
+          <FormControl.Label>Erase an app&apos;s VM after this many days unused</FormControl.Label>
+          <TextInput
+            type="number"
+            min={1}
+            max={maxIdleDays ?? 3650}
+            value={eraseDays}
+            placeholder="Never"
+            onChange={(e) => setEraseDays(e.target.value)}
+          />
+          <FormControl.Caption>
+            Apps and their spaces only. If an app&apos;s VM has not been woken for this many days, its memory,
+            snapshots, volume and keys are erased; the app stays and its next wake starts fresh. A person&apos;s VM is
+            never erased this way while they are a member. A legal hold on the app stops it. Empty: never.
+            {maxIdleDays !== null && ` This platform requires at most ${maxIdleDays} days.`}
+          </FormControl.Caption>
         </FormControl>
         <Stack direction="horizontal" gap="normal" wrap="wrap">
           <FormControl>
@@ -287,7 +317,10 @@ export function VmProfilesPage() {
       {data && (
         <Text size="small">
           Platform limits: at most {data.caps.max_memory_mib} MiB and {data.caps.max_vcpus} vCPUs, idle at most{' '}
-          {data.caps.max_idle_before_pause_s === null ? 'without limit' : `${data.caps.max_idle_before_pause_s} s`}.
+          {data.caps.max_idle_before_pause_s === null ? 'without limit' : `${data.caps.max_idle_before_pause_s} s`}
+          {data.caps.max_erase_after_idle_days != null &&
+            `, an app's VM erased after at most ${data.caps.max_erase_after_idle_days} days unused`}
+          .
           Awake-time quota:{' '}
           {data.quota.awake_vm_seconds_per_month === null
             ? 'unlimited'
@@ -303,6 +336,7 @@ export function VmProfilesPage() {
           onSave={(settings) => save.mutate(settings)}
           onCancel={() => setEditing(null)}
           saving={save.isPending}
+          maxIdleDays={data?.caps.max_erase_after_idle_days ?? null}
         />
       ) : (
         <Stack direction="horizontal">
@@ -336,6 +370,11 @@ export function VmProfilesPage() {
             },
             { header: 'vCPUs', field: 'vcpus' },
             { header: 'Idle before suspend', field: 'idle_before_pause_s', renderCell: (row) => idleLabel(row.idle_before_pause_s) },
+            {
+              header: "An app's unused VM",
+              field: 'erase_after_idle_days',
+              renderCell: (row) => idleErasureLabel(row.erase_after_idle_days),
+            },
             {
               header: 'Packages',
               field: 'packages',

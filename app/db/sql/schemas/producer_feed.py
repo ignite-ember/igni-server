@@ -34,6 +34,9 @@ class ProducerState(BaseModel):
     #: organisation (a new one each time they are added), an app's or a
     #: space's own id. A new incarnation is a new VM.
     incarnation: str
+    #: A legal hold stands on it: on the person here, or on the app (a
+    #: space's too). Nothing of its VM is erased for inactivity (§12.2).
+    legal_hold: bool = False
 
 
 class FeedMark(BaseModel, frozen=True):
@@ -60,6 +63,8 @@ class Census(BaseModel):
     erase_after_days: dict[str, int] = Field(default_factory=dict)
     #: Removed ids under a legal hold: no erasure is scheduled.
     held: set[str] = Field(default_factory=set)
+    #: Apps under a legal hold: their spaces, removed, are not erased either.
+    held_apps: set[str] = Field(default_factory=set)
 
 
 class Member(BaseModel):
@@ -79,7 +84,7 @@ class Scheduled(BaseModel):
     incarnation: str
     #: Null: held.
     erase_at: datetime | None
-    #: `removed`, `held`, `released`, `erased_on_request`.
+    #: `removed`, `held`, `released`, `erased_on_request`, `discarded`, `erased`.
     why: str
 
 

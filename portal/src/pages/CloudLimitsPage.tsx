@@ -59,12 +59,18 @@ function CapsForm({ caps, onSaved }: { caps: PlatformVmCaps; onSaved: Saved }) {
   const [vcpus, setVcpus] = useState(String(caps.max_vcpus))
   const [idle, setIdle] = useState(String(caps.max_idle_before_pause_s ?? 3600))
   const [noIdleLimit, setNoIdleLimit] = useState(caps.max_idle_before_pause_s === null)
+  const [eraseDays, setEraseDays] = useState(
+    caps.max_erase_after_idle_days == null ? '' : String(caps.max_erase_after_idle_days),
+  )
   const save = useMutation({
     mutationFn: () =>
       client.put('/portal/vm-caps', {
         max_memory_mib: Number(memory),
         max_vcpus: Number(vcpus),
         max_idle_before_pause_s: noIdleLimit ? null : Number(idle),
+        // Not edited here: sent back as it is, so saving the others never resets it.
+        ...(caps.max_volume_gib !== undefined && { max_volume_gib: caps.max_volume_gib }),
+        max_erase_after_idle_days: eraseDays.trim() ? Number(eraseDays) : null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vm-caps'] })
@@ -99,6 +105,22 @@ function CapsForm({ caps, onSaved }: { caps: PlatformVmCaps; onSaved: Saved }) {
         <FormControl>
           <Checkbox checked={noIdleLimit} onChange={(e) => setNoIdleLimit(e.target.checked)} />
           <FormControl.Label>No limit on idle time (profiles may never suspend)</FormControl.Label>
+        </FormControl>
+        <FormControl>
+          <FormControl.Label>Longest an app&apos;s VM may go unwoken before it is erased (days)</FormControl.Label>
+          <TextInput
+            type="number"
+            min={1}
+            max={3650}
+            value={eraseDays}
+            placeholder="No maximum"
+            onChange={(e) => setEraseDays(e.target.value)}
+          />
+          <FormControl.Caption>
+            Empty: no maximum, and a profile may keep an app&apos;s VM for ever. Set, every profile must erase an app&apos;s
+            unwoken VM within it; profiles saved with longer (or never) are served with this many days. People&apos;s
+            VMs are never erased this way.
+          </FormControl.Caption>
         </FormControl>
         <Stack direction="horizontal">
           <Button type="submit" variant="primary" disabled={save.isPending}>

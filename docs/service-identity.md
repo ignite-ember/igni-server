@@ -895,8 +895,8 @@ GET /v1/platform/producers?since=<cursor>&limit=500&wait=25   // limit 1–1000,
                       "profile": {"profile_id", "profile_name", "memory_mib", "normal_memory_mib",
                                   "expected_memory_mib", "vcpus", "idle_before_pause_s",
                                   "packages": {"apt", "pip", "npm"}, "setup_script",
-                                  "volume_max_gib"} | null,
-                      "volume_gib", "changed_at"}],
+                                  "volume_max_gib", "erase_after_idle_days"} | null,
+                      "volume_gib", "legal_hold", "changed_at"}],
        "cursor": "<opaque: pass it back as since>"}
 → 400 for a cursor the feed did not give
 ```
@@ -959,6 +959,10 @@ GET /v1/platform/producers?since=<cursor>&limit=500&wait=25   // limit 1–1000,
   starts while they are in force. `profile` is `null` once the row is
   removed. A producer whose volume an admin grew (§12.1) is listed
   again with the larger `volume_gib`; it only ever grows.
+- **`legal_hold`:** a legal hold stands on the producer (§18.2): on the
+  person in this organisation, or on the app — which covers its spaces.
+  The gateway erases nothing of the VM after inactivity while it does
+  (§12.2); a hold placed or released lists the row again at once.
 - **`changed_at`:** when igni server saw the change, not necessarily when
   it was made.
 - **`cursor`:** unchanged when nothing is new.
@@ -1010,17 +1014,22 @@ never deletable). A profile holds:
 | `setup_script` | run as root when the profile's read-only layer is built; at most 64 KiB |
 | `volume_gib` | the volume a new VM gets, in GiB (default 10) |
 | `volume_max_gib` | how far an admin may grow one producer's volume (§12.1), in GiB (default 50); at least `volume_gib`, else 422 |
+| `erase_after_idle_days` | **apps and their spaces only:** a VM not woken for this many days has its memory, snapshots, volume and keys erased; the app stays and its next wake starts fresh (§12.2). `null` (default) is never; 1–3650. A person's VM is never erased this way while they are a member |
 
 The **platform's caps** — the largest ceiling, the most vCPUs, the
-longest idle (`null`: any, never included) and the largest volume a
-profile may let a VM grow to (`max_volume_gib`) — are the super admin's. A
+longest idle (`null`: any, never included), the largest volume a
+profile may let a VM grow to (`max_volume_gib`) and the longest an app's
+VM may go unwoken before it is erased (`max_erase_after_idle_days`;
+`null`, the default: any, never included — set, every profile must
+erase within it, and one saved before is served clamped) — are the super admin's. A
 profile that asks for more is refused (400, saying which); one saved
 before a cap was lowered is served **clamped** to it and shows
 `within_caps: false` (a volume's size and maximum clamped to
 `max_volume_gib`). Until a super admin sets them the caps are the
 deployment's (`CLOUD_VM__CAP_MAX_MEMORY_MIB`, `__CAP_MAX_VCPUS`,
-`__CAP_MAX_IDLE_BEFORE_PAUSE_S`, `__CAP_MAX_VOLUME_GIB`: 8192 MiB, 4 vCPUs,
-3600 s and 200 GiB by default). The Standard profile, and the value a
+`__CAP_MAX_IDLE_BEFORE_PAUSE_S`, `__CAP_MAX_VOLUME_GIB`,
+`__CAP_MAX_ERASE_AFTER_IDLE_DAYS`: 8192 MiB, 4 vCPUs, 3600 s, 200 GiB and
+none by default). The Standard profile, and the value a
 profile body leaves out, are the deployment's too (`CLOUD_VM__STANDARD_*`:
 name, memory, normal memory, vCPUs, idle, volume and its maximum). An organisation's **quota** of awake VM time
 (`awake_vm_seconds_per_month`, null unlimited) is set by a super admin
@@ -1047,8 +1056,9 @@ with every start; there is no per-producer call for it:
 "profile_version", "packages_version",
 "profile": {"profile_id", "profile_name",
             "memory_mib", "normal_memory_mib", "expected_memory_mib", "vcpus", "idle_before_pause_s",
-            "packages": {"apt", "pip", "npm"}, "setup_script", "volume_max_gib"},
-"volume_gib"
+            "packages": {"apt", "pip", "npm"}, "setup_script", "volume_max_gib",
+            "erase_after_idle_days"},
+"volume_gib", "legal_hold"
 ```
 
 Values are effective (clamped to the caps). `profile_version` is a hash
@@ -1079,6 +1089,49 @@ removed and added again starts at the profile's. A lower profile size or
 maximum later never shrinks a grown volume. **The gateway learns of a
 growth from the feed:** the producer is listed again with its new
 `volume_gib` (§11.3), and grows the volume; it never shrinks one.
+
+### 12.2 Erasing an app's VM after inactivity
+
+A profile's `erase_after_idle_days` keeps an app from holding data in a
+VM nobody uses. When an app's or a space's VM has not been **woken** — by
+a connection, an event, a command or a timed wake; not by the gateway's
+own provisioning or moves — for that many days, the gateway erases its
+memory state, snapshots, volume and keys, as for a removed producer
+(§18.3) but **without** its rows in the organisation's igni database, and
+the app stays: active, with the same id. Its next wake starts fresh from
+the profile's base, with a new volume, a database login granted again (a
+new password) and a new VM credential picked up by the node agent.
+
+**Never a person's VM.** A member's workspace is kept for as long as they
+are a member; their VM is erased only after they are removed (§18). A
+profile assigned to a group is served with the field, and the gateway and
+igni server both leave people out.
+
+**A legal hold on the app stops it** (§18.2), for its spaces too. Erased
+once, a VM is not erased again until it has been woken since.
+
+The gateway asks first and reports after (platform token):
+
+```
+POST /v1/platform/orgs/{org_id}/producers/{app|space}/{id}/vm-resets/check
+     {"incarnation", "reason": "idle", "last_woken_at"?}
+→ 204 may be erased now
+→ 409 a person's VM; the profile does not erase after inactivity; a legal hold (named); another life
+
+POST /v1/platform/orgs/{org_id}/producers/{app|space}/{id}/vm-resets
+     {"incarnation", "reason": "idle", "last_woken_at"?, "summary": {…what the node erased, ≤ 8 KiB}}
+→ 200 {"org_id", "producer", "incarnation", "reason", "credential", "reset_at"}
+```
+
+The report re-checks, is one row in the organisation's audit trail
+(method `SYSTEM`, route `producer-vm/reset`, target `app_vm` /
+`space_vm`, detail `{"incarnation", "why": "erased_after_idle",
+"erase_after_idle_days", "last_woken_at", "credential", "by_client",
+"summary"}`), and makes sure the next fresh VM can authenticate: its
+credential lived on the erased volume (§16), so a working, picked-up one
+is replaced by a new family waiting for the node agent's pickup
+(`credential: "reissued"`; `awaiting_pickup` when one was waiting
+already, `none` when the cloud is not enabled for the app).
 
 ## 13. Commands in a producer's VM
 
@@ -1518,7 +1571,8 @@ the feed, and every step of it audited.
 |---|---|
 | a person removed from an organisation | `removed_member_retention_days` after the removal (default **30**; `0` at once), unless a legal hold stands |
 | a person erased on request (`POST /v1/portal/erasure`) | at once, overriding the retention — **refused while a legal hold stands** (409, saying where; the refusal is audited) |
-| a person's account deleted; a space or an app deleted; an organisation deleted | at once |
+| a person's account deleted; a space or an app deleted or **discarded**; an organisation deleted | at once |
+| a removed member's VM **discarded** by an org admin (§18.5) | at once, overriding the retention — **refused while a legal hold stands** (409, naming it) |
 
 | Call | Who | Does |
 |---|---|---|
@@ -1531,8 +1585,11 @@ the feed, and every step of it audited.
 the organisation's audit trail — method `SYSTEM`, route
 `producer-feed/erasure`, target `person_vm` / `app_vm` / `space_vm` and
 the producer's id, detail `{"incarnation", "erase_at", "why"}` with
-`why` one of `removed`, `held`, `released`, `erased_on_request`. The
-calls above and below are portal requests, in the trail as such.
+`why` one of `removed`, `held`, `released`, `erased_on_request`,
+`discarded`; and when the gateway reports the erasure **done**, one more
+with `why: "erased"`, the reporting client and the node's part-by-part
+`summary` (§18.3). The calls above and below are portal requests, in the
+trail as such.
 
 ### 18.2 Legal holds
 
@@ -1545,13 +1602,36 @@ calls above and below are portal requests, in the trail as such.
 An incarnation whose `erase_at` has passed is erased; a hold cannot
 bring it back, and is not shown in `incarnations`.
 
+**A hold on an app** keeps the app's VM and its spaces' from being
+erased — after inactivity (§12.2) or once discarded (§18.5). Discarding a
+held app still removes it at once and frees its place under the licence;
+only the erasure waits (`erase_at: null`) until the hold is released, and
+then happens at once. A hold must be placed before the discard: an app's
+erasure is due as soon as it is discarded.
+
+| Call | Who | Does |
+|---|---|---|
+| `PUT /v1/portal/orgs/{org_id}/legal-holds/apps/{app_id}` `{"reason"}` | its org admins, super admin | 200 `{org_id, app_id, reason, placed_by_user_id, placed_at}`; 404 for an app neither here nor discarded and waiting |
+| `DELETE` the same | the same | 204 (404 for none) |
+
+`GET .../legal-holds` lists them as `"apps": [...]` beside `"holds"`.
+
 ### 18.3 What the gateway does
 
 Suspend at removal; at `erase_at`, erase the VM's state, volume and keys
 and run, against the organisation's igni database,
 `igni-cloud db erase-producer --org <org_id> --producer <kind>:<id> --incarnation <incarnation>`.
 A row listed again with `erase_at: null` (held) or a later one
-(released) replaces the schedule it had.
+(released) replaces the schedule it had. When an erasure is **done** the
+gateway reports it:
+
+```
+POST /v1/platform/orgs/{org_id}/producers/{kind}/{id}/erasures {"incarnation", "summary": {…, ≤ 8 KiB}}
+→ 200 the erasure (§18.5), "state": "erased"      → 404 no such removed incarnation
+```
+
+Idempotent: the first report is audited (`why: "erased"`), a repeat is
+answered the same and not audited again.
 
 ### 18.4 Exporting a removed member's data during retention
 
@@ -1597,6 +1677,57 @@ on the same calls — `{"incarnation", "parts": ["database", "volume"]}` —
 which the node agent fulfils by mounting the suspended volume read-only
 and archiving it, uploaded the same way (a size large enough to need
 resumable, ranged uploads, which this does not have yet).
+
+### 18.5 Discarding: an app at once, a removed member's VM now
+
+An org admin discards what is no longer wanted; the erasure runs in the
+background, by the same path as any removed producer's (§18.3).
+
+**An app**, while it is still in use:
+
+| Call | Who | Does |
+|---|---|---|
+| `POST /v1/portal/apps/{app_id}/discard` `{"start_fresh"?: bool}` | an org admin | 200 `{"discarded": <erasure> \| null, "fresh_app": <app> \| null}` |
+| `DELETE /v1/portal/apps/{app_id}` | the same | 204: the same, without a fresh app |
+
+The app is removed **at once**: its tokens and VM credential stop, its
+spaces go with it, and the producers feed lists it `removed` with
+`erase_at` now. The gateway closes its connections, never wakes it again
+and frees its place under the licence straight away (Fleet's apps,
+spaces included, are capped at the licence's band), and a node erases
+the VM's memory, snapshots, volume and keys — and its rows in the
+organisation's igni database — in the background. A legal hold on the
+app (§18.2) keeps the data, not the app. `start_fresh` registers a new
+app at once with the old one's name, public key, owner (the admin, if
+the owner has left), VM profile, extensions and — if it had the cloud
+enabled — a new VM credential for the node agent: a fresh VM for the same
+app, which now signs in under its new client id. Audited as the portal
+request, with `{"why": "discarded", "erasure", "fresh_app"}`.
+
+**A removed member's VM**, before the retention runs out:
+
+| Call | Who | Does |
+|---|---|---|
+| `POST /v1/portal/orgs/{org_id}/members/{user_id}/discard` `{"incarnation"?}` | its org admins, super admin | 200 `{"erasures": [<erasure>]}`: every removed incarnation of theirs here not yet erased (or the one named) is due **now**. 409 while a legal hold stands (naming it), and for a current member — **a member's VM is never discarded**, active or deactivated; 404 when nothing is waiting |
+
+Audited as the portal request and, per incarnation, `why: "discarded"`
+in the erasure trail. An export of that incarnation (§18.4) still
+requested or ready is not ended by the discard, but none can be taken
+once the erasure is done; the portal warns.
+
+**Where each erasure stands** — `GET /v1/portal/orgs/{org_id}/erasures`
+(its org admins, super admin) → `{"org_id", "erasures": [...]}`, every
+removed or discarded producer the feed still keeps (§11.3), newest first:
+
+```
+{"producer": {"kind", "id"}, "name", "incarnation", "removed_at", "erase_at",
+ "state": "scheduled" | "held" | "erasing" | "erased", "erased_at", "legal_hold",
+ "exports", "discarded_by_user_id", "discarded_at"}
+```
+
+`name` is the person's email, or the app's name when it was discarded.
+`erasing` means due and not yet reported done by the gateway; `erased`
+that it was (§18.3).
 
 ## 19. Model calls from a producer's VM, and whose they are
 

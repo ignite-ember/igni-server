@@ -33,6 +33,7 @@ import { VmProfilesPage } from "./pages/VmProfilesPage";
 import { VmCommandsPage } from "./pages/VmCommandsPage";
 import { CloudLimitsPage } from "./pages/CloudLimitsPage";
 import { VmCredentialsPage } from "./pages/VmCredentialsPage";
+import { ErasuresPage } from "./pages/ErasuresPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -97,6 +98,7 @@ export default function App() {
                       <Route path="vm-commands" element={<VmCommandsPage />} />
                       <Route path="cloud-limits" element={<CloudLimitsPage />} />
                       <Route path="vm-credentials" element={<VmCredentialsPage />} />
+                      <Route path="erasures" element={<ErasuresPage />} />
                       <Route path="compliance" element={<CompliancePage />} />
                       <Route path="inference" element={<InferencePage />} />
                       <Route

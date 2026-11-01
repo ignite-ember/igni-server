@@ -91,6 +91,18 @@ class ProducerFeedEntry(Base):
     #: The person was erased: purged as soon as `erase_at` has passed and
     #: the gateway was handed it, without waiting out the retention.
     erased: Mapped[bool] = Column(Boolean, nullable=False, server_default=text('false'), default=False)
+    #: A legal hold stands on the producer: on the person in this
+    #: organisation, or on the app (which covers its spaces). The gateway
+    #: erases nothing of the VM for inactivity while it does (§12.2, §18.2).
+    legal_hold: Mapped[bool] = Column(Boolean, nullable=False, server_default=text('false'), default=False)
+    #: When the gateway reported this removed incarnation's erasure done:
+    #: its node state, volume, keys, replicas and rows gone (§18.3).
+    erasure_done_at: Mapped[datetime | None] = Column(TIMESTAMP(timezone=True), nullable=True)
+    #: Discarded by an org admin (§18.5): the app's name at the time, who
+    #: asked and when. A person discarded now keeps their own name.
+    discarded_label: Mapped[str | None] = Column(Text, nullable=True)
+    discarded_by_user_id: Mapped[str | None] = Column(Text, nullable=True)
+    discarded_at: Mapped[datetime | None] = Column(TIMESTAMP(timezone=True), nullable=True)
 
 
 class ProducerFeedMark(Base):

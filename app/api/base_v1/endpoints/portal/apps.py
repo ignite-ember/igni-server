@@ -10,6 +10,8 @@ its own list of extensions, off until switched on here
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.base_v1.schema.portal.apps import (
+    DiscardAppRequest,
+    DiscardedApp,
     OrgAppList,
     OrgAppResponse,
     RegisterAppRequest,
@@ -63,10 +65,35 @@ async def replace_app_keys(
     return app
 
 
+@router.post('/apps/{app_id}/discard', response_model=DiscardedApp)
+async def discard_app(
+    request: Request,
+    app_id: str,
+    body: DiscardAppRequest | None = None,
+    current_user: PortalUser = Depends(require_admin),
+) -> DiscardedApp:
+    """Removed at once — never woken again, its place under the licence free — and its VM erased in the background."""
+    start_fresh = bool(body and body.start_fresh)
+    set_audit_target(request, target_type='app', target_id=app_id)
+    discarded = await OrgApps().discard(
+        current_user.org_id, app_id, by_user_id=current_user.user_id, start_fresh=start_fresh
+    )
+    set_audit_detail(
+        request,
+        {
+            'why': 'discarded',
+            'erasure': discarded.discarded.state if discarded.discarded else None,
+            'fresh_app': discarded.fresh_app.app_id if discarded.fresh_app else None,
+        },
+    )
+    return discarded
+
+
 @router.delete('/apps/{app_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def remove_app(request: Request, app_id: str, current_user: PortalUser = Depends(require_admin)) -> Response:
-    await OrgApps().remove(current_user.org_id, app_id)
+    """The same as discarding it, without a fresh one."""
     set_audit_target(request, target_type='app', target_id=app_id)
+    await OrgApps().discard(current_user.org_id, app_id, by_user_id=current_user.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

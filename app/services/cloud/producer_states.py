@@ -59,6 +59,7 @@ class ProducerStates:
         owner: str | None = None,
         incarnation: str | None = None,
         grown: ProducerVolumeSize | None = None,
+        legal_hold: bool = False,
     ) -> ProducerState:
         assert self._default is not None
         profile = self._profiles.get(profile_id or '') or self._default
@@ -72,6 +73,7 @@ class ProducerStates:
             owner_app_id=owner,
             incarnation=incarnation or producer_id,
             volume_gib=VolumeSizes.of(effective, grown, incarnation or producer_id),
+            legal_hold=legal_hold,
         )
 
     async def current(self, kind: str) -> list[str]:
@@ -125,6 +127,8 @@ class ProducerStates:
         members = await self._feed.members_in(self._org_id, ids)
         groups = await self._tenant.groups_of(self._org_id, list(members))
         grown = await self._volumes.of(self._org_id, PERSON, list(members))
+        # A legal hold stops their VM's erasure after inactivity too (§12.3).
+        held_now = await RetentionDB().held_in(self._org_id, sorted(members)) if members else set()
         states = []
         for user_id, member in members.items():
             group = groups.get(user_id)
@@ -137,6 +141,7 @@ class ProducerStates:
                     active=member.active,
                     incarnation=member.incarnation,
                     grown=grown.get(user_id),
+                    legal_hold=user_id in held_now,
                 )
             )
         removed = {user_id for user_id in ids if user_id not in members}
@@ -162,12 +167,24 @@ class ProducerStates:
         held = await self._tenant.apps(self._org_id, registered)
         cloud = await self._tenant.with_credential(self._org_id, APP, list(held))
         grown = await self._volumes.of(self._org_id, APP, list(held))
+        # A legal hold on an app keeps it from erasure — after inactivity, or once discarded (§18.2).
+        on_hold = await RetentionDB().held_apps(self._org_id)
+        removed = {app_id for app_id in ids if app_id not in held}
         return Census(
             states=[
-                self._state(APP, app_id, profile, active=app_id in cloud, grown=grown.get(app_id))
+                self._state(
+                    APP,
+                    app_id,
+                    profile,
+                    active=app_id in cloud,
+                    grown=grown.get(app_id),
+                    legal_hold=app_id in on_hold,
+                )
                 for app_id, profile in held.items()
             ],
-            removed={app_id for app_id in ids if app_id not in held},
+            removed=removed,
+            held=removed & on_hold,
+            held_apps=on_hold,
         )
 
     async def _spaces_states(self, ids: list[str]) -> Census:
@@ -177,10 +194,20 @@ class ProducerStates:
         registered = set(await self._feed.apps_in(self._org_id, owners))
         held = await self._tenant.apps(self._org_id, sorted(registered))
         grown = await self._volumes.of(self._org_id, SPACE, list(apps_of))
+        # A hold on the app covers its spaces.
+        on_hold = await RetentionDB().held_apps(self._org_id)
         states = [
-            self._state(SPACE, space_id, held[app_id], active=True, owner=app_id, grown=grown.get(space_id))
+            self._state(
+                SPACE,
+                space_id,
+                held[app_id],
+                active=True,
+                owner=app_id,
+                grown=grown.get(space_id),
+                legal_hold=app_id in on_hold,
+            )
             for space_id, app_id in apps_of.items()
             if app_id in held
         ]
         there = {state.key.producer_id for state in states}
-        return Census(states=states, removed={space_id for space_id in ids if space_id not in there})
+        return Census(states=states, removed={space_id for space_id in ids if space_id not in there}, held_apps=on_hold)

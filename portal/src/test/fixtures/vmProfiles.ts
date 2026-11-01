@@ -12,6 +12,7 @@ export const STANDARD: VmProfile = {
   expected_memory_mib: null,
   packages: { apt: [], pip: [], npm: [] },
   setup_script: null,
+  erase_after_idle_days: null,
   version: 'v1',
   packages_version: 'pv1',
   within_caps: true,
@@ -28,12 +29,13 @@ export const BROWSER: VmProfile = {
   vcpus: 2,
   idle_before_pause_s: null,
   packages: { apt: ['chromium'], pip: [], npm: [] },
+  erase_after_idle_days: 30,
   within_caps: false,
 }
 
 export const OVERVIEW: VmProfilesOverview = {
   org_id: 'demo-org-001',
-  caps: { max_memory_mib: 8192, max_vcpus: 4, max_idle_before_pause_s: 3600 },
+  caps: { max_memory_mib: 8192, max_vcpus: 4, max_idle_before_pause_s: 3600, max_erase_after_idle_days: null },
   quota: { org_id: 'demo-org-001', awake_vm_seconds_per_month: null, enforced: false, updated_at: null },
   default_profile_id: 'p-default',
   profiles: [STANDARD, BROWSER],
