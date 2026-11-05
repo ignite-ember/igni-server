@@ -29,7 +29,7 @@
  */
 
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from 'node:crypto'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 
 /** The API itself, for what the portal's proxy does not pass on (`/.well-known`). */
 const API = process.env.IGNI_API_URL ?? 'http://localhost:7777'
@@ -41,6 +41,20 @@ function unique(label: string): string {
   // Playwright forbids Date.now() nowhere, but a stable-ish suffix
   // keeps parallel runs from colliding on a unique-name constraint.
   return `${MARK} ${label} ${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * Click, and wait for the server to answer the write the click sent.
+ * Every test here reloads straight after its action — the reload is the
+ * point — and a reload that lands before the request has been answered
+ * aborts it, so the page comes back showing the old value and the test
+ * reports a write that never got the chance to happen.
+ */
+async function clickAndAwait(page: Page, button: Locator, method: string, path: RegExp): Promise<void> {
+  await Promise.all([
+    page.waitForResponse((r) => r.request().method() === method && path.test(new URL(r.url()).pathname)),
+    button.click(),
+  ])
 }
 
 test.use({ viewport: { width: 1440, height: 900 } })
@@ -77,7 +91,7 @@ test.describe('groups', () => {
     if (await del.isVisible().catch(() => false)) {
       await del.click()
       const confirm = page.getByRole('button', { name: /^Delete/i }).last()
-      await confirm.click()
+      await clickAndAwait(page, confirm, 'DELETE', /\/v1\/portal\/groups\/[^/]+$/)
       await page.goto('/groups')
       await page.reload()
       await expect(page.getByText(name)).toHaveCount(0, { timeout: 10_000 })
@@ -117,14 +131,14 @@ test.describe('settings', () => {
     const changed = `${original} ${MARK}`
 
     await field.fill(changed)
-    await page.getByRole('button', { name: /Save changes/i }).click()
+    await clickAndAwait(page, page.getByRole('button', { name: /Save changes/i }), 'PATCH', /\/v1\/portal\/me$/)
 
     await page.reload()
     await expect(page.getByLabel(/Full name/i).first()).toHaveValue(changed, { timeout: 10_000 })
 
     // Put it back.
     await page.getByLabel(/Full name/i).first().fill(original)
-    await page.getByRole('button', { name: /Save changes/i }).click()
+    await clickAndAwait(page, page.getByRole('button', { name: /Save changes/i }), 'PATCH', /\/v1\/portal\/me$/)
     await page.reload()
     // Asserted, not assumed: an unverified cleanup is how the leak
     // above survived several runs unnoticed.
@@ -250,7 +264,7 @@ test.describe('VM profile requests', () => {
 
       await page.goto('/vm-profiles')
       await expect(page.getByLabel(`Setup script of App ${name}`)).toHaveText('true')
-      await page.getByRole('button', { name: `Approve App ${name}` }).click()
+      await clickAndAwait(page, page.getByRole('button', { name: `Approve App ${name}` }), 'POST', /\/vm-profile-requests\/[^/]+\/approve$/)
 
       await page.reload()
       await expect(page.getByText(new RegExp(`Approved: .*App ${name}`))).toBeVisible({ timeout: 10_000 })
