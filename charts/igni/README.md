@@ -179,6 +179,25 @@ Migrations in this project are tested for a downgrade round trip against
 populated data, but a downgrade is still a database operation on your
 data. Take the backup first.
 
+### Upgrade notes
+
+Changes to defaults that an upgrade picks up without a values change:
+
+- **`backup.image` is a map, and no longer Docker Hub.** It was the string
+  `postgres:17.6-alpine`, which resolves to Docker Hub. It is now
+  `repository` (empty: beside `image.repository`) and `tag`
+  (`17.6-alpine`). A string you set is still used as a full reference.
+  If your cluster pulled Postgres from Docker Hub, mirror it beside the
+  API's image or set `backup.image.repository`.
+- **Google sign-in is off unless it has a client ID.** `socialSignIn.providers`
+  defaulted to `[google]`; it is no longer set, and the chart lists Google
+  in `OAUTH_PROVIDERS` only when `socialSignIn.googleClientId` is set. A
+  deployment with Google configured is unchanged. One without it rendered
+  `["google"]` and offered no button (the server hides a provider with no
+  credentials); it now renders `[]`. An explicit `socialSignIn.providers`
+  still wins. The sign-up page, like the sign-in page, now shows only the
+  buttons the server reports at `/v1/auth/methods`.
+
 ## What is exposed
 
 With `ingress.enabled=true`, one host serves both:
@@ -282,7 +301,11 @@ helm upgrade igni ./charts/igni -f my-values.yaml \
 ```
 
 A nightly `pg_dump` (03:00 UTC by default) into the claim you name,
-running the same script the compose stack runs. Every organisation has
+running the same script the compose stack runs. It runs Postgres's own
+image from beside `image.repository`: `registry.example.com/igni/igni-api`
+gives `registry.example.com/igni/postgres:17.6-alpine`, which every offline
+bundle carries. `backup.image.repository` and `backup.image.tag` name
+another one; match the tag to your server's major version. Every organisation has
 its own database on the server (`<POSTGRES_DB>_t<n>`, registered in the
 shared plane's `tenants` table), so a run is **one archive per
 organisation plus one for the shared plane**:

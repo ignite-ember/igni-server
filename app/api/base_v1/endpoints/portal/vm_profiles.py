@@ -8,6 +8,12 @@ super admin's alone. See `docs/service-identity.md` §12.
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.base_v1.schema.portal.user import PortalAccount
+from app.api.base_v1.schema.vm_profile_requests import (
+    ApproveVmProfileRequest,
+    RejectVmProfileRequest,
+    VmProfileRequestList,
+    VmProfileRequestRecord,
+)
 from app.api.base_v1.schema.vm_profiles import (
     AssignVmProfile,
     OrgVmQuotaBody,
@@ -22,6 +28,7 @@ from app.middlewares.audit import set_audit_detail, set_audit_target
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
+from app.services.cloud.vm_profile_requests import VmProfileRequests
 from app.services.cloud.vm_profiles import VmCaps, VmProfiles, VmQuotas
 
 router = APIRouter()
@@ -54,7 +61,7 @@ async def create_profile(
 ) -> VmProfileResponse:
     profile = await VmProfiles().create(authority.org_id, body, by_user_id=authority.user_id)
     set_audit_target(request, target_type='vm_profile', target_id=profile.id)
-    set_audit_detail(request, {'name': profile.name, 'version': profile.version})
+    set_audit_detail(request, {'name': profile.name, 'version': profile.version, 'internet': profile.internet})
     return profile
 
 
@@ -67,7 +74,7 @@ async def replace_profile(
 ) -> VmProfileResponse:
     profile = await VmProfiles().replace(authority.org_id, profile_id, body, by_user_id=authority.user_id)
     set_audit_target(request, target_type='vm_profile', target_id=profile_id)
-    set_audit_detail(request, {'name': profile.name, 'version': profile.version})
+    set_audit_detail(request, {'name': profile.name, 'version': profile.version, 'internet': profile.internet})
     return profile
 
 
@@ -97,6 +104,54 @@ async def assign_app(
     set_audit_target(request, target_type='app', target_id=app_id)
     set_audit_detail(request, {'vm_profile_id': body.profile_id})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get('/orgs/{org_id}/vm-profile-requests', response_model=VmProfileRequestList)
+async def requests(authority: OrgAuthority = Depends(require_org_authority)) -> VmProfileRequestList:
+    """What apps and extensions ask their VMs to get — exactly what would run — pending first (§12.3)."""
+    return VmProfileRequestList(requests=await VmProfileRequests().all(authority.org_id))
+
+
+def _audit_decision(request: Request, record: VmProfileRequestRecord) -> None:
+    set_audit_target(request, target_type='vm_profile_request', target_id=record.id)
+    set_audit_detail(
+        request,
+        {
+            'subject': f'{record.subject.kind}:{record.subject.id}',
+            'state': record.state,
+            'version': record.version,
+            'packages_version': record.packages_version,
+            # Whether the decision grants (or refuses) the internet: a security grant (§12.4).
+            'internet': record.requested.internet,
+            'profile_id': record.profile_id,
+        },
+    )
+
+
+@router.post('/orgs/{org_id}/vm-profile-requests/{request_id}/approve', response_model=VmProfileRequestRecord)
+async def approve_request(
+    request: Request,
+    request_id: str,
+    body: ApproveVmProfileRequest,
+    authority: OrgAuthority = Depends(require_org_authority),
+) -> VmProfileRequestRecord:
+    """The version read becomes a profile; an app's is given to the app. 409 if it changed since."""
+    record = await VmProfileRequests().approve(authority, request_id, body.version)
+    _audit_decision(request, record)
+    return record
+
+
+@router.post('/orgs/{org_id}/vm-profile-requests/{request_id}/reject', response_model=VmProfileRequestRecord)
+async def reject_request(
+    request: Request,
+    request_id: str,
+    body: RejectVmProfileRequest,
+    authority: OrgAuthority = Depends(require_org_authority),
+) -> VmProfileRequestRecord:
+    """Nothing runs; the VM keeps the profile it has."""
+    record = await VmProfileRequests().reject(authority, request_id, body.reason)
+    _audit_decision(request, record)
+    return record
 
 
 @router.get('/orgs/{org_id}/vm-quota', response_model=OrgVmQuotaResponse)

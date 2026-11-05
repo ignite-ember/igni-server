@@ -88,9 +88,9 @@ register that reads as though it had always agreed.
 
 **Recommendation.** The first. It changes what a release *is* — a mirrored artefact somebody publishes — which is why it is a decision rather than a change.
 
-**Decided.** A configurable endpoint. It lives in `ember-code`, so this reads `decided` until the Tauri config stops naming a single host — the state that did not exist before this decision was taken.
+**Decided.** A configurable endpoint. It lives in `igni`, so this reads `decided` until the Tauri config stops naming a single host — the state that did not exist before this decision was taken.
 
-**On checking this one.** The evidence is in `ember-code`, a separate repository. Run `make docs-check-siblings` beside a checkout of it to see what the code says today.
+**On checking this one.** The evidence is in `igni`, a separate repository. Run `make docs-check-siblings` beside a checkout of it to see what the code says today.
 
 ## DEC-12 — Should the retired landing page stay routed?
 
@@ -136,11 +136,11 @@ It does not close the gap. Recovering from missed webhooks is still a real need 
 * **Empty default plus a refusal path** — The F69 pattern: a misconfiguration fails loudly instead of doing something silently wrong. Affects every installed CLI.
 * **Keep the default until the cloud routing exists** — The stated future plan is a URL pointing at the customer's own cloud, at which point there is no vendor to default to.
 
-**Recommendation.** The first, and it lives in `ember-code` — which is why B3 is `blocked` here rather than open.
+**Recommendation.** The first, and it lives in `igni` — which is why B3 is `blocked` here rather than open.
 
-**Decided.** Empty default plus a refusal path, in `ember-code`.
+**Decided.** Empty default plus a refusal path, in `igni`.
 
-**On checking this one.** The evidence is in `ember-code`, a separate repository. Run `make docs-check-siblings` beside a checkout of it to see what the code says today.
+**On checking this one.** The evidence is in `igni`, a separate repository. Run `make docs-check-siblings` beside a checkout of it to see what the code says today.
 
 ## DEC-15 — Is thirty days the right token lifetime, now that revocation exists?
 

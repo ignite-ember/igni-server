@@ -104,13 +104,13 @@ class FairQueue:
         acquire: Acquire,
         release: Callable[[BackendLease], Awaitable[None]],
         max_wait: float,
-        gone: Callable[[], Awaitable[bool]] | None = None,
     ) -> BackendLease:
         """A lease now if there is room and nobody waits; otherwise one in turn.
 
-        Raises QueueFull at once past the queue's length, QueueTimeout
-        after *max_wait*, and CancelledError when *gone* says the client
-        left. A slot granted just as the request gave up goes back
+        Raises QueueFull at once past the queue's length and QueueTimeout
+        after *max_wait*. A caller who leaves cancels the take (the chat
+        route races it against the connection's disconnect); it leaves
+        the queue, and a slot granted just as it gave up goes back
         through *release*.
         """
         if self._length == 0:
@@ -130,7 +130,7 @@ class FairQueue:
         )
         self._join(waiter)
         try:
-            return await self._await(waiter, max_wait=max_wait, gone=gone)
+            return await self._await(waiter, max_wait=max_wait)
         except BaseException:
             self._leave(waiter)
             if waiter.future.done() and not waiter.future.cancelled() and waiter.future.exception() is None:
@@ -142,17 +142,12 @@ class FairQueue:
             CHAT_QUEUE_WAIT.labels(org=org).observe(time.monotonic() - waiter.queued_at)
 
     @staticmethod
-    async def _await(waiter: Waiter, *, max_wait: float, gone: Callable[[], Awaitable[bool]] | None) -> BackendLease:
-        deadline = waiter.queued_at + max_wait
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise QueueTimeout()
-            try:
-                return await asyncio.wait_for(asyncio.shield(waiter.future), min(1.0, remaining))
-            except TimeoutError:
-                if gone is not None and await gone():
-                    raise asyncio.CancelledError() from None
+    async def _await(waiter: Waiter, *, max_wait: float) -> BackendLease:
+        remaining = waiter.queued_at + max_wait - time.monotonic()
+        try:
+            return await asyncio.wait_for(asyncio.shield(waiter.future), max(remaining, 0))
+        except TimeoutError:
+            raise QueueTimeout() from None
 
     def _join(self, waiter: Waiter) -> None:
         producers = self._orgs.setdefault(waiter.org, OrderedDict())

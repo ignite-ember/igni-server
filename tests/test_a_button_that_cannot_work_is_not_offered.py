@@ -142,3 +142,30 @@ class TestWhatAFreshDeploymentOffers:
 
         assert name not in offered
         assert response.status_code == 400
+
+
+class TestAnAirGappedDeploymentOffersNoGoogle:
+    """B39. An air-gapped deployment cannot reach Google, so a Google
+    button there is a dead end and an outbound call a reviewer asks about.
+    The chart now renders `OAUTH_PROVIDERS=[]` unless a client ID is set;
+    the server offers nothing with no client ID even if Google is listed."""
+
+    async def test_no_client_id_means_no_button_even_with_google_listed(self, client):
+        with patch.object(providers.settings, 'oauth_providers', ['google']):
+            with patch.object(providers.settings, 'oauth_google_client_id', ''):
+                with patch.object(providers.settings, 'oauth_google_client_secret', 'a-secret'):
+                    answer = (await client.get(_METHODS)).json()
+                    response = await client.get('/auth/google', follow_redirects=False)
+
+        assert answer['oauth_providers'] == []
+        assert response.status_code == 400
+
+    async def test_what_the_chart_renders_by_default_turns_it_off(self, client, monkeypatch):
+        monkeypatch.setenv('OAUTH_PROVIDERS', '[]')
+        rendered = Settings().oauth_providers
+        with patch.object(providers.settings, 'oauth_providers', rendered):
+            with _google(ready=True):
+                answer = (await client.get(_METHODS)).json()
+
+        assert rendered == []
+        assert answer['oauth_providers'] == []

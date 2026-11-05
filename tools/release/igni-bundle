@@ -24,10 +24,26 @@
 #     CycloneDX attestation is written to DIR/sboms/NAME.cdx.json, so the
 #     SBOM in the bundle is the one that was signed, not a second scan.
 #
+#   igni-bundle add-artefact --staging DIR --name NAME --version V \
+#       --from SRC --cosign-key KEY
+#
+#     Offline. Adds a signed release that is not an image (Fleet ships
+#     binaries) to DIR/artefacts/NAME/. SRC is a release directory as
+#     Fleet's scripts/release/{build,sign}.sh write it: the files, a
+#     CycloneDX SBOM (*.cdx.json) for them, SHA256SUMS over all of them, and
+#     SHA256SUMS.sig, a cosign signature over SHA256SUMS made with the
+#     release key. The signature is verified with KEY and every file
+#     against SHA256SUMS before anything is copied; an UNSIGNED marker, a
+#     file SHA256SUMS does not list, or no SBOM is a refusal, so only a
+#     signed release can be carried. The SBOMs are also copied to
+#     DIR/sboms/NAME-<file>, and `NAME<TAB>VERSION<TAB>sha256:<SHA256SUMS
+#     digest>` is recorded in DIR/artefacts.tsv.
+#
 #   igni-bundle seal --staging DIR --version V --key MINISIGN_SECRET_KEY \
 #       --out OUTDIR [--commit SHA] [--public-key MINISIGN_PUBLIC_KEY]
 #
-#     Offline. Adds igni-import, writes MANIFEST (sha256 of every file and
+#     Offline. Checks images.tsv and artefacts.tsv against what is staged,
+#     adds igni-import, writes MANIFEST (sha256 of every file and
 #     the version), signs it with minisign, and writes
 #     OUTDIR/<basename of DIR>.tar plus a .sha256 beside it. The password
 #     for the secret key, if it has one, is read from MINISIGN_PASSWORD.
@@ -82,8 +98,18 @@ export_image() {
     [ ! -e "$staging/images/$name" ] || die "$name is already in $staging"
     need skopeo
 
-    local digest
-    digest="$(skopeo inspect --format '{{.Digest}}' "docker://$repository:$source_tag")"
+    # The sha256 of the raw manifest, not `inspect --format {{.Digest}}`:
+    # without --raw skopeo first picks the image-index entry for the
+    # host's own platform, and on a Mac (darwin) there is none, so the
+    # export refused every multi-platform or attested image there. The
+    # raw manifest's digest is what the tag names, index or not, and what
+    # `copy --all --preserve-digests` stores.
+    local digest raw
+    raw="$(mktemp)"
+    skopeo inspect --raw "docker://$repository:$source_tag" > "$raw" \
+        || { rm -f "$raw"; die "could not read the manifest of $repository:$source_tag"; }
+    digest="sha256:$(sha256_of "$raw")"
+    rm -f "$raw"
     [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not resolve $repository:$source_tag to a digest"
     local ref="$repository@$digest"
 
@@ -113,6 +139,75 @@ export_image() {
 
     printf '%s\t%s\t%s\n' "$name" "$tag" "$digest" >> "$staging/images.tsv"
     printf 'exported %s:%s@%s\n' "$name" "$tag" "$digest"
+}
+
+# Check SRC as a signed release directory and print its SHA256SUMS digest.
+# Shared by add-artefact (before copying) and seal (before signing).
+check_release_dir() {
+    local dir="$1" what="$2" line file listed=() present
+    [ -f "$dir/SHA256SUMS" ] || die "$what has no SHA256SUMS"
+    [ -f "$dir/SHA256SUMS.sig" ] || die "$what has no SHA256SUMS.sig: it is not signed"
+    [ ! -e "$dir/UNSIGNED" ] || die "$what is marked UNSIGNED; only a signed release can be bundled"
+    [ -z "$(find "$dir" -mindepth 1 ! -type f -print -quit)" ] \
+        || die "$what holds a directory, link or special file; a release directory holds only files"
+    local sums_line='^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]*)$'
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ "$line" =~ $sums_line ]] || die "$what: malformed SHA256SUMS line: $line"
+        file="${BASH_REMATCH[2]}"
+        case "$file" in SHA256SUMS | SHA256SUMS.sig | UNSIGNED) die "$what: SHA256SUMS lists $file" ;; esac
+        [ -f "$dir/$file" ] || die "$what: SHA256SUMS lists $file, which is not there"
+        [ "$(sha256_of "$dir/$file")" = "${BASH_REMATCH[1]}" ] || die "$what: hash mismatch: $file"
+        listed+=("$file")
+    done < "$dir/SHA256SUMS"
+    [ "${#listed[@]}" -gt 0 ] || die "$what: SHA256SUMS lists no files"
+    while IFS= read -r present; do
+        case "$present" in SHA256SUMS | SHA256SUMS.sig) continue ;; esac
+        printf '%s\n' "${listed[@]}" | grep -qxF -- "$present" \
+            || die "$what: $present is not listed in SHA256SUMS"
+    done < <(cd "$dir" && find . -type f | sed 's#^\./##')
+    printf '%s\n' "${listed[@]}" | grep -q '\.cdx\.json$' || die "$what has no CycloneDX SBOM (*.cdx.json)"
+    printf 'sha256:%s\n' "$(sha256_of "$dir/SHA256SUMS")"
+}
+
+add_artefact() {
+    local staging='' name='' version='' from='' cosign_key=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --staging) staging="$2"; shift 2 ;;
+            --name) name="$2"; shift 2 ;;
+            --version) version="$2"; shift 2 ;;
+            --from) from="$2"; shift 2 ;;
+            --cosign-key) cosign_key="$2"; shift 2 ;;
+            *) die "add-artefact: unknown option '$1'" ;;
+        esac
+    done
+    [ -n "$staging" ] && [ -n "$name" ] && [ -n "$version" ] && [ -n "$from" ] && [ -n "$cosign_key" ] \
+        || die 'add-artefact needs --staging, --name, --version, --from and --cosign-key'
+    [[ "$name" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "artefact name '$name' is not a plain name"
+    [[ "$version" =~ ^[A-Za-z0-9_][A-Za-z0-9_.+-]{0,127}$ ]] || die "'$version' is not a version"
+    [ -d "$from" ] || die "no release directory at $from"
+    [ -f "$cosign_key" ] || die "no cosign public key at $cosign_key"
+    [ ! -e "$staging/artefacts/$name" ] || die "$name is already in $staging"
+    need cosign
+
+    local digest
+    digest="$(check_release_dir "$from" "$name")" || exit 1
+    # Key-based and offline, as Fleet's sign.sh signs: no transparency log.
+    cosign verify-blob --key "$cosign_key" --insecure-ignore-tlog=true \
+        --signature "$from/SHA256SUMS.sig" "$from/SHA256SUMS" > /dev/null 2>&1 \
+        || die "$name: SHA256SUMS.sig does not verify with the release key; refusing to bundle it"
+
+    mkdir -p "$staging/artefacts/$name" "$staging/sboms"
+    cp "$from"/* "$staging/artefacts/$name/"
+    # Re-checked after the copy: what is in the bundle is what was verified.
+    [ "$(check_release_dir "$staging/artefacts/$name" "$name")" = "$digest" ] \
+        || die "$name changed while it was being copied"
+    local sbom
+    for sbom in "$staging/artefacts/$name"/*.cdx.json; do
+        cp "$sbom" "$staging/sboms/$name-$(basename "$sbom")"
+    done
+    printf '%s\t%s\t%s\n' "$name" "$version" "$digest" >> "$staging/artefacts.tsv"
+    printf 'added %s %s (SHA256SUMS %s)\n' "$name" "$version" "$digest"
 }
 
 seal() {
@@ -152,6 +247,19 @@ seal() {
         [ -f "$staging/images/${line%%$'\t'*}/image/manifest.json" ] \
             || die "images.tsv names ${line%%$'\t'*} but there is no image for it"
     done < "$staging/images.tsv"
+
+    if [ -f "$staging/artefacts.tsv" ]; then
+        local artefact_line="^([a-z0-9][a-z0-9._-]*)${tab}[A-Za-z0-9_][A-Za-z0-9_.+-]{0,127}${tab}(sha256:[0-9a-f]{64})\$"
+        while IFS= read -r line; do
+            [[ "$line" =~ $artefact_line ]] || die "malformed artefacts.tsv line: $line"
+            [ -d "$staging/artefacts/${BASH_REMATCH[1]}" ] \
+                || die "artefacts.tsv names ${BASH_REMATCH[1]} but there is no artefact for it"
+            [ "$(check_release_dir "$staging/artefacts/${BASH_REMATCH[1]}" "${BASH_REMATCH[1]}")" = "${BASH_REMATCH[2]}" ] \
+                || die "${BASH_REMATCH[1]} is not the release add-artefact verified"
+        done < "$staging/artefacts.tsv"
+    elif [ -e "$staging/artefacts" ]; then
+        die 'the staging directory has artefacts/ but no artefacts.tsv; add them with add-artefact'
+    fi
 
     if [ -n "$(find "$staging" ! -type f ! -type d -print -quit)" ]; then
         die 'the staging directory holds links or special files; a bundle holds only files'
@@ -194,6 +302,7 @@ seal() {
 
 case "${1:-}" in
     export-image) shift; export_image "$@" ;;
+    add-artefact) shift; add_artefact "$@" ;;
     seal) shift; seal "$@" ;;
-    *) die 'usage: igni-bundle export-image ... | igni-bundle seal ... (see the header of this file)' ;;
+    *) die 'usage: igni-bundle export-image ... | igni-bundle add-artefact ... | igni-bundle seal ... (see the header of this file)' ;;
 esac

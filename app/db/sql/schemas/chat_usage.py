@@ -13,6 +13,8 @@ through.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -43,3 +45,16 @@ class UsageTotals(BaseModel):
     output_tokens: int = 0
     total_tokens: int = 0
     request_count: int = 0
+
+
+class PersonUsage(BaseModel):
+    """One person's use, as the team list shows it.
+
+    `requests` and `total_tokens` cover the window the list is about;
+    `last_active` is the newest request ever, so somebody quiet for a
+    month reads as "a month ago" rather than "never".
+    """
+
+    requests: int = 0
+    total_tokens: int = 0
+    last_active: datetime | None = None

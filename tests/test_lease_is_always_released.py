@@ -460,7 +460,10 @@ class TestTheResponsibilityStaysSplit:
             'happy path — the disconnect and upstream-error paths would leak again'
         )
 
-    @pytest.mark.parametrize('func', ['_stream_response', '_non_stream_response'])
+    # The stream's tail is `_finish_stream`, which `_stream_response`
+    # runs from its generator's `finally`, outside the cancellation of a
+    # client that left (B30).
+    @pytest.mark.parametrize('func', ['_finish_stream', '_non_stream_response'])
     def test_each_path_releases_in_a_finally(self, func):
         import inspect
 

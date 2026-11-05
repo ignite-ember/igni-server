@@ -361,10 +361,10 @@ dry-run by Ignite Ember (G7).
 B8. Disable the desktop client's update check, or point it at your own
 mirror. By default the desktop client checks
 `https://github.com/ignite-ember/igni/releases/latest/download/latest.json` on
-launch (`ember-code/clients/tauri/src-tauri/tauri.conf.json`).
+launch (`igni/clients/tauri/src-tauri/tauri.conf.json`).
 `update_check_ttl: 0` turns the check off, and `update_endpoint` points it
 at a mirror inside your network. Under `air_gapped: true` the app asks only
-that mirror, or nothing (`ember-code/docs/CONFIGURATION.md`, "Air-gapped
+that mirror, or nothing (`igni/docs/CONFIGURATION.md`, "Air-gapped
 mode"). Updates stay signed, so a mirror cannot substitute a build.
 
 **Expected result**

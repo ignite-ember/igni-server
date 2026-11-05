@@ -1,3 +1,45 @@
+{{/*
+The backup CronJob's Postgres image.
+
+From the same registry and path as the API's image unless you name one:
+`registry.example.internal/igni/igni-api` gives
+`registry.example.internal/igni/postgres:<backup.image.tag>`. That is
+where `igni-import` puts the Postgres image every offline bundle carries,
+so an air-gapped install that turns backups on pulls from its own
+registry. It used to default to `postgres:17.6-alpine`, an unqualified
+name and therefore Docker Hub: in a gap, a pull that fails; elsewhere, a
+pull from the internet nobody chose.
+
+A string is still accepted, as a full reference, for values files written
+before `backup.image` was a map.
+
+Defined here rather than in _helpers.tpl because only this template uses
+it, and its refusals apply only when backups are on.
+*/}}
+{{- define "igni.backupImage" -}}
+{{- $image := .Values.backup.image -}}
+{{- if kindIs "string" $image -}}
+{{- if not $image -}}
+{{- fail "backup.image is empty. Leave it out to take Postgres from the registry of image.repository, or set backup.image.repository and backup.image.tag." -}}
+{{- end -}}
+{{- $image -}}
+{{- else -}}
+{{- $repo := $image.repository | default "" -}}
+{{- if not $repo -}}
+{{- $api := .Values.image.repository | default "" -}}
+{{- if not (contains "/" $api) -}}
+{{- fail "backup.image.repository is required when image.repository has no registry path to take it from: name the Postgres image your cluster pulls, e.g. registry.example.com/igni/postgres. An unqualified name resolves to Docker Hub." -}}
+{{- end -}}
+{{- $repo = printf "%s/postgres" (regexReplaceAll "/[^/]+$" $api "") -}}
+{{- end -}}
+{{- $tag := $image.tag | default "" | toString -}}
+{{- if or (not $tag) (eq $tag "latest") -}}
+{{- fail "backup.image.tag must name a Postgres version, not be empty or `latest`: pg_dump has to be at least your server's version. The offline bundle carries 17.6-alpine." -}}
+{{- end -}}
+{{- printf "%s:%s" $repo $tag -}}
+{{- end -}}
+{{- end -}}
+
 {{- if .Values.backup.enabled }}
 {{- include "igni.validate" . -}}
 {{/*
@@ -73,7 +115,7 @@ spec:
             fsGroup: 70
           containers:
             - name: backup
-              image: {{ .Values.backup.image | quote }}
+              image: {{ include "igni.backupImage" . | quote }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               securityContext:
                 {{- toYaml .Values.securityContext | nindent 16 }}

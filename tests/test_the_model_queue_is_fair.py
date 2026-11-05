@@ -68,7 +68,6 @@ def _ask(queue: FairQueue, pool: OneSlot, grants: list, org: str, producer: str,
             acquire=pool.acquire,
             release=pool.release,
             max_wait=extra.get('max_wait', 60),
-            gone=extra.get('gone'),
         )
         grants.append((org, producer))
 
@@ -119,17 +118,13 @@ async def test_with_room_and_nobody_waiting_it_is_at_once():
     assert queue.waiting == 0
 
 
-async def test_a_client_that_goes_away_leaves_the_queue():
+async def test_a_cancelled_take_leaves_the_queue():
     queue = FairQueue(max_length=100)
     pool = OneSlot(queue)
-    left = asyncio.Event()
 
-    async def gone() -> bool:
-        return left.is_set()
-
-    task = _ask(queue, pool, [], 'acme', 'ada', gone=gone)
+    task = _ask(queue, pool, [], 'acme', 'ada')
     await _waiting(queue, 1)
-    left.set()
+    task.cancel()
 
     with pytest.raises(asyncio.CancelledError):
         await task

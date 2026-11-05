@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, computed_field, ConfigDict, Field
 
 
 class TeamMemberResponse(BaseModel):
@@ -16,11 +16,22 @@ class TeamMemberResponse(BaseModel):
     full_name: str | None = None
     role: str
     status: str = 'active'
-    total_sessions: int = 0
+    #: Chat requests over the last 30 days. Each one is a row in chat
+    #: usage; nothing records a session.
+    total_requests: int = 0
     total_tokens: int = 0
     last_active: datetime | None = None
     joined_at: datetime
     assigned_by: str | None = None
+
+    # Marked deprecated in the schema only: pydantic's `deprecated=` warns
+    # on every serialisation, once per member per Team page load.
+    # mypy cannot type a decorator over a property; the ignore is the one pydantic documents.
+    @computed_field(json_schema_extra={'deprecated': True})  # type: ignore[prop-decorator]
+    @property
+    def total_sessions(self) -> int:
+        """The old name of `total_requests`, still sent for clients that read it."""
+        return self.total_requests
 
 
 class TeamMemberList(BaseModel):

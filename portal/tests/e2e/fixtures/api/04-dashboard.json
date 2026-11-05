@@ -1,7 +1,7 @@
 {
   "GET /v1/portal/team": {
     "status": 200,
-    "body": "{\n \"members\": [\n  {\n   \"id\": \"demo-user-001\",\n   \"user_id\": \"demo-user-001\",\n   \"email\": \"alex.chen@example.invalid\",\n   \"full_name\": \"Alex Chen\",\n   \"role\": \"admin\",\n   \"status\": \"active\",\n   \"total_sessions\": 0,\n   \"total_tokens\": 0,\n   \"last_active\": null,\n   \"joined_at\": \"2026-07-27T13:19:13.302857Z\",\n   \"assigned_by\": null\n  }\n ],\n \"total\": 1\n}"
+    "body": "{\n \"members\": [\n  {\n   \"id\": \"demo-user-001\",\n   \"user_id\": \"demo-user-001\",\n   \"email\": \"alex.chen@example.invalid\",\n   \"full_name\": \"Alex Chen\",\n   \"role\": \"admin\",\n   \"status\": \"active\",\n   \"total_requests\": 0,\n   \"total_tokens\": 0,\n   \"last_active\": null,\n   \"joined_at\": \"2026-07-27T13:19:13.302857Z\",\n   \"assigned_by\": null\n  }\n ],\n \"total\": 1\n}"
   },
   "GET /v1/portal/usage?days=30&scope=personal": {
     "status": 200,

@@ -2,9 +2,12 @@
 FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm ci
 COPY . .
-RUN npm run build
+# The check reads what was just built: no CDN host anywhere in dist/. An
+# air-gapped deployment cannot reach one, and the URL that broke the
+# content editor (B34) lived in a dependency, where no source scan sees it.
+RUN npm run build && node scripts/check-no-cdn.mjs
 
 # Stage 2: Serve with nginx
 #
@@ -22,6 +25,14 @@ RUN npm run build
 # 3000 is above 1024 so an unprivileged process can bind it. The stock
 # image's default of 80 could not have been.
 FROM nginxinc/nginx-unprivileged:alpine
+# The base image is rebuilt on nginx's schedule, not Alpine's, so its
+# packages trail Alpine's security fixes: the scheduled scan found
+# brotli, curl and expat each a patch release behind a fixed one. One
+# `apk upgrade` as root brings them level, and the user goes straight
+# back to the base image's own 101.
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 # Runs before nginx starts and writes the DNS resolver the /v1 proxy

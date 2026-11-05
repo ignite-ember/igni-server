@@ -620,6 +620,102 @@ class TestSealRefuses:
         assert 'holds links or special files' in result.stderr
 
 
+# A registry for `export-image`: `inspect --raw` answers a multi-platform
+# image index byte for byte, `inspect --format {{.Digest}}` answers what
+# real skopeo does on a host whose platform the index lists (that entry's
+# digest, not the index's), and on a Mac, where it lists none, fails.
+# `copy` writes the `dir:` layout. No signatures (.sig, .att) exist.
+_EXPORT_INDEX = (
+    '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":['
+    '{"mediaType":"application/vnd.oci.image.manifest.v1+json","size":1,'
+    '"digest":"sha256:' + '1' * 64 + '","platform":{"architecture":"amd64","os":"linux"}}]}'
+)
+_EXPORT_SKOPEO_STUB = r"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$IGNI_TEST_SKOPEO_LOG"
+case "$1 $2" in
+    'inspect --raw')
+        case "$3" in *.sig | *.att) exit 1 ;; esac
+        printf '%s' "$IGNI_TEST_INDEX"
+        ;;
+    'inspect --format')
+        [ "${IGNI_TEST_HOST_OS:-linux}" = linux ] || { echo 'no image found in image index for darwin' >&2; exit 1; }
+        printf 'sha256:%s\n' "$(printf '1%.0s' $(seq 64))"
+        ;;
+    copy*)
+        dest="${*: -1}"
+        mkdir -p "${dest#dir:}"
+        printf '%s' "$IGNI_TEST_INDEX" > "${dest#dir:}/manifest.json"
+        ;;
+esac
+"""
+
+
+class TestExportImageNamesTheDigestTheTagNames:
+    """S41, ported from the air-gap rehearsal's fix (27c2026e on
+    feat/organisations-are-created-not-given). `export-image` took the
+    digest from `skopeo inspect --format {{.Digest}}`, which resolves an
+    image index to the entry for the host's own platform: on Linux, a
+    digest that is not the tag's, and on a Mac, which no index lists, a
+    failure. It hashes the raw manifest now."""
+
+    def _export(self, tmp_path: pathlib.Path, *, host_os: str) -> subprocess.CompletedProcess[str]:
+        stub_bin = tmp_path / 'bin'
+        stub_bin.mkdir()
+        (stub_bin / 'skopeo').write_text(_EXPORT_SKOPEO_STUB)
+        (stub_bin / 'skopeo').chmod(0o755)
+        env = {
+            **os.environ,
+            'PATH': f'{stub_bin}{os.pathsep}{os.environ["PATH"]}',
+            'IGNI_TEST_SKOPEO_LOG': str(tmp_path / 'skopeo.log'),
+            'IGNI_TEST_INDEX': _EXPORT_INDEX,
+            'IGNI_TEST_HOST_OS': host_os,
+            'TMPDIR': str(tmp_path),
+        }
+        return _run(
+            [
+                str(_BUNDLE),
+                'export-image',
+                '--staging',
+                str(tmp_path / 'staging'),
+                '--name',
+                'igni-api',
+                '--repository',
+                'ghcr.io/ignite-ember/igni-api',
+                '--source-tag',
+                _VERSION,
+                '--tag',
+                _VERSION,
+            ],
+            env=env,
+        )
+
+    @pytest.mark.parametrize('host_os', ['linux', 'darwin'])
+    def test_it_records_the_index_digest_on_any_host(self, tmp_path: pathlib.Path, host_os: str):
+        result = self._export(tmp_path, host_os=host_os)
+
+        assert result.returncode == 0, result.stderr
+        index_digest = 'sha256:' + hashlib.sha256(_EXPORT_INDEX.encode()).hexdigest()
+        assert (tmp_path / 'staging/images.tsv').read_text() == f'igni-api\t{_VERSION}\t{index_digest}\n'
+        copies = [line for line in (tmp_path / 'skopeo.log').read_text().splitlines() if line.startswith('copy')]
+        assert copies and f'docker://ghcr.io/ignite-ember/igni-api@{index_digest}' in copies[0], copies
+
+    def test_it_never_asks_for_the_host_platforms_entry(self, tmp_path: pathlib.Path):
+        self._export(tmp_path, host_os='linux')
+
+        assert '--format' not in (tmp_path / 'skopeo.log').read_text()
+
+
+def containers_release_names() -> list[str]:
+    """The names pinned in containers/release/{modules,artefacts}.tsv."""
+    names = []
+    for listing in ('modules.tsv', 'artefacts.tsv'):
+        for line in (_ROOT / 'containers/release' / listing).read_text().splitlines():
+            if line.strip() and not line.startswith('#'):
+                names.append(line.split()[0])
+    return names
+
+
 class TestCdSignsWhatItShips:
     """The workflow half. Air-gapped customers verify with a public key and
     no network, so signing must be key-based and must not depend on a
@@ -635,7 +731,17 @@ class TestCdSignsWhatItShips:
         cd = self._cd()
         pushing = {name: job for name, job in cd['jobs'].items() if 'docker push' in self._runs(job)}
 
+        # A `skopeo copy` into GHCR is a push too: the third-party mirror.
+        pushing.update(
+            {
+                name: job
+                for name, job in cd['jobs'].items()
+                if re.search(r'skopeo copy [^\n]*"docker://\$\{REGISTRY\}/', self._runs(job))
+            }
+        )
+
         assert pushing, 'no job in cd.yml pushes an image; this test is stale'
+        assert 'offline-bundle' in pushing, 'the third-party mirror is no longer seen as a push'
         for name, job in pushing.items():
             script = self._runs(job)
             assert re.search(r'cosign sign .*--key env://COSIGN_PRIVATE_KEY', script), f'{name} does not sign'
@@ -660,6 +766,52 @@ class TestCdSignsWhatItShips:
         uploads = [s for s in job['steps'] if str(s.get('uses', '')).startswith('actions/upload-artifact')]
         assert uploads and 'igni-bundle-' in str(uploads[0]['with']['path'])
 
+    #: The private development repository; the only one that releases (S27).
+    _PRIVATE = "github.repository == 'ignite-ember/igni__server'"
+
+    def test_bundles_and_images_are_made_in_the_private_repository_only(self):
+        """The bundle carries the paid module images, and a public
+        repository's CI artefacts are downloadable by any signed-in GitHub
+        user. The public mirror carries this same cd.yml, so every job that
+        pulls, builds, pushes or uploads an image or a bundle must name the
+        private repository in its own condition (S27)."""
+        cd = self._cd()
+        jobs = cd['jobs']
+        releasing = {
+            name: job
+            for name, job in jobs.items()
+            if any(
+                marker in self._runs(job) or marker in str(job.get('steps'))
+                for marker in (
+                    'docker push',
+                    'modules.tsv',
+                    'artefacts.tsv',
+                    'igni-bundle',
+                    'oras ',
+                    'upload-artifact',
+                )
+            )
+        }
+        assert {'build-backend', 'build-portal', 'offline-bundle'} <= set(releasing)
+        for name, job in releasing.items():
+            assert self._PRIVATE in str(job.get('if')), f'{name} could run in the public mirror'
+        assert "github.repository == 'ignite-ember/igni-server'" not in str(jobs['offline-bundle'].get('if'))
+        # resolve-env lets both of igni's repositories run the tests, and
+        # no fork: a fork has no keys, and every job needs resolve-env.
+        guard = str(jobs['resolve-env'].get('if'))
+        assert self._PRIVATE in guard
+        assert 'github.repository ==' in guard and '!=' not in guard
+
+    def test_no_other_workflow_touches_the_paid_images(self):
+        for workflow in sorted((_ROOT / '.github/workflows').glob('*.yml')):
+            if workflow.name == 'cd.yml':
+                continue
+            text = workflow.read_text()
+            for marker in ('modules.tsv', 'artefacts.tsv', 'igni-bundle', 'export-image'):
+                assert marker not in text, f'{workflow.name} mentions {marker}'
+            for line in containers_release_names():
+                assert f'ghcr.io/ignite-ember/{line}' not in text, f'{workflow.name} names {line}'
+
     def test_the_documented_secret_names_are_the_ones_used(self):
         text = _CD.read_text()
         doc = (_ROOT / 'docs/OFFLINE_UPDATES.md').read_text()
@@ -670,3 +822,426 @@ class TestCdSignsWhatItShips:
         for name in ('COSIGN_PUBLIC_KEY', 'MINISIGN_PUBLIC_KEY'):
             assert f'vars.{name}' in text, name
             assert name in doc, f'{name} is used by cd.yml but not documented'
+
+
+# ── Signed releases that are not images ───────────────────────────────────
+#
+# Fleet ships binaries, not images: a release directory with SHA256SUMS
+# over the files and their SBOMs, and a cosign signature over SHA256SUMS
+# (scripts/release/{build,sign}.sh in Fleet's repository). `igni-bundle
+# add-artefact` carries one into the bundle only if it is signed with the
+# release key; `igni-import` holds it to its SHA256SUMS and, with
+# --cosign-key, to that signature. cosign is the real one, with keys made
+# here; it signs offline, as CD does.
+
+if shutil.which('cosign') is None and os.environ.get('CI'):
+    raise RuntimeError('cosign is not installed; the signed-artefact tests cannot run')
+
+_needs_cosign = pytest.mark.skipif(shutil.which('cosign') is None, reason='cosign is not installed')
+
+
+class CosignKeys(BaseModel):
+    public: pathlib.Path
+    secret: pathlib.Path
+    other_public: pathlib.Path
+    other_secret: pathlib.Path
+
+
+def _cosign_pair(directory: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    directory.mkdir()
+    subprocess.run(
+        ['cosign', 'generate-key-pair'],
+        cwd=directory,
+        env={**os.environ, 'COSIGN_PASSWORD': _PASSWORD},
+        check=True,
+        capture_output=True,
+    )
+    return directory / 'cosign.pub', directory / 'cosign.key'
+
+
+@pytest.fixture(scope='module')
+def cosign_keys(tmp_path_factory: pytest.TempPathFactory) -> CosignKeys:
+    if shutil.which('cosign') is None:
+        pytest.skip('cosign is not installed')
+    base = tmp_path_factory.mktemp('cosign')
+    public, secret = _cosign_pair(base / 'release')
+    other_public, other_secret = _cosign_pair(base / 'impostor')
+    return CosignKeys(public=public, secret=secret, other_public=other_public, other_secret=other_secret)
+
+
+def _cosign_v3() -> bool:
+    """cosign 3 writes a bundle unless told not to, and refuses
+    `--output-signature` without these flags. CD pins v2.4.1, which has
+    neither; a developer's Homebrew cosign is 3."""
+    version = subprocess.run(['cosign', 'version'], capture_output=True, text=True, check=False).stdout
+    major = re.search(r'GitVersion:\s+v(\d+)', version)
+    return major is not None and int(major.group(1)) >= 3
+
+
+def _sign_blob(secret: pathlib.Path, blob: pathlib.Path) -> None:
+    """As Fleet's sign.sh: key-based, nothing uploaded to a log."""
+    legacy = ['--new-bundle-format=false', '--use-signing-config=false'] if _cosign_v3() else []
+    subprocess.run(
+        [
+            'cosign',
+            'sign-blob',
+            '--yes',
+            '--key',
+            str(secret),
+            '--tlog-upload=false',
+            *legacy,
+            '--output-signature',
+            str(blob.parent / 'SHA256SUMS.sig'),
+            str(blob),
+        ],
+        env={**os.environ, 'COSIGN_PASSWORD': _PASSWORD},
+        check=True,
+        capture_output=True,
+    )
+
+
+def _write_sums(release: pathlib.Path) -> None:
+    files = sorted(p.name for p in release.iterdir() if p.name not in ('SHA256SUMS', 'SHA256SUMS.sig', 'UNSIGNED'))
+    (release / 'SHA256SUMS').write_text(
+        ''.join(f'{hashlib.sha256((release / f).read_bytes()).hexdigest()}  {f}\n' for f in files)
+    )
+
+
+def _fleet_release(directory: pathlib.Path, *, sign_with: pathlib.Path | None) -> pathlib.Path:
+    """A release directory shaped like Fleet's build.sh output."""
+    release = directory / 'fleet-release'
+    release.mkdir()
+    for binary in ('igni-gateway', 'igni-node-agent', 'cvm', 'igni-guest-agent'):
+        (release / binary).write_bytes(os.urandom(2048))
+        (release / f'{binary}.cdx.json').write_text(f'{{"bomFormat":"CycloneDX","metadata":"{binary}"}}')
+    (release / 'VERSION').write_text('0.1.0\n')
+    _write_sums(release)
+    if sign_with is not None:
+        _sign_blob(sign_with, release / 'SHA256SUMS')
+    return release
+
+
+def _add_artefact(
+    staging: pathlib.Path, release: pathlib.Path, public: pathlib.Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return _run(
+        [
+            str(_BUNDLE),
+            'add-artefact',
+            '--staging',
+            str(staging),
+            '--name',
+            'igni-fleet',
+            '--version',
+            '0.1.0',
+            '--from',
+            str(release),
+            '--cosign-key',
+            str(public),
+        ],
+        env=env,
+    )
+
+
+def _seal(
+    staging: pathlib.Path, key: KeyPair, out: pathlib.Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return _run(
+        [
+            str(_BUNDLE),
+            'seal',
+            '--staging',
+            str(staging),
+            '--version',
+            _VERSION,
+            '--commit',
+            'f043313',
+            '--key',
+            str(key.secret),
+            '--public-key',
+            str(key.public),
+            '--out',
+            str(out),
+        ],
+        env=env,
+    )
+
+
+@pytest.fixture
+def with_fleet(sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path) -> Sealed:
+    """The `sealed` bundle again, with Fleet's signed release added."""
+    release = _fleet_release(tmp_path, sign_with=cosign_keys.secret)
+    added = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+    assert added.returncode == 0, added.stderr
+
+    result = _seal(sealed.staging, sealed.key, tmp_path / 'with-fleet', sealed.env)
+    assert result.returncode == 0, result.stderr
+    return sealed.model_copy(update={'tarball': pathlib.Path(result.stdout.strip())})
+
+
+@_needs_cosign
+class TestASignedArtefactIsCarried:
+    def test_it_is_in_the_bundle_under_the_manifest(self, with_fleet: Sealed):
+        staging = with_fleet.staging
+        manifest = (staging / 'MANIFEST').read_text()
+        index = (staging / 'artefacts.tsv').read_text().splitlines()
+
+        sums = staging / 'artefacts' / 'igni-fleet' / 'SHA256SUMS'
+        assert index == [f'igni-fleet\t0.1.0\tsha256:{hashlib.sha256(sums.read_bytes()).hexdigest()}']
+        for name in ('igni-gateway', 'SHA256SUMS', 'SHA256SUMS.sig', 'igni-gateway.cdx.json'):
+            assert f'  artefacts/igni-fleet/{name}\n' in manifest, name
+        assert '  artefacts.tsv\n' in manifest
+        # Beside every other SBOM, where a customer looks for them.
+        assert (staging / 'sboms' / 'igni-fleet-igni-gateway.cdx.json').is_file()
+
+    def test_import_verifies_its_signature_and_keeps_it(
+        self, with_fleet: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path
+    ):
+        kept = tmp_path / 'kept'
+        result = _import(with_fleet, '--verify-only', '--cosign-key', str(cosign_keys.public), '--keep', str(kept))
+
+        assert result.returncode == 0, result.stderr
+        assert 'igni-fleet 0.1.0 (9 files, SHA256SUMS matches, cosign-verified)' in result.stdout
+        assert (kept / f'igni-bundle-{_VERSION}' / 'artefacts' / 'igni-fleet' / 'igni-node-agent').is_file()
+
+    def test_an_import_pushes_only_the_images(self, with_fleet: Sealed):
+        result = _import(with_fleet, '--registry', _REGISTRY)
+
+        assert result.returncode == 0, result.stderr
+        assert 'Artefact:   artefacts/igni-fleet/ 0.1.0 (9 files, SHA256SUMS matches)' in result.stdout
+        assert not [line for line in _pushes(with_fleet) if 'fleet' in line]
+
+    def test_a_tampered_artefact_is_refused(self, with_fleet: Sealed, tmp_path: pathlib.Path):
+        def edit(top: pathlib.Path) -> None:
+            binary = top / 'artefacts' / 'igni-fleet' / 'igni-node-agent'
+            binary.write_bytes(b'\x00' + binary.read_bytes()[1:])
+
+        result = _import(with_fleet, '--registry', _REGISTRY, tarball=_rewrite(with_fleet.tarball, tmp_path, edit=edit))
+
+        assert result.returncode == 1
+        assert result.stderr.strip() == 'igni-import: REFUSED: hash mismatch: artefacts/igni-fleet/igni-node-agent'
+        assert _pushes(with_fleet) == []
+
+    def test_a_tampered_artefact_with_its_sums_rewritten_is_refused(self, with_fleet: Sealed, tmp_path: pathlib.Path):
+        """SHA256SUMS and the MANIFEST both made to agree: the minisign
+        signature is what is left to catch it."""
+
+        def edit(top: pathlib.Path) -> None:
+            release = top / 'artefacts' / 'igni-fleet'
+            (release / 'cvm').write_bytes(b'replaced')
+            _write_sums(release)
+
+        result = _import(with_fleet, '--verify-only', tarball=_rewrite(with_fleet.tarball, tmp_path, edit=edit))
+
+        assert result.returncode == 1
+        assert 'hash mismatch: artefacts/igni-fleet/' in result.stderr
+
+
+@_needs_cosign
+class TestOnlyASignedArtefactIsCarried:
+    def test_unsigned(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
+        """sign.sh leaves UNSIGNED beside a release it could not sign."""
+        release = _fleet_release(tmp_path, sign_with=None)
+        (release / 'UNSIGNED').write_text('COSIGN_PRIVATE_KEY is not set')
+
+        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+
+        assert result.returncode == 1
+        assert 'has no SHA256SUMS.sig: it is not signed' in result.stderr
+        assert not (sealed.staging / 'artefacts').exists()
+
+    def test_signed_with_another_key(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
+        release = _fleet_release(tmp_path, sign_with=cosign_keys.other_secret)
+
+        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+
+        assert result.returncode == 1
+        assert 'does not verify with the release key' in result.stderr
+        assert not (sealed.staging / 'artefacts.tsv').exists()
+
+    def test_a_file_changed_after_signing(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
+        release = _fleet_release(tmp_path, sign_with=cosign_keys.secret)
+        (release / 'igni-gateway').write_bytes(b'changed')
+
+        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+
+        assert result.returncode == 1
+        assert 'igni-fleet: hash mismatch: igni-gateway' in result.stderr
+
+    def test_a_file_not_in_its_sums(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
+        release = _fleet_release(tmp_path, sign_with=cosign_keys.secret)
+        (release / 'extra').write_text('unsigned')
+
+        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+
+        assert result.returncode == 1
+        assert 'extra is not listed in SHA256SUMS' in result.stderr
+
+    def test_no_sbom(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
+        release = _fleet_release(tmp_path, sign_with=None)
+        for sbom in release.glob('*.cdx.json'):
+            sbom.unlink()
+        _write_sums(release)
+        _sign_blob(cosign_keys.secret, release / 'SHA256SUMS')
+
+        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+
+        assert result.returncode == 1
+        assert 'has no CycloneDX SBOM' in result.stderr
+
+    def test_a_bad_signature_that_reached_a_bundle_is_refused_on_import(
+        self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path
+    ):
+        """Staged by hand, around add-artefact, and sealed with the real
+        minisign key: the MANIFEST is good, so --cosign-key is the check
+        that catches it."""
+        release = _fleet_release(tmp_path, sign_with=cosign_keys.other_secret)
+        target = sealed.staging / 'artefacts' / 'igni-fleet'
+        shutil.copytree(release, target)
+        digest = hashlib.sha256((target / 'SHA256SUMS').read_bytes()).hexdigest()
+        (sealed.staging / 'artefacts.tsv').write_text(f'igni-fleet\t0.1.0\tsha256:{digest}\n')
+        sealed_again = _seal(sealed.staging, sealed.key, tmp_path / 'resealed', sealed.env)
+        assert sealed_again.returncode == 0, sealed_again.stderr
+        tarball = pathlib.Path(sealed_again.stdout.strip())
+
+        without_key = _import(sealed, '--verify-only', tarball=tarball)
+        with_key = _import(sealed, '--verify-only', '--cosign-key', str(cosign_keys.public), tarball=tarball)
+
+        assert without_key.returncode == 0, without_key.stderr
+        assert with_key.returncode == 1
+        assert with_key.stderr.strip() == (
+            'igni-import: REFUSED: igni-fleet: its cosign signature over SHA256SUMS does not verify'
+        )
+
+    def test_seal_refuses_artefacts_with_no_index(self, sealed: Sealed, tmp_path: pathlib.Path):
+        (sealed.staging / 'artefacts' / 'igni-fleet').mkdir(parents=True)
+        (sealed.staging / 'artefacts' / 'igni-fleet' / 'cvm').write_bytes(b'x')
+
+        result = _seal(sealed.staging, sealed.key, tmp_path / 'again', sealed.env)
+
+        assert result.returncode == 1
+        assert 'artefacts/ but no artefacts.tsv' in result.stderr
+
+
+class TestCdCarriesSignedArtefacts:
+    def test_the_bundle_job_adds_each_pinned_artefact_with_the_release_key(self):
+        job = yaml.safe_load(_CD.read_text())['jobs']['offline-bundle']
+        script = '\n'.join(str(step.get('run') or '') for step in job['steps'])
+
+        assert 'containers/release/artefacts.tsv' in script
+        assert re.search(r'igni-bundle add-artefact .*--cosign-key', script.replace('\\\n', ' ')), script
+        add = script.index('add-artefact')
+        assert add < script.index('igni-bundle seal'), 'artefacts must be staged before the MANIFEST is signed'
+
+    def test_the_manifest_of_artefacts_parses(self):
+        lines = [
+            line.split()
+            for line in (_ROOT / 'containers/release/artefacts.tsv').read_text().splitlines()
+            if line.strip() and not line.startswith('#')
+        ]
+        for fields in lines:
+            assert len(fields) == 2, fields
+            assert re.fullmatch(r'[a-z0-9][a-z0-9._-]*', fields[0]), fields
+
+
+# ── Third-party images ────────────────────────────────────────────────────
+#
+# B38. The chart's backup CronJob runs Postgres from beside
+# image.repository, so the bundle has to carry it, or an air-gapped install
+# that turns backups on pulls from Docker Hub or fails.
+
+_THIRD_PARTY = _ROOT / 'containers/release/third-party.tsv'
+
+
+def _third_party() -> list[list[str]]:
+    return [line.split() for line in _THIRD_PARTY.read_text().splitlines() if line.strip() and not line.startswith('#')]
+
+
+class TestTheThirdPartyImagesAreCarried:
+    def test_the_list_parses_and_pins_by_digest(self):
+        rows = _third_party()
+
+        assert rows, 'third-party.tsv lists nothing'
+        for fields in rows:
+            assert len(fields) == 3, fields
+            name, upstream, tag = fields
+            assert re.fullmatch(r'[a-z0-9][a-z0-9._-]*', name), fields
+            # A tag can move; a digest is what was reviewed.
+            assert re.fullmatch(r'[a-z0-9.-]+(?::\d+)?/[a-z0-9._/-]+@sha256:[0-9a-f]{64}', upstream), fields
+            assert re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', tag), fields
+
+    def test_it_carries_the_postgres_the_backup_job_runs(self):
+        backup = yaml.safe_load((_ROOT / 'charts/igni/values.yaml').read_text())['backup']['image']
+        # A map (repository, tag), or the full reference it was before.
+        tag = str(backup['tag']) if isinstance(backup, dict) else backup.rsplit(':', 1)[1]
+
+        assert ['postgres', tag] in [
+            [name, row_tag] for name, _, row_tag in _third_party()
+        ], f'the chart runs postgres:{tag} for backups and the bundle does not carry it'
+
+    def _script(self) -> str:
+        job = yaml.safe_load(_CD.read_text())['jobs']['offline-bundle']
+        return '\n'.join(str(step.get('run') or '') for step in job['steps']).replace('\\\n', ' ')
+
+    def test_each_is_mirrored_by_digest_and_signed_with_the_release_key(self):
+        script = self._script()
+        mirror = script[script.index('containers/release/third-party.tsv') :]
+
+        assert 'skopeo copy --all --preserve-digests "docker://${upstream}"' in mirror
+        assert 'is not ${digest}' in mirror, 'a GHCR copy under another digest is not refused'
+        assert re.search(r'cosign sign --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "\$\{ref\}"', mirror)
+        assert re.search(r'cosign attest .*--tlog-upload=false --type cyclonedx', mirror)
+
+    def test_each_is_exported_with_the_release_key_before_the_seal(self):
+        script = self._script()
+        listed = [m.start() for m in re.finditer(r'containers/release/third-party\.tsv', script)]
+
+        assert len(listed) == 2, 'the bundle job should read third-party.tsv to mirror and to export'
+        export = script[listed[1] :]
+        assert re.search(r'export_image --name "\$\{name\}" --repository "\$\{REGISTRY\}/\$\{name\}"', export)
+        assert 'igni-bundle export-image --staging "${STAGING}" --cosign-key' in script
+        assert listed[0] < script.index('igni-bundle export-image') < listed[1] < script.index('igni-bundle seal')
+
+    def test_the_customer_documentation_names_them(self):
+        doc = (_ROOT / 'docs/OFFLINE_UPDATES.md').read_text()
+
+        for name, _, tag in _third_party():
+            assert f'{name}:{tag}' in doc, f'OFFLINE_UPDATES.md does not say the bundle carries {name}:{tag}'
+
+
+class TestAReleaseIsKept:
+    """CRA Art. 13(9): each security update available for ten years. A CI
+    artefact expires after 90 days; GHCR keeps what is pushed to it."""
+
+    def _steps(self) -> list[dict]:
+        return yaml.safe_load(_CD.read_text())['jobs']['offline-bundle']['steps']
+
+    def test_the_sealed_bundle_is_pushed_to_ghcr(self):
+        steps = self._steps()
+        names = [str(step.get('name') or '') for step in steps]
+        keep = steps[names.index('Keep the release bundle')]
+        script = str(keep['run'])
+
+        assert names.index('Seal and sign the bundle') < names.index('Keep the release bundle')
+        assert re.search(r'oras push "\$\{ref\}"', script), script
+        assert 'ref="${REGISTRY}/igni-bundle:${VERSION}"' in script
+        for pushed in ('igni-bundle-${VERSION}.tar:', 'igni-bundle-${VERSION}.tar.sha256:'):
+            assert pushed in script, pushed
+        assert 'org.opencontainers.image.revision=${GITHUB_SHA}' in script
+
+    def test_a_kept_release_is_never_overwritten(self):
+        """Without the check, every later build of the same version on
+        main would replace the release a tag and a customer point at."""
+        script = str(next(s for s in self._steps() if s.get('name') == 'Keep the release bundle')['run'])
+
+        fetch = script.index('oras manifest fetch "${ref}"')
+        assert fetch < script.index('oras push'), 'the existing tag must be checked before the push'
+        assert 'exit 0' in script[fetch : script.index('oras push')]
+
+    def test_the_retention_policy_is_written_down(self):
+        doc = ' '.join((_ROOT / 'docs/OFFLINE_UPDATES.md').read_text().split())
+
+        assert '## How long releases are kept' in (_ROOT / 'docs/OFFLINE_UPDATES.md').read_text()
+        assert 'ten years' in doc
+        assert 'nobody deletes a release tag or a release bundle' in doc
+        assert 'igni-bundle:<version>' in doc

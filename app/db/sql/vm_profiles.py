@@ -51,6 +51,7 @@ class VmProfilesDB(TenantData):
                     volume_gib=standard.volume_gib,
                     volume_max_gib=standard.volume_max_gib,
                     erase_after_idle_days=standard.erase_after_idle_days,
+                    internet=standard.internet,
                 )
                 .on_conflict_do_nothing()
             )

@@ -57,6 +57,21 @@ function loginReturningHere(): string {
   return here === '/' ? '/login' : `/login?returnTo=${encodeURIComponent(here)}`
 }
 
+/**
+ * Whether a request went out with the token stored now.
+ *
+ * A request sent with the old token can come back 401 after a new
+ * sign-in has stored a fresh one — the old session expired while the
+ * person was signing in again, or one tab signed in while another's
+ * request was in flight. That 401 is about the old token; clearing the
+ * stored one for it signed a person out moments after they signed in.
+ */
+function sentWithTheCurrentToken(config: { headers?: unknown } | undefined): boolean {
+  const headers = config?.headers as Record<string, unknown> | undefined
+  const sent = headers?.Authorization ?? headers?.authorization
+  return sent === `Bearer ${localStorage.getItem(TOKEN_KEY)}`
+}
+
 client.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -76,7 +91,7 @@ client.interceptors.response.use(
       // answers 200, so the 401 branch never ran here. F133, and the
       // same blind spot as F130 one layer down.
       const believedSignedIn = !!localStorage.getItem(TOKEN_KEY)
-      if (isSessionRoute(error.config?.url) && believedSignedIn) {
+      if (isSessionRoute(error.config?.url) && believedSignedIn && sentWithTheCurrentToken(error.config)) {
         localStorage.removeItem(TOKEN_KEY)
         // Skip the redirect if we're already on /login — otherwise the sign-in
         // form's own onError handler never gets to surface the error banner.

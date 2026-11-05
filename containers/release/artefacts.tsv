@@ -1,0 +1,33 @@
+# Signed releases that are not container images, carried in each offline
+# release bundle beside the images of modules.tsv. Read by the
+# `offline-bundle` job in .github/workflows/cd.yml.
+#
+# Each is a release directory: the files, a CycloneDX SBOM (*.cdx.json)
+# for them, SHA256SUMS over all of them, and SHA256SUMS.sig, a cosign
+# signature over SHA256SUMS made with the release key — what Fleet's
+# scripts/release/build.sh and sign.sh write. It must already be on
+# ghcr.io/ignite-ember/<name> under that version tag as an OCI artefact,
+# the directory's files pushed with
+#
+#   oras push ghcr.io/ignite-ember/<name>:<version> *
+#
+# from inside the directory, by its own repository's CD. The bundle job
+# pulls it, and `igni-bundle add-artefact` refuses it unless the
+# signature verifies with the release key and every file matches
+# SHA256SUMS; an UNSIGNED marker is a refusal.
+#
+# A pin, not "latest", as in modules.tsv: bumping one is a line in a pull
+# request.
+#
+# Columns, separated by whitespace:
+#   name — on GHCR (ghcr.io/ignite-ember/<name>) and in the bundle
+#          (artefacts/<name>/)
+#   version tag
+#
+# igni-fleet: Fleet's CD (igni__cloudvm, .github/workflows/cd.yml) pushes
+# its signed release directory — binaries, Firecracker and jailer, guest
+# kernel and base, their SBOMs — on master, once per version, and never
+# pushes an UNSIGNED one. GITHUB_TOKEN here reads the package only while
+# it grants this repository read access (package settings, "Manage
+# Actions access").
+igni-fleet  0.1.0

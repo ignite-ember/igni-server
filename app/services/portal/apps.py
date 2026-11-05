@@ -33,6 +33,7 @@ from app.db.sql.service_extensions import ServiceExtensionDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.db.sql.vm_credentials import VmCredentialsDB
+from app.db.sql.vm_profile_requests import VmProfileRequestsDB
 from app.db.sql.vm_profiles import VmProfilesDB
 from app.services.cloud.erasures import Erasures
 from app.services.cloud.producer_feed import ProducerFeed
@@ -197,6 +198,7 @@ class OrgApps:
         await self.client(org_id, app_id)
         await VmCredentials().revoke_app(org_id, app_id)
         await Spaces().forget_app(org_id, app_id)
+        await VmProfileRequestsDB().remove(org_id, APP, app_id)
         await self._apps.remove(org_id, app_id)
         await self._clients.remove(app_id)
 

@@ -53,8 +53,8 @@ shipped something malicious, because a list of names is not an assessment.
 | `nginxinc/nginx-unprivileged:alpine` | Runtime image for the portal | `portal/Dockerfile` |
 | `nginx:1.27-alpine` | The local edge for igni's own host in the compose stack | `containers/docker-compose.local.yml` |
 | `gcr.io/cloud-marketplace-tools/k8s/deployer_helm:0.13` | Google Cloud Marketplace deployer | `marketplace/Dockerfile` |
-| `postgres:17.6-alpine` | The database, in the shipped compose stack and the backup job | `containers/docker-compose.prod.yml`, `charts/igni/values.yaml`, `tools/kind/datastores.yaml` |
-| `redis:7.4-alpine` | Concurrency leases and one-time sign-in codes in the shipped compose stack | `containers/docker-compose.prod.yml`, `tools/kind/datastores.yaml` |
+| `postgres:17.6-alpine` | The database, in the shipped compose stack and the backup job | `containers/docker-compose.prod.yml`, `containers/docker-compose.local.yml`, `tools/kind/datastores.yaml` |
+| `redis:7.4-alpine` | Concurrency leases and one-time sign-in codes in the shipped compose stack | `containers/docker-compose.prod.yml`, `containers/docker-compose.local.yml`, `tools/kind/datastores.yaml` |
 | `PyPI` | Every Python dependency | a registry, not an image |
 | `npm` | Every portal dependency | a registry, not an image |
 | `GitHub Actions` | Builds and publishes the artefacts | a registry, not an image |
@@ -195,7 +195,7 @@ its own — an email provider, a cloud account, whatever it runs its business on
 and none of them touches a customer's deployment. They belong in the
 organisation's own vendor register, which is `OR-4` and stays `Process`.
 
-**Speak for the sibling repositories.** `ember-code`, `igni__code-index`,
+**Speak for the sibling repositories.** `igni`, `igni__code-index`,
 `igni__artifacts` and `igni__cloudvm` ship their own artefacts with their own base
 images; the SBOMs of the CodeIndex and Artifacts images list theirs. Porting this
 register is a smaller job than describing them from here would be.

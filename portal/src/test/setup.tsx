@@ -105,8 +105,12 @@ afterAll(() => server.close())
  * put content in. Both entry pages use it now, so the stand-in lives
  * here rather than in each suite. It keeps the value/onChange contract
  * — everything a test needs — and nothing else.
+ *
+ * The portal's own wrapper is mocked rather than `@monaco-editor/react`:
+ * the wrapper imports the bundled Monaco (`lib/monaco.ts`), which needs a
+ * browser with layout. `lib/__tests__/monaco.test.ts` covers that module.
  */
-vi.mock('@monaco-editor/react', () => ({
+vi.mock('../components/MonacoEditor', () => ({
   default: ({
     value,
     onChange,

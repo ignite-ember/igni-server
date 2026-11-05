@@ -280,6 +280,13 @@ def test_every_setting_in_a_table_is_real(doc):
         'MINISIGN_SECRET_KEY',
         'MINISIGN_PASSWORD',
         'MINISIGN_PUBLIC_KEY',
+        # tools/airgap-rehearsal.sh's own knobs, tabulated in
+        # AIR_GAP_REHEARSAL.md for whoever runs the rehearsal.
+        'IGNI_AIRGAP_NAME',
+        'IGNI_AIRGAP_SKIP_BUILD',
+        'IGNI_AIRGAP_SUBNET',
+        'IGNI_AIRGAP_WORK',
+        'IGNI_CLI',
     }
     unknown = sorted(q for q in quoted - known - external if not q.startswith('F'))
 

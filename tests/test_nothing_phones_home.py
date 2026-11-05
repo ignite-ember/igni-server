@@ -372,3 +372,78 @@ class TestThePortalHasNoAnalyticsTag:
             f'an analytics tag in the portal: {found}. A self-hosted portal would report '
             "its users' activity off the customer's network on every page load"
         )
+
+
+class TestThePortalBundleNamesNoCdn:
+    """The portal fetches nothing from a CDN, which is the same claim from
+    the browser's side.
+
+    B34: the content editor used `@monaco-editor/react`, whose loader
+    injects a <script> for cdn.jsdelivr.net unless it is handed a Monaco
+    instance. On an air-gapped install the editor never appeared. Nothing
+    above could see it — the URL was in a dependency, not in `src/` — so
+    the authoritative check reads the build: `portal/scripts/check-no-cdn.mjs`
+    scans `dist/`, and the portal image runs it after `npm run build`, so
+    an image that names a CDN does not build. These tests hold that wiring
+    in place, and repeat the scan here whenever a build is lying around.
+    """
+
+    _PORTAL = _ROOT / 'portal'
+    _CHECK = _PORTAL / 'scripts/check-no-cdn.mjs'
+
+    def _cdn_hosts(self) -> list[str]:
+        """The hosts the build check refuses, read from the check itself so
+        there is one list."""
+        source = self._CHECK.read_text()
+        block = re.search(r'export const CDN_HOSTS = \[(.*?)\]', source, re.S)
+        assert block, 'CDN_HOSTS is no longer where this test reads it'
+        hosts = re.findall(r"'([^']+)'", block.group(1))
+        assert 'cdn.jsdelivr.net' in hosts and 'unpkg.com' in hosts, hosts
+        return hosts
+
+    def test_the_portal_image_runs_the_check_on_its_build(self):
+        dockerfile = (self._PORTAL / 'Dockerfile').read_text()
+
+        assert re.search(r'npm run build && node scripts/check-no-cdn\.mjs', dockerfile), (
+            'portal/Dockerfile no longer runs scripts/check-no-cdn.mjs after the build, '
+            'so a CDN URL arriving in a dependency would ship unseen'
+        )
+
+    def test_the_editor_hands_the_loader_the_bundled_monaco(self):
+        setup = (self._PORTAL / 'src/lib/monaco.ts').read_text()
+        wrapper = (self._PORTAL / 'src/components/MonacoEditor.tsx').read_text()
+
+        assert 'loader.config({ monaco })' in setup
+        assert re.search(r"^import \* as monaco from 'monaco-editor/", setup, re.M)
+        assert "import '../lib/monaco'" in wrapper
+
+    def test_the_portal_source_names_no_cdn(self):
+        shipped = TestThePortalHasNoAnalyticsTag()._shipped()
+        found = sorted(
+            f'{host} in {name}' for name, text in shipped.items() for host in self._cdn_hosts() if host in text
+        )
+
+        assert not found, f'the portal names a CDN an air-gapped install cannot reach: {found}'
+
+    def test_a_built_portal_names_no_cdn(self):
+        """Only when `portal/dist` exists — CI builds it in the image, where
+        the check above already runs; locally this catches it sooner."""
+        import pytest
+
+        assets = self._PORTAL / 'dist/assets'
+        if not (assets.is_dir() and any(assets.glob('*.js'))):
+            pytest.skip('no portal build; the portal image runs the same scan on its own')
+        found = sorted(
+            f'{host} in {path.name}'
+            for path in assets.rglob('*')
+            if path.is_file()
+            for host in self._cdn_hosts()
+            if host in path.read_text(errors='ignore')
+        )
+
+        assert not found, f'the built portal names a CDN: {found}'
+
+    def test_the_scan_would_see_the_url_that_broke_the_editor(self):
+        old = "vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs'"
+
+        assert any(host in old for host in self._cdn_hosts())

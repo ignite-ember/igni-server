@@ -28,7 +28,11 @@
  * quietly.
  */
 
+import { generateKeyPairSync, randomUUID, sign, type KeyObject } from 'node:crypto'
 import { test, expect } from '@playwright/test'
+
+/** The API itself, for what the portal's proxy does not pass on (`/.well-known`). */
+const API = process.env.IGNI_API_URL ?? 'http://localhost:7777'
 
 /** Prefix that marks a row as this suite's litter. */
 const MARK = 'e2e-fn'
@@ -196,6 +200,68 @@ test.describe('navigation', () => {
 
     for (const name of orgs) {
       await expect(page.getByText(name).first()).toBeVisible()
+    }
+  })
+})
+
+test.describe('VM profile requests', () => {
+  /** A `private_key_jwt` client assertion, as an app signs one with its own key. */
+  function assertion(appId: string, audience: string, key: KeyObject): string {
+    const b64 = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url')
+    const now = Math.floor(Date.now() / 1000)
+    const claims = { iss: appId, sub: appId, aud: audience, iat: now, exp: now + 60, jti: randomUUID() }
+    const body = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64(claims)}`
+    return `${body}.${sign('sha256', Buffer.from(body), key).toString('base64url')}`
+  }
+
+  test("an app's request is approved by the admin and becomes its profile", async ({ page }) => {
+    const me = await (await page.request.get('/v1/portal/me')).json()
+    const orgId: string = me.org_id
+    const name = unique('bot')
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+    const jwk = { ...publicKey.export({ format: 'jwk' }), use: 'sig', alg: 'RS256' }
+    const registered = await page.request.post('/v1/portal/apps', {
+      data: { name, owner_user_id: me.user_id, jwks: { keys: [jwk] } },
+    })
+    expect(registered.ok(), await registered.text()).toBe(true)
+    const appId: string = (await registered.json()).app_id
+    let profileId: string | null = null
+    try {
+      // The app, as itself: `client_credentials` with its own key.
+      const discovery = await (await page.request.get(`${API}/.well-known/openid-configuration`)).json()
+      const issued = await page.request.post('/v1/oauth/token', {
+        form: {
+          grant_type: 'client_credentials',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          client_assertion: assertion(appId, discovery.issuer, privateKey),
+        },
+      })
+      expect(issued.ok(), await issued.text()).toBe(true)
+      const app = { Authorization: `Bearer ${(await issued.json()).access_token}` }
+      const asked = await page.request.put(`/v1/apps/${appId}/vm-profile-request`, {
+        headers: app,
+        data: { vcpus: 2, packages: { npm: ['@playwright/mcp@0.0.84'] }, setup_script: 'true\n' },
+      })
+      expect(asked.status(), await asked.text()).toBe(201)
+
+      // Nothing runs before the admin approves: the VM still has the default.
+      const before = await (await page.request.get(`/v1/apps/${appId}/vm-profile`, { headers: app })).json()
+      expect(before.packages.npm).toEqual([])
+
+      await page.goto('/vm-profiles')
+      await expect(page.getByLabel(`Setup script of App ${name}`)).toHaveText('true')
+      await page.getByRole('button', { name: `Approve App ${name}` }).click()
+
+      await page.reload()
+      await expect(page.getByText(new RegExp(`Approved: .*App ${name}`))).toBeVisible({ timeout: 10_000 })
+      await expect(page.getByRole('button', { name: `Approve App ${name}` })).toHaveCount(0)
+      const after = await (await page.request.get(`/v1/apps/${appId}/vm-profile`, { headers: app })).json()
+      expect(after.profile_name).toBe(`App: ${name}`.slice(0, 60))
+      expect(after.packages.npm).toEqual(['@playwright/mcp@0.0.84'])
+      profileId = after.profile_id
+    } finally {
+      await page.request.delete(`/v1/portal/apps/${appId}`)
+      if (profileId) await page.request.delete(`/v1/portal/orgs/${orgId}/vm-profiles/${profileId}`)
     }
   })
 })

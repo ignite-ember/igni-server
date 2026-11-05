@@ -9,7 +9,7 @@ Ember hosts no part of a deployment and has no route into one.
 
 Sources: this repository (`docs/`, `containers/`, `charts/igni/`,
 `app/config.py`, `tests/test_nothing_phones_home.py`), the client
-repository `ember-code`, the CodeIndex repository `igni__code-index`, the
+repository `igni`, the CodeIndex repository `igni__code-index`, the
 documents service `igni__artifacts`, and the Fleet repository
 `igni__cloudvm` (gateway and node agent). A port appears below only where
 a file in one of those repositories states it.
@@ -18,7 +18,7 @@ a file in one of those repositories states it.
 
 | Component | Where it runs | Repository | Packaged for customers |
 |---|---|---|---|
-| Desktop app and CLI | Developer machines | `ember-code` | Desktop installers; the CLI as a Python package |
+| Desktop app and CLI | Developer machines | `igni` | Desktop installers; the CLI as a Python package |
 | igni API and admin portal | Customer servers or Kubernetes | `igni-server` | Compose (`containers/docker-compose.prod.yml`) and Helm (`charts/igni`) |
 | PostgreSQL, Redis | Customer, external or bundled | | Bundled under the compose `bundled` profile; external with Helm |
 | Inference nodes (vLLM, OpenAI-compatible) | Customer GPUs, on-premises or rented | Customer-run | Not packaged by igni |
@@ -201,7 +201,7 @@ is fixed in the repositories.
 
 | # | Source | Destination | Protocol / port | Purpose | Required |
 |---|---|---|---|---|---|
-| D1 | Desktop app | Local backend on the same machine | WebSocket, `ws://127.0.0.1`, ephemeral port (`--ws-port 0`). Loopback only. At the handshake the backend refuses (403) a browser `Origin` that is not the app's own (`tauri://localhost`, `http(s)://tauri.localhost`, loopback pages) and any connection without the per-launch token the app generated for it (32 random bytes, passed to the backend in its environment and offered by the webview as the subprotocol `igni-token.<token>`). See ember-code `docs/SECURITY.md` §10 | UI to agent | Required |
+| D1 | Desktop app | Local backend on the same machine | WebSocket, `ws://127.0.0.1`, ephemeral port (`--ws-port 0`). Loopback only. At the handshake the backend refuses (403) a browser `Origin` that is not the app's own (`tauri://localhost`, `http(s)://tauri.localhost`, loopback pages) and any connection without the per-launch token the app generated for it (32 random bytes, passed to the backend in its environment and offered by the webview as the subprotocol `igni-token.<token>`). See igni `docs/SECURITY.md` §10 | UI to agent | Required |
 | D2 | Local backend / CLI | igni API via edge | HTTPS; 443 with the Caddy overlay, otherwise configurable (`api_url`) | Sign-in, chat completions, models, notifications, group policy, extension download; while a person is signed in, pulling the messages, files and events services sent them (D14) | Required |
 | D3 | Browser on developer machine | 127.0.0.1 callback listener | HTTP, port not fixed in the repo | CLI sign-in callback | Required for CLI sign-in |
 | D4 | CodeIndex and Artifacts extension processes | CodeIndex / Artifacts service hostnames | HTTPS, configurable | Module features, with a token issued by igni API | Optional (paid modules) |
@@ -328,7 +328,7 @@ These exist in the code today and are on by default. On the client one
 switch turns all of them off: **`air_gapped: true`** in `~/.igni/config.yaml`,
 in the managed-settings file (which a user cannot override), or in a group
 policy's settings, or `IGNI_AIR_GAPPED=1` in the environment
-(`ember-code` `docs/CONFIGURATION.md`, "Air-gapped mode"). On Fleet the
+(`igni` `docs/CONFIGURATION.md`, "Air-gapped mode"). On Fleet the
 switch is `air_gapped = true` in each node agent's `node-agent.toml`.
 
 | Flow | Default | Under the air-gap switch | Its own switch |
@@ -349,11 +349,11 @@ The Agno framework's own run telemetry (to `os-api.agno.com`) is off in
 every client process: `AGNO_TELEMETRY=false` is set before Agno is
 imported, every agent and team igni builds passes `telemetry=False`, and
 the extension services the client starts are handed the variable
-(`ember-code` `src/ember_code/core/agno_telemetry.py`). An explicit
+(`igni` `src/ember_code/core/agno_telemetry.py`). An explicit
 `AGNO_TELEMETRY=true` is honoured outside air-gapped mode and overruled,
 with a warning, under it. A runtime test runs agent turns and fails on any
 attempt to reach an `agno.com` host
-(`test_no_run_reaches_an_agno_host.py` in `ember-code`).
+(`test_no_run_reaches_an_agno_host.py` in `igni`).
 
 OpenTelemetry (D15, P16) is not a flow out of the network unless the
 customer points it out of the network: there is no default endpoint, the
@@ -411,12 +411,13 @@ code differs from the description given to us.
    standard asyncio loop, because the guard cannot observe uvloop, which
    production uses; the hosts called are the same either way. They do not
    see native-code networking or what a child process does once started.
-   Fleet's resume path needs a KVM host and has not run, and
-   `igni__cloudvm` has no CI yet.
+   Fleet's resume path needs a KVM host and has not run. `igni__cloudvm`
+   now has CI, which runs its gateway's source scan and egress tests on
+   every push; the tests that need a KVM host are still run by hand.
 3. **Default-on client egress.** D9, D10 and D11 still run on an
    unconfigured install; an air-gapped one sets `air_gapped: true` (section
    3). D11 has its own switch, `plugins.default_marketplace: false`
-   (`ember-code` `docs/CLOUD.md` §11, item 5, now decided). The switch does
+   (`igni` `docs/CLOUD.md` §11, item 5, now decided). The switch does
    not cover hosts a user names themselves (model endpoints, MCP servers,
    git remotes).
 4. **Fleet is not packaged.** No Helm or compose definitions exist for the

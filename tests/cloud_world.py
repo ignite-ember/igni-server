@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession, create_async_engine
 
@@ -19,25 +19,45 @@ from tests.registered_service import ExtensionBundle, RegisteredService
 
 
 async def shipped(
-    client: AsyncClient, extension_id: str, *, permissions: dict[str, object] | None = None
+    client: AsyncClient,
+    extension_id: str,
+    *,
+    permissions: dict[str, object] | None = None,
+    vm: dict[str, object] | None = None,
 ) -> RegisteredService:
-    """An approved service that has uploaded its extension, declaring `permissions` if given."""
+    """An approved service that has uploaded its extension, declaring `permissions` and `vm` if given."""
     service = RegisteredService(name=extension_id, base_url=f'https://{extension_id.split(".")[-1]}.example.com')
     await service.approve()
-    manifest: dict[str, object] = {'id': extension_id, 'version': '1.0.0', 'name': extension_id}
+    response = await upload(client, service, extension_id, '1.0.0', permissions=permissions, vm=vm)
+    assert response.status_code == 200, response.text
+    return service
+
+
+async def upload(
+    client: AsyncClient,
+    service: RegisteredService,
+    extension_id: str,
+    version: str,
+    *,
+    permissions: dict[str, object] | None = None,
+    vm: dict[str, object] | None = None,
+) -> Response:
+    """The service uploading a version of its extension; igni's answer."""
+    manifest: dict[str, object] = {'id': extension_id, 'version': version, 'name': extension_id}
     if permissions is not None:
         manifest['permissions'] = permissions
+    if vm is not None:
+        manifest['vm'] = vm
     bundle = ExtensionBundle.of(manifest)
     response = await client.put(
         f'/clients/{service.client_id}/extension',
         content=bundle.archive,
         headers={
             'Content-Type': 'application/gzip',
-            'X-Igni-Bundle-Signature': bundle.signed_by(service, extension=extension_id, version='1.0.0'),
+            'X-Igni-Bundle-Signature': bundle.signed_by(service, extension=extension_id, version=version),
         },
     )
-    assert response.status_code == 200, response.text
-    return service
+    return response
 
 
 async def token_for(client: AsyncClient, registered: RegisteredService, **fields: str) -> dict[str, str]:

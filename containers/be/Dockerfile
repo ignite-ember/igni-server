@@ -38,14 +38,24 @@ WORKDIR /app
 # Copy requirements.txt from builder
 COPY --from=builder /app/requirements.txt ./
 
-# Install dependencies. pip is upgraded first because the base image's
-# pip stays in the final layer as an install-time tool, and `pip-audit`
-# run inside the built image reported seven advisories against it —
-# unreachable without code execution in the container, but free to fix.
+# Install dependencies, then remove pip itself. pip is an install-time
+# tool and nothing in the running image calls it, but it carries its own
+# vendored copies of msgpack, urllib3 and setuptools (pip/_vendor), which
+# image scanners read from its vendor.txt. Those copies trail the ones in
+# uv.lock: the scheduled scan went red on five HIGH advisories that were
+# all pip's vendored msgpack 1.1.2, urllib3 2.7.0 and setuptools 70.3.0
+# (CVE-2025-47273), while the application's own msgpack and urllib3 were
+# already fixed. Upgrading pip fixes msgpack and urllib3 but not
+# setuptools, which pip still vendors at 70.3.0; removing pip fixes all
+# of them, and whatever its next vendored advisory is. The earlier
+# `--upgrade pip` (seven advisories `pip-audit` reported against pip
+# itself) goes with it.
 # No torch here. Embedding is igni__artifacts' own image (its
 # `embedder/`); this server makes no vectors, and this image is pulled
 # per API replica and by two marketplaces.
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip uninstall --yes pip \
+ && ! python -c "import pip" 2>/dev/null
 
 # Copy app sources
 COPY ./app /app/app

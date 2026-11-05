@@ -129,6 +129,14 @@ class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             result = await session.execute(select(User).where(User.user_id == user_id))
             return result.scalars().first()
 
+    async def by_user_ids(self, user_ids: list[str]) -> list[User]:
+        """The users among *user_ids*, in one query; ids with no account are left out."""
+        if not user_ids:
+            return []
+        async with self.session_scope() as session:
+            result = await session.execute(select(User).where(User.user_id.in_(user_ids)))
+            return list(result.scalars().all())
+
     async def update_password(self, user_id: str, hashed_password: str) -> None:
         """Update a user's password (expects pre-hashed value)."""
         async with self.session_scope() as session:

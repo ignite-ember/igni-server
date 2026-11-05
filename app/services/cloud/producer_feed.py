@@ -18,6 +18,14 @@ the feed last reported. Only that transaction draws numbers, so none is
 committed after a larger one, and the gateway, paging by number, misses
 nothing. The cost of a read is the number of changes, not of producers.
 
+**A membership ending is numbered as it ends** (:meth:`ProducerFeed.removal`).
+A mark names a producer; it does not keep the incarnation it was, and a
+removed membership's row is gone — so a person who joined and was
+removed between two reads would have no incarnation for the feed to
+remove, no erasure, and nothing to export. Removing somebody catches the
+feed up first, so their incarnation is listed, and numbers the removal
+after, so it is removed, its erasure scheduled and the gateway told then.
+
 **Reconciling** marks everybody and numbers what differs; the retention
 round does it daily, and a difference it finds is a change some path
 failed to mark — the tests hold that there is none.
@@ -26,6 +34,8 @@ failed to mark — the tests hold that there is none.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 import logging
 
 from fastapi import HTTPException, status
@@ -129,6 +139,13 @@ class ProducerFeed:
         if changed:
             await FeedSignals().notify()
         return changed
+
+    @asynccontextmanager
+    async def removal(self) -> AsyncIterator[None]:
+        """Around deleting memberships: the incarnations they end are listed before and removed after."""
+        await self.drain()
+        yield
+        await self.drain()
 
     async def _number(self, numbering: FeedNumbering, targets: Targets) -> int:
         caps = await VmCaps().get()

@@ -19,6 +19,7 @@ import { ContainerIcon } from '@primer/octicons-react'
 import client from '../api/client'
 import { refusalOf } from '../api/refusal'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { VmProfileRequests } from '../components/VmProfileRequests'
 import type { ProducerAssignment, UserMe, VmProfile, VmProfileSettings, VmProfilesOverview } from '../types'
 
 const BLANK: VmProfileSettings = {
@@ -31,6 +32,7 @@ const BLANK: VmProfileSettings = {
   packages: { apt: [], pip: [], npm: [] },
   setup_script: null,
   erase_after_idle_days: null,
+  internet: false,
 }
 
 /** One package per line or separated by spaces — how people paste a list. */
@@ -78,6 +80,7 @@ function ProfileForm({
   const [eraseDays, setEraseDays] = useState(
     initial.erase_after_idle_days == null ? '' : String(initial.erase_after_idle_days),
   )
+  const [internet, setInternet] = useState(initial.internet === true)
 
   return (
     <form
@@ -94,6 +97,7 @@ function ProfileForm({
           packages: { apt: packageList(apt), pip: packageList(pip), npm: packageList(npm) },
           setup_script: script.trim() ? script : null,
           erase_after_idle_days: eraseDays.trim() ? Number(eraseDays) : null,
+          internet,
         })
       }}
     >
@@ -147,6 +151,22 @@ function ProfileForm({
             {maxIdleDays !== null && ` This platform requires at most ${maxIdleDays} days.`}
           </FormControl.Caption>
         </FormControl>
+        <FormControl>
+          <Checkbox checked={internet} onChange={(e) => setInternet(e.target.checked)} />
+          <FormControl.Label>Internet access</FormControl.Label>
+          <FormControl.Caption>
+            Security-relevant: VMs with this profile may reach the internet, so code they run may send data out. Off,
+            they reach only what their node allows (such as your package mirror). A node that is air-gapped, or not
+            allowed to grant internet, keeps them internal-only anyway. Applies at the VM&apos;s next start or resume.
+          </FormControl.Caption>
+        </FormControl>
+        {internet && (
+          <Banner
+            variant="warning"
+            title="This profile grants internet access"
+            description="Every group and app given this profile gets a VM that can reach the internet."
+          />
+        )}
         <Stack direction="horizontal" gap="normal" wrap="wrap">
           <FormControl>
             <FormControl.Label>apt packages</FormControl.Label>
@@ -329,6 +349,14 @@ export function VmProfilesPage() {
         </Text>
       )}
 
+      {orgId && (
+        <VmProfileRequests
+          orgId={orgId}
+          onDone={(message) => refresh(message)}
+          onFailed={failed}
+        />
+      )}
+
       {editing ? (
         <ProfileForm
           key={editing === 'new' ? 'new' : editing.id}
@@ -361,6 +389,18 @@ export function VmProfilesPage() {
                   {row.is_default && <Label>Default</Label>}
                   {!row.within_caps && <Label variant="attention">Over the platform limits</Label>}
                 </Stack>
+              ),
+            },
+            {
+              header: 'Network',
+              field: 'internet',
+              renderCell: (row) =>
+                row.internet ? (
+                  <Label variant="danger" aria-label={`${row.name} grants internet access`}>
+                    Internet
+                  </Label>
+                ) : (
+                  <Text size="small">Internal only</Text>
               ),
             },
             {

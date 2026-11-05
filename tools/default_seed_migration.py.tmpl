@@ -1,0 +1,118 @@
+"""The Default group is what igni ships today, in every organisation that already had one
+
+Written by `make default-seed-migration` after `make refresh-default-seed`.
+The Default group is seeded once, from `app/services/portal/default_group_*`,
+and is read-only to admins, so a refreshed seed reaches existing
+organisations only through a migration like this one (t0025 explains the
+design). Since @SINCE@'s seed:
+
+- rewritten: @REWRITTEN@
+- added: @ADDED@
+- removed: @REMOVED@
+
+Each existing Default group is brought to exactly `_SEED`: changed entries
+rewritten, missing ones added, anything else in the group removed. Only
+`org_groups.is_default` groups are touched. An entry is rewritten only when
+it differs, so its `updated_at` and the group pack's ETag move only for
+what changed. The downgrade restores @SINCE@'s seed exactly.
+
+Revision ID: @REVISION@
+Revises: @DOWN_REVISION@
+Create Date: @DATE@
+
+"""
+
+from typing import Sequence, Union
+import uuid
+
+import sqlalchemy as sa
+
+from alembic import op
+
+revision: str = '@REVISION@'
+down_revision: Union[str, Sequence[str], None] = '@DOWN_REVISION@'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+_DEFAULT_GROUPS = sa.text('SELECT id, created_by_user_id FROM org_groups WHERE is_default')
+_ENTRIES = sa.text('SELECT id, kind, entry_name FROM org_group_entries WHERE group_id = :group_id')
+_REMOVE = sa.text('DELETE FROM org_group_entries WHERE id = :id')
+# Rewrites a row only when it is not already the seed's, so a group that
+# already matches is not touched at all.
+_PUT = sa.text("""
+    INSERT INTO org_group_entries
+        (id, group_id, kind, entry_name, content, content_type, enabled, created_by_user_id, created_at, updated_at)
+    VALUES (:id, :group_id, :kind, :entry_name, :content, :content_type, true, :created_by, now(), now())
+    ON CONFLICT ON CONSTRAINT uq_org_group_entries_entry DO UPDATE SET
+        content = EXCLUDED.content,
+        content_type = EXCLUDED.content_type,
+        enabled = true,
+        model = NULL,
+        source_url = NULL,
+        source_ref = NULL,
+        source_subdir = NULL,
+        updated_at = now()
+    WHERE (
+        org_group_entries.content, org_group_entries.content_type, org_group_entries.enabled,
+        org_group_entries.model, org_group_entries.source_url, org_group_entries.source_ref,
+        org_group_entries.source_subdir
+    ) IS DISTINCT FROM (EXCLUDED.content, EXCLUDED.content_type, true, NULL::text, NULL::text, NULL::text, NULL::text)
+""")
+_TOUCH_GROUP = sa.text('UPDATE org_groups SET updated_at = now() WHERE id = :group_id')
+
+
+def _make_every_default_group(seed: Sequence[tuple[str, str, str]]) -> None:
+    """Each Default group holds `seed` and nothing else."""
+    bind = op.get_bind()
+    wanted = {(kind, name) for kind, name, _ in seed}
+    for group in bind.execute(_DEFAULT_GROUPS).all():
+        changed = 0
+        for entry in bind.execute(_ENTRIES, {'group_id': group.id}).all():
+            if (entry.kind, entry.entry_name) not in wanted:
+                changed += bind.execute(_REMOVE, {'id': entry.id}).rowcount
+        for kind, name, content in seed:
+            changed += bind.execute(
+                _PUT,
+                {
+                    'id': str(uuid.uuid4()),
+                    'group_id': group.id,
+                    'kind': kind,
+                    'entry_name': name,
+                    'content': content,
+                    'content_type': _CONTENT_TYPES[kind],
+                    'created_by': group.created_by_user_id,
+                },
+            ).rowcount
+        if changed:
+            bind.execute(_TOUCH_GROUP, {'group_id': group.id})
+
+
+def _previous_seed() -> list[tuple[str, str, str]]:
+    """The previous seed (@SINCE@'s): today's, with `_BEFORE` in place of what changed."""
+    before = {(kind, name): content for kind, name, content in _BEFORE}
+    kept = [
+        (kind, name, before.pop((kind, name), content))
+        for kind, name, content in _SEED
+        if (kind, name) not in _ONLY_IN_THE_NEW_SEED
+    ]
+    return kept + [(kind, name, content) for (kind, name), content in before.items()]
+
+
+def upgrade() -> None:
+    _make_every_default_group(_SEED)
+
+
+def downgrade() -> None:
+    _make_every_default_group(_previous_seed())
+
+
+#@CONTENT_TYPES@
+
+#@ONLY_AFTER@
+
+#: What `seed_entries()` answered at this revision: `(kind, entry_name, content)`.
+#@SEED@
+
+#: The entries of the previous seed whose content differs from `_SEED`'s, or
+#: that `_SEED` no longer has.
+#@BEFORE@

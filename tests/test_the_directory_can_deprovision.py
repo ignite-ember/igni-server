@@ -319,3 +319,74 @@ class TestWhatAProviderAsksFirst:
 
         assert config['bulk']['supported'] is False
         assert config['changePassword']['supported'] is False
+
+
+class TestWhatIsRefusedAndHow:
+    """In SCIM's own error shape, with the status a provider acts on.
+
+    A provider reads `status` and `scimType` to decide whether to retry,
+    reconcile or give up, so each refusal is pinned to what it says.
+    """
+
+    @staticmethod
+    def _scim_error(response, status: int) -> dict:
+        assert response.status_code == status, response.text
+        body = response.json()['detail']
+        assert body['status'] == str(status)
+        assert body['schemas'] == ['urn:ietf:params:scim:api:messages:2.0:Error']
+        return body
+
+    async def test_somebody_with_no_address_is_not_created(self, client):
+        """A login name with no `@` and no email: nothing to key an account on."""
+        response = await client.post(f'{SCIM}/Users', json=_person(userName='sam.rivera', emails=[]), headers=_head())
+
+        body = self._scim_error(response, 400)
+        assert body['scimType'] == 'invalidValue'
+
+    async def test_the_primary_email_is_used_when_the_login_name_is_not_an_address(self, client):
+        payload = _person(
+            userName='sam.rivera',
+            emails=[
+                {'value': 'other@acme.test', 'primary': False},
+                {'value': 'Sam.Rivera@acme.test', 'primary': True},
+            ],
+        )
+
+        response = await client.post(f'{SCIM}/Users', json=payload, headers=_head())
+
+        assert response.status_code == 201, response.text
+        assert response.json()['userName'] == 'sam.rivera@acme.test'
+
+    @pytest.mark.parametrize(
+        ('method', 'json'),
+        [
+            ('GET', None),
+            ('PATCH', {'schemas': ['urn:ietf:params:scim:api:messages:2.0:PatchOp'], 'Operations': []}),
+            ('PUT', _person()),
+            ('DELETE', None),
+        ],
+    )
+    async def test_somebody_who_is_not_here_is_a_404_on_every_verb(self, client, method, json):
+        nobody = f'nobody-{uuid.uuid4().hex[:8]}'
+
+        response = await client.request(method, f'{SCIM}/Users/{nobody}', json=json, headers=_head())
+
+        body = self._scim_error(response, 404)
+        assert body['detail'] == 'User not found'
+
+    async def test_a_replace_that_changes_nothing_changes_nothing(self, client):
+        """A provider re-sends the whole record on every sync. Re-sending
+        `active: true` for somebody active is not a reactivation, and an
+        attribute this server does not store is not a failure."""
+        created = (await client.post(f'{SCIM}/Users', json=_person(), headers=_head())).json()
+
+        response = await client.put(
+            f'{SCIM}/Users/{created["id"]}',
+            json=_person(userName=created['userName'], active=True, displayName='Samantha Rivera'),
+            headers=_head(),
+        )
+
+        assert response.status_code == 200
+        assert response.json()['active'] is True
+        assert response.json()['userName'] == created['userName']
+        assert not _is_deactivated(created['id'])

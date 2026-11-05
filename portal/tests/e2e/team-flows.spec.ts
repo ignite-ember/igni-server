@@ -46,7 +46,7 @@ const INITIAL_TEAM = {
     {
       id: 'admin-1', user_id: 'admin-1', email: 'admin@x.com', full_name: 'Admin',
       role: 'admin', tier: 'pro', status: 'active',
-      total_sessions: 0, total_tokens: 0, last_active: null,
+      total_requests: 0, total_tokens: 0, last_active: null,
       joined_at: '2026-01-01T00:00:00Z', assigned_by: null,
     },
   ],
@@ -64,7 +64,7 @@ test.describe('TeamPage invite flow', () => {
         {
           id: 'inv-1', user_id: 'inv-1', email: 'newbie@x.com', full_name: null,
           role: 'member', tier: 'lite', status: 'invited',
-          total_sessions: 0, total_tokens: 0, last_active: null,
+          total_requests: 0, total_tokens: 0, last_active: null,
           joined_at: '2026-05-28T12:00:00Z', assigned_by: 'admin-1',
         },
       ],
@@ -84,7 +84,7 @@ test.describe('TeamPage invite flow', () => {
             {
               id: 'inv-1', user_id: 'inv-1', email: capturedInvite.email,
               full_name: null, role: capturedInvite.role, tier: 'lite', status: 'invited',
-              total_sessions: 0, total_tokens: 0, last_active: null,
+              total_requests: 0, total_tokens: 0, last_active: null,
               joined_at: '2026-05-28T12:00:00Z', assigned_by: 'admin-1',
             },
             201,

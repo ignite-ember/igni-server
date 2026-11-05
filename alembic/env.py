@@ -22,7 +22,7 @@ config = context.config
 # this project — and a disabled logger emits nothing at all.
 #
 # That is the cause of a mystery this repository had worked around twice.
-# ``tests/test_webhook_failures_are_client_errors.py`` and ember-code's
+# ``tests/test_webhook_failures_are_client_errors.py`` and igni's
 # ``tests/test_group_policy_path_containment.py`` both say that something
 # in the test session sets ``logger.disabled``, that the cause "is not
 # identified", and both clear the flag by hand to get their assertions to

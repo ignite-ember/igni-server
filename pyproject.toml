@@ -151,6 +151,9 @@ pydocstyle.convention = 'google'
 # migrations embed content verbatim — reflowing an embedded shell script
 # to satisfy a line limit would change what gets inserted.
 "alembic/versions/*" = ["T201", "E501"]
+# The same verbatim content, frozen into an organisation's migration: t0025
+# carries the Default group's seed as it was, line for line.
+"alembic_tenant/versions/*" = ["E501"]
 # ``env.py`` reports the same way, and for the same reason: whoever ran
 # ``alembic upgrade`` is watching stdout. It also creates the database
 # when it is absent, which is worth announcing.

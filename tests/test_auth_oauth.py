@@ -7,12 +7,15 @@ Google credentials, which is what a deployment offering it would do.
 
 from urllib.parse import parse_qs, urlparse
 
+from fastapi import HTTPException
 import pytest
 from sqlalchemy import select
 
 from app.config import settings
 from app.db.sql.models.org_membership import OrgMembership
 from app.services.auth.oauth_service import OAuthService, OAuthUserInfo
+from app.services.email.delivery import EmailDelivery
+from app.services.email.service import EmailService
 from tests.conftest import add_invited_member, create_org, create_user
 
 
@@ -37,6 +40,36 @@ class TestOAuthRedirect:
         location = resp.headers['location']
         assert 'accounts.google.com' in location
         assert 'fake-state-token' in location
+
+
+class TestAProviderThatCannotBeUsedIsRefusedHere:
+    """Before the person is sent anywhere: the reason is known here, and
+    at the provider it would be an error about a request this server built."""
+
+    async def test_one_that_does_not_exist(self, client):
+        resp = await client.get('/auth/myspace', follow_redirects=False)
+
+        assert resp.status_code == 400
+        assert 'Unsupported provider' in resp.text
+
+    async def test_one_the_deployment_did_not_enable(self, client, monkeypatch):
+        monkeypatch.setattr(settings, 'oauth_providers', [])
+
+        resp = await client.get('/auth/google', follow_redirects=False)
+
+        assert resp.status_code == 400
+        assert 'not enabled' in resp.text
+
+    async def test_one_enabled_without_credentials(self, client, monkeypatch):
+        """It redirected to Google with `client_id=` before, and the person
+        read Google's error about it."""
+        monkeypatch.setattr(settings, 'oauth_google_client_id', '')
+        monkeypatch.setattr(settings, 'oauth_google_client_secret', '')
+
+        resp = await client.get('/auth/google', follow_redirects=False)
+
+        assert resp.status_code == 400
+        assert 'no credentials' in resp.text
 
 
 class TestOAuthCallback:
@@ -122,6 +155,108 @@ class TestOAuthCallback:
         assert membership is not None
         assert membership.status == 'active'
         assert not str(membership.user_id).startswith('invited-')
+
+
+def _signs_in_as(monkeypatch, email: str, *, state: dict | None = None) -> None:
+    async def fake_validate_state(_state):
+        return state or {}
+
+    async def fake_exchange(provider, code):
+        return OAuthUserInfo(email=email, first_name='Ada', last_name='L', provider='google')
+
+    monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(fake_validate_state))
+    monkeypatch.setattr(OAuthService, 'exchange_and_get_user', staticmethod(fake_exchange))
+
+
+class TestWhatTheCallbackDoesAroundTheSignIn:
+    async def test_where_the_person_was_goes_back_with_them(self, client, monkeypatch):
+        """A sign-in that started on `/authorize?...` or `/cli-auth?...`
+        carries that path through the provider in the state, and the
+        portal is handed it back to resume."""
+        _signs_in_as(monkeypatch, 'returning@test.com', state={'returnTo': '/cli-auth?port=7123'})
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        query = parse_qs(urlparse(resp.headers['location']).query)
+        assert query['returnTo'] == ['/cli-auth?port=7123']
+        assert query['code']
+
+    async def test_without_one_the_portal_is_given_none(self, client, monkeypatch):
+        _signs_in_as(monkeypatch, 'plain@test.com')
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert 'returnTo' not in parse_qs(urlparse(resp.headers['location']).query)
+
+    async def test_a_new_person_is_welcomed_when_mail_can_go(self, client, monkeypatch):
+        sent: list[str] = []
+
+        async def send_welcome(self, *, to_email: str) -> None:
+            sent.append(to_email)
+
+        monkeypatch.setattr(EmailDelivery, 'enabled', property(lambda self: True))
+        monkeypatch.setattr(EmailService, 'send_welcome', send_welcome)
+        _signs_in_as(monkeypatch, 'brand-new@test.com')
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        assert sent == ['brand-new@test.com']
+
+    async def test_someone_signing_in_again_is_not_welcomed_again(self, client, db, monkeypatch):
+        await create_user(db, user_id='known', email='known@test.com')
+        sent: list[str] = []
+
+        async def send_welcome(self, *, to_email: str) -> None:
+            sent.append(to_email)
+
+        monkeypatch.setattr(EmailDelivery, 'enabled', property(lambda self: True))
+        monkeypatch.setattr(EmailService, 'send_welcome', send_welcome)
+        _signs_in_as(monkeypatch, 'known@test.com')
+
+        await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert sent == []
+
+    async def test_a_provider_that_fails_sends_the_person_back_to_sign_in_with_a_reason(self, client, monkeypatch):
+        """Not a 500 page on the API's host: the portal's sign-in form,
+        which shows the error, and no code."""
+
+        async def fake_validate_state(_state):
+            return {}
+
+        async def broken_exchange(provider, code):
+            raise RuntimeError('the provider refused the code')
+
+        monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(fake_validate_state))
+        monkeypatch.setattr(OAuthService, 'exchange_and_get_user', staticmethod(broken_exchange))
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        location = urlparse(resp.headers['location'])
+        assert location.path == '/login'
+        query = parse_qs(location.query)
+        assert query['error'][0].startswith('OAuth sign-in failed')
+        assert 'code' not in query
+
+    async def test_a_refusal_the_server_raises_is_not_turned_into_a_redirect(self, client, monkeypatch):
+        """An HTTPException from the sign-in itself — a person the
+        deployment refuses — keeps its status rather than being folded
+        into the generic failure redirect."""
+
+        async def fake_validate_state(_state):
+            return {}
+
+        async def refusing_exchange(provider, code):
+            raise HTTPException(status_code=403, detail='not allowed here')
+
+        monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(fake_validate_state))
+        monkeypatch.setattr(OAuthService, 'exchange_and_get_user', staticmethod(refusing_exchange))
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 403
 
 
 class TestFindOrCreateUser:

@@ -250,10 +250,24 @@ service's URL, `org` = the organisation):
 | `DELETE {base_url}/v1/igni/organisations/{org_id}` | stop routing anything to the organisation's data; **idempotent**; 2xx when done, whether or not the service had heard of it |
 
 The service-side SDK mounts it with `igni.router` and calls
-`@igni.on_organisation_deleted` with the organisation's id. igni's own
-practice, which the services follow, is to keep the organisation's data
-and detach it: nothing routes to it again, and an operator can still read
-or drop it.
+`@igni.on_organisation_deleted` with the organisation's id. Stopping the
+routing is the floor; what happens to the data is the service's to decide
+and to document, and the two practices in use differ:
+
+- **igni server keeps it and detaches it.** Nothing routes to the
+  organisation again; its database stays, is still backed up, and an
+  operator can read or drop it (`docs/DATA_RETENTION.md`).
+- **The paid modules erase it.** CodeIndex and Artifacts detach the
+  organisation at once and then erase what it held: its own Postgres
+  database, dropped; its Redis database; its routes and licence seats;
+  and the module's store — CodeIndex's changeset objects under the
+  organisation's prefix, Artifacts' documents, passages and vectors in
+  its graph, then the graph's address and credentials. Only the detached
+  registry row stays, with `erased_at`, so the organisation's number is
+  never reused. Each step is idempotent and a failed step answers igni
+  with an error, so the outbox below retries until the erasure is
+  finished. Not reached: the local Neo4j index CodeIndex's extension
+  keeps on each developer's machine.
 
 Deletion must not depend on every service being up at that moment, so it
 goes through an outbox in the shared plane, `organisation_deletion_notices`:
@@ -390,7 +404,7 @@ group (§8.3) — or, with an app's token, for that app (§11):
 
 | Call | Answers |
 |---|---|
-| `GET /v1/extensions` | `{"producer": {"kind": "person"\|"app", "id": …}, "group": group_id \| null, "extensions": [{extension_id, version, name, description, service_url, sha256, signature, publisher_jwks, published_at, groups, apps}], "priority": [extension_id, …]}` |
+| `GET /v1/extensions` | `{"producer": {"kind": "person"\|"app", "id": …}, "group": group_id \| null, "group_name": name \| null, "extensions": [{extension_id, version, name, description, service_url, sha256, signature, publisher_jwks, published_at, groups, apps}], "priority": [extension_id, …]}` |
 | `GET /v1/extensions/{extension_id}/bundle` | the archive, `application/gzip`, with `X-Igni-Bundle-Signature` and `X-Igni-Bundle-Sha256` |
 | `GET /v1/extensions/{extension_id}/assets/{sha256}` | one asset the distributed manifest declares, `application/octet-stream`, with `X-Igni-Asset-Sha256` and `ETag`; one `Range` answered `206` (§8.2) |
 
@@ -1015,6 +1029,7 @@ never deletable). A profile holds:
 | `volume_gib` | the volume a new VM gets, in GiB (default 10) |
 | `volume_max_gib` | how far an admin may grow one producer's volume (§12.1), in GiB (default 50); at least `volume_gib`, else 422 |
 | `erase_after_idle_days` | **apps and their spaces only:** a VM not woken for this many days has its memory, snapshots, volume and keys erased; the app stays and its next wake starts fresh (§12.2). `null` (default) is never; 1–3650. A person's VM is never erased this way while they are a member |
+| `internet` | whether a VM with the profile may reach the internet (default `false`: only what its node allows, `[[network.allow]]`). A security grant, made per profile, never per node; a node grants it only when it may (§12.4) |
 
 The **platform's caps** — the largest ceiling, the most vCPUs, the
 longest idle (`null`: any, never included), the largest volume a
@@ -1057,7 +1072,7 @@ with every start; there is no per-producer call for it:
 "profile": {"profile_id", "profile_name",
             "memory_mib", "normal_memory_mib", "expected_memory_mib", "vcpus", "idle_before_pause_s",
             "packages": {"apt", "pip", "npm"}, "setup_script", "volume_max_gib",
-            "erase_after_idle_days"},
+            "erase_after_idle_days", "internet"},
 "volume_gib", "legal_hold"
 ```
 
@@ -1132,6 +1147,127 @@ credential lived on the erased volume (§16), so a working, picked-up one
 is replaced by a new family waiting for the node agent's pickup
 (`credential: "reissued"`; `awaiting_pickup` when one was waiting
 already, `none` when the cloud is not enabled for the app).
+
+### 12.3 An app or an extension asks for a profile; an org admin decides
+
+A VM runs nothing as root that an org admin has not approved, and a
+profile's `packages` and `setup_script` run as root when its layer is
+built. So neither an app nor an extension sets its own profile: each
+**asks**, and the request changes no VM until an org admin (or the super
+admin, as for every profile) approves it.
+
+- **An app** asks with its own token (§11.1), for itself only: `{app_id}`
+  must be the token's `sub` (403 otherwise — another app, a person, an
+  org admin's session; 401 for no token). A **service** cannot ask for an
+  app: a service is the deployment's and owns no app; its token is
+  refused here.
+- **An extension** asks through its manifest's `vm` section, part of the
+  signed bundle its service ships (§8) — the same fields in the
+  manifest's camelCase: `packages`, `setupScript`, `memoryMib`,
+  `normalMemoryMib`, `expectedMemoryMib`, `vcpus`, `idleBeforePauseS`,
+  `volumeGib`, `volumeMaxGib`, `eraseAfterIdleDays`, `internet`. A malformed `vm` is
+  refused at upload (400). An extension is the deployment's and is
+  switched on per group and per app in each organisation (§8.3), while a
+  profile is given per group or app; so its request is **one per
+  organisation**, kept the first time anything in it reads requests, and
+  approved by each organisation's admin for that organisation alone. The
+  profile an approval makes is not given to anybody: the admin gives it
+  to the groups and apps that have the extension on, with the calls of
+  §12, because only they know whether those groups' other extensions need
+  something else (a group has one profile, so two extensions that both
+  ask are combined by the admin, in a profile of their own). A version
+  whose `vm` asks for nothing drops the request; the profile stays the
+  organisation's. A space asks for nothing: its VM gets its app's profile.
+
+**What is asked** is everything a profile says but its name (§12), with
+the same limits; a field left out is the deployment's Standard value, and
+a field igni does not know is refused (422) rather than dropped. A
+request over the platform's caps is refused at once (400, saying which).
+
+| Call | Who | Does |
+|---|---|---|
+| `PUT /v1/apps/{app_id}/vm-profile-request` | the app | ask. 201 with the request when it is new or differs from the last — **pending**, its decision cleared; 200 when it is the same as the last, which keeps its state (a rejected request sent again stays rejected) |
+| `GET /v1/apps/{app_id}/vm-profile-request` | the app | its request; 404 for none |
+| `GET /v1/apps/{app_id}/vm-profile` | the app | what its VM gets **now**, whatever is pending: `{profile_id, profile_name, memory_mib, normal_memory_mib, expected_memory_mib, vcpus, idle_before_pause_s, packages, setup_script, volume_max_gib, erase_after_idle_days, internet, volume_gib}` — effective, clamped to the caps |
+| `GET /v1/service-vm-profile` | a service (its token, §3) | `{org_id, extension_id, request, profile, assigned: {groups, apps}}` for its extension in the token's organisation: `request` null while the manifest asks nothing; `profile` what an approval made (effective), null before one; how many groups and apps the admin gave it |
+| `GET /v1/portal/orgs/{org_id}/vm-profile-requests` | that org's admins, super admin | `{"requests": [...]}`, pending first, then the newest |
+| `POST .../vm-profile-requests/{request_id}/approve` `{"version"}` | the same | approve **the version read**: 409 when the request changed since, or is approved already; 400 when it no longer fits the caps (a cap lowered since). The request becomes a profile named `App: <name>` or `Extension: <name>` (a number added when the name is taken) — or, approved before, the profile that approval made is **replaced in place**, keeping its name and everybody it was given to. An app's is given to the app |
+| `POST .../vm-profile-requests/{request_id}/reject` `{"reason"?}` | the same | pending only (409 otherwise); nothing changes, the reason (≤ 500 characters) is kept on the request. A rejected request may still be approved later |
+
+A request: `{"id", "org_id", "subject": {"kind": "app"|"extension", "id",
+"name"}, "state": "pending"|"approved"|"rejected", "requested": {…every
+value, the Standard ones filled in: exactly what would run}, "version",
+"packages_version", "within_caps", "requested_by": {"kind":
+"app"|"service", "id"}, "requested_at", "decided_by": {"kind": "person",
+"id", "acting_as": "org_admin"|"super_admin"} | null, "decided_at",
+"reason", "profile_id"}`. `version` is a digest of `requested`;
+`packages_version` is the digest a profile with those packages and that
+script gets (§12), so the layer the node builds, `pkg-<packages_version>`,
+is the one the admin approved.
+
+**The profile keeps what was last approved.** A changed request is
+pending again and the VM keeps its profile until an admin decides. An
+admin may still edit the profile an approval made like any other; a
+later approval replaces it with what was asked.
+
+**The audit trail.** Approving and rejecting are portal mutations, so
+each is a row of the audit trail, like every portal change, with target `vm_profile_request`
+and detail `{"subject", "state", "version", "packages_version",
+"internet", "profile_id"}` — not the reason, which stays on the request. An app's
+`PUT` is a row too, attributed to `app:<app_id>`, with `{"app_id",
+"version", "packages_version", "internet", "changed", "state"}`; defining or
+replacing a profile records `{"name", "version", "internet"}`; an extension's
+request comes from the bundle upload, which is audited as itself (§8).
+A refused attempt is recorded like any other. Deleting an app forgets its
+request; the profile an approval made stays the organisation's.
+
+**Example: a headless browser.** An app whose agent drives Chromium
+through Playwright's MCP server asks for (the VM's base is Ubuntu 24.04):
+
+```json
+PUT /v1/apps/{app_id}/vm-profile-request
+{
+  "memory_mib": 4096, "normal_memory_mib": 2048, "vcpus": 2,
+  "packages": {
+    "apt": ["ca-certificates", "curl", "unzip", "fonts-liberation", "libnss3", "libatk-bridge2.0-0t64",
+            "libgbm1", "libasound2t64", "libxkbcommon0", "libxcomposite1", "libxdamage1", "libxrandr2",
+            "libpango-1.0-0", "libcups2t64"],
+    "npm": ["@playwright/mcp@0.0.84"]
+  },
+  "setup_script": "#!/bin/sh\nset -eu\n# Chromium from inside the network, never Playwright's CDN.\nmkdir -p /opt/chromium /opt/google/chrome\ncase \"${APT_MIRROR:-}\" in\n  file://*) cp \"${APT_MIRROR#file://}/playwright/chrome-linux.zip\" /tmp/chromium.zip ;;\n  *) curl -fsSL https://artifacts.bank.internal/playwright/chrome-linux.zip -o /tmp/chromium.zip ;;\nesac\nunzip -q /tmp/chromium.zip -d /opt/chromium && rm /tmp/chromium.zip\n# Where Playwright MCP's default channel (chrome) looks.\nln -sf /opt/chromium/chrome-linux/chrome /opt/google/chrome/chrome\n"
+}
+```
+
+Installing `@playwright/mcp` downloads no browser; Playwright normally
+**downloads** Chromium from the internet when asked to. An air-gapped
+deployment has no such route: the browser comes from the organisation's
+own package mirror — a real Chromium `.deb` the mirror carries (on
+Ubuntu 24.04 the archive's `chromium` is only a stub for the snap, which
+does not run in a VM) — or is placed by the setup script from inside the
+network, as above: from the offline mirror's directory when the layer is
+built with no network at all, or from an internal artifact store. The
+agent's MCP server then runs `npx @playwright/mcp --headless` (the VM has
+no display), or names the browser with `--executable-path`. The igni
+SDKs' docs carry the same example.
+
+### 12.4 Internet access is granted per profile
+
+A VM reaches only what its node allows (`[[network.allow]]`, e.g. the
+organisation's package mirror) unless its profile says `"internet": true`.
+That is the only switch for one VM: an org admin sets it on a profile, or
+approves it when an app or an extension asks for it (`"internet": true` in
+the request, `internet` in a manifest's `vm`). The portal shows it on every
+profile and every request as a security grant, and the audit trail records
+it on each define, replace, ask, approval and rejection (§12, §12.3).
+
+The feed carries it in each producer's `profile` (§12); `profile_version`
+changes when it does. A node grants it only when it may: a node whose
+`[network] egress = "internet"` has the capability; an air-gapped node, or
+one without the capability, starts the VM internal-only and says so in its
+log (Fleet's `docs/node-agent.md`). A change applies at the VM's next start
+or resume at the latest. Every profile that existed before has
+`internet: false` (t0026), and a request's `version` leaves `internet` out
+while it is `false`, so nothing already decided goes back to pending.
 
 ## 13. Commands in a producer's VM
 

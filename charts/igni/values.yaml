@@ -222,15 +222,21 @@ sso:
 # `sso` above, or through email and password; this is for deployments
 # that additionally want a provider button.
 #
-# `[]` offers none, which is a supported configuration: the sign-in page
-# always has email and password, and SSO when configured. `google` is
-# the only value accepted.
+# Off by default. Google sign-in is offered only once you give it a
+# client ID here (and its secret in `secrets.googleClientSecret`): an
+# air-gapped deployment cannot reach Google, and a button for a sign-in
+# that cannot work is both a dead end for whoever clicks it and an
+# outbound call a reviewer rightly asks about. The sign-in page shows
+# email and password always, and SSO when configured.
 socialSignIn:
-  providers:
-    - google
   googleClientId: ""
   # The secret goes in `secrets.googleClientSecret` above, or in your
   # existing Secret as OAUTH_GOOGLE_CLIENT_SECRET.
+  #
+  # `providers` is optional and overrides the list the chart derives:
+  # `[]` turns Google off even with a client ID. `google` is the only
+  # value accepted.
+  # providers: []
 
 # ── Documents (igni__artifacts) ──────────────────────────────────────
 #
@@ -482,8 +488,17 @@ backup:
   schedule: "0 3 * * *"
   retainDays: 14
   # Postgres's own image, so pg_dump is at least the server's version.
-  # Pin this to your server's major version.
-  image: postgres:17.6-alpine
+  # Pin the tag to your server's major version.
+  #
+  # `repository` empty takes it from beside image.repository:
+  # registry.example.com/igni/igni-api gives
+  # registry.example.com/igni/postgres. Every offline bundle carries
+  # postgres:17.6-alpine, and `igni-import` pushes it there with the rest,
+  # so an air-gapped cluster pulls it from its own registry. Nothing here
+  # defaults to Docker Hub.
+  image:
+    repository: ""
+    tag: "17.6-alpine"
   resources:
     requests:
       cpu: 100m

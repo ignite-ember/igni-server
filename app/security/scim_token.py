@@ -19,17 +19,26 @@ Two rules, the same as the node registration token's for the same reasons:
 Compared with :func:`hmac.compare_digest`, and a missing header is
 compared as the empty string so the comparison takes the same time
 either way.
+
+A request the token admits is attributed, in the audit trail, to the
+identity provider (:data:`SCIM_ACTOR`): there is one caller, and it is
+not a person.
 """
 
 import hmac
 
-from fastapi import Header, status
+from fastapi import Header, Request, status
 
 from app.api.scim.errors import scim_error
 from app.config import settings
+from app.middlewares.audit import set_audit_actor
+
+#: Who a provisioning request is, in the audit trail.
+SCIM_ACTOR = 'scim:identity-provider'
 
 
 async def require_scim_token(
+    request: Request,
     authorization: str | None = Header(default=None),
 ) -> None:
     """FastAPI dependency guarding every ``/scim/v2`` route."""
@@ -45,3 +54,4 @@ async def require_scim_token(
         presented = ''
     if not hmac.compare_digest(presented, expected):
         raise scim_error('Missing or invalid bearer token', status.HTTP_401_UNAUTHORIZED)
+    set_audit_actor(request, user_id=SCIM_ACTOR)

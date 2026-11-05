@@ -450,7 +450,7 @@ def render() -> str:
     out.append("and none of them touches a customer's deployment. They belong in the")
     out.append("organisation's own vendor register, which is `OR-4` and stays `Process`.")
     out.append('')
-    out.append('**Speak for the sibling repositories.** `ember-code`, `igni__code-index`,')
+    out.append('**Speak for the sibling repositories.** `igni`, `igni__code-index`,')
     out.append('`igni__artifacts` and `igni__cloudvm` ship their own artefacts with their own base')
     out.append('images; the SBOMs of the CodeIndex and Artifacts images list theirs. Porting this')
     out.append('register is a smaller job than describing them from here would be.')

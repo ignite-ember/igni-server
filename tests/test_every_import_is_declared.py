@@ -41,7 +41,9 @@ import ast
 import importlib.metadata as metadata
 import pathlib
 import re
+import subprocess
 import sys
+import uuid
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PYPROJECT = _ROOT / 'pyproject.toml'
@@ -77,22 +79,45 @@ def _declared() -> set[str]:
     return names
 
 
+def _python_files() -> list[pathlib.Path]:
+    """The `.py` files under `_SOURCES` that belong to the repository.
+
+    Asked of git — tracked files and new ones not yet added, never what
+    `.gitignore` excludes — rather than globbed. A glob read whatever
+    happened to be on disk: the journey's generated `run/` (a starter
+    checkout with its own dependencies) made this fail on any machine
+    that had run the journey, and pass in CI, which had not. Outside a
+    git checkout, the glob is all there is.
+    """
+    try:
+        listed = subprocess.run(
+            ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', *_SOURCES],
+            cwd=_ROOT,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return [path for directory in _SOURCES for path in (_ROOT / directory).rglob('*.py')]
+    names = [name for name in listed.decode().split('\0') if name.endswith('.py')]
+    return [_ROOT / name for name in names if (_ROOT / name).is_file()]
+
+
 def _imported_roots() -> set[str]:
     """Top-level modules imported anywhere in `_SOURCES`."""
     roots: set[str] = set()
-    for directory in _SOURCES:
-        for path in (_ROOT / directory).rglob('*.py'):
-            try:
-                tree = ast.parse(path.read_text(errors='ignore'))
-            except SyntaxError:
-                # A fixture that is deliberately unparseable. Nothing
-                # imports it either.
-                continue
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    roots |= {alias.name.split('.')[0] for alias in node.names}
-                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                    roots.add(node.module.split('.')[0])
+    for path in _python_files():
+        try:
+            tree = ast.parse(path.read_text(errors='ignore'))
+        except SyntaxError:
+            # A fixture that is deliberately unparseable. Nothing
+            # imports it either.
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots |= {alias.name.split('.')[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                roots.add(node.module.split('.')[0])
     # `alembic` names a directory here *and* the package its migrations
     # import, so it is not excluded as local — that spelling collision
     # is how an undeclared dependency hides.
@@ -128,6 +153,35 @@ class TestTheCheckMeasuresSomething:
         stale = sorted(name for name in _PROVIDED_BY_ANOTHER if name not in roots)
 
         assert not stale, f'excused as provided-by-another and no longer imported: {stale}'
+
+    def test_what_git_ignores_is_not_read(self):
+        """Generated output — the journey's `run/`, with a checkout of the
+        extension starter in it — is not this repository's code, and
+        what it imports is not this repository's to declare."""
+        module = f'not_a_dependency_{uuid.uuid4().hex[:8]}'
+        run = _ROOT / 'tools' / 'e2e_journey' / 'run'
+        made_run = not run.exists()
+        probe = run / 'work' / f'{module}.py'
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text(f'import {module}\n')
+        try:
+            assert module not in _imported_roots()
+        finally:
+            probe.unlink()
+            if made_run:
+                for directory in (probe.parent, run):
+                    directory.rmdir()
+
+    def test_a_new_file_not_yet_added_is_read(self):
+        """Not only what is committed: a module somebody has just written
+        is checked before they add it."""
+        module = f'not_a_dependency_{uuid.uuid4().hex[:8]}'
+        probe = _ROOT / 'tools' / f'_probe_{module}.py'
+        probe.write_text(f'import {module}\n')
+        try:
+            assert module in _imported_roots()
+        finally:
+            probe.unlink()
 
 
 class TestNothingArrivesTransitively:

@@ -1,3 +1,4 @@
+import os
 from typing import Literal
 from urllib.parse import quote_plus, unquote
 
@@ -93,9 +94,17 @@ class OtelConfig(BaseSettings):
         return headers
 
 
+#: Set by the test suite (tests/conftest.py) so it reads no `.env`. A suite
+#: run from a checkout with the development `.env` the Quick start makes
+#: (`make dev-env`, LOG_SIGN_IN_CODES=true) failed five tests that assert the
+#: defaults — and passed or failed on whatever else a developer's untracked
+#: file said. CI has no `.env`; now neither has a local run.
+_DOTENV: str | None = None if os.environ.get('IGNI_IGNORE_DOTENV') else '.env'
+
+
 class Settings(BaseSettings):
     model_config = {
-        'env_file': '.env',
+        'env_file': _DOTENV,
         'env_file_encoding': 'utf-8',
         'case_sensitive': False,
         'env_nested_delimiter': '__',

@@ -212,7 +212,9 @@ ACTIVITIES: tuple[Activity, ...] = (
             "a space the app declared for one of its own users — in a microVM "
             'of its own: which apps an organisation has and who '
             'owns them, which extensions each app has on, which VM profile '
-            'each group and app gets and who defined it, the commands run as '
+            'each group and app gets and who defined it, what an app or an '
+            'extension asked its VM to get and which admin approved or '
+            'rejected it, the commands run as '
             "root in a producer's VM with who asked and what came of them, the "
             "messages, chats, actions and events services asked to deliver to a "
             "producer's agent or extension, with the thread key and the files "
@@ -224,7 +226,7 @@ ACTIVITIES: tuple[Activity, ...] = (
         ),
         subjects=(
             'Members of an organisation who own or registered an app, defined '
-            'a VM profile, asked for or were the target of a command, were '
+            'a VM profile or decided a request for one, asked for or were the target of a command, were '
             'sent an event, or approved an MCP server; the super admin who set '
             "the platform's caps or an organisation's quota; and an app's own "
             'users, named only by the id the app gives each of their spaces.'
@@ -233,6 +235,7 @@ ACTIVITIES: tuple[Activity, ...] = (
             'org_apps',
             'org_app_extensions',
             'vm_profiles',
+            'vm_profile_requests',
             'vm_commands',
             'vm_jobs',
             'producer_events',

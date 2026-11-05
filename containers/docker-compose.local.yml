@@ -1,7 +1,22 @@
+# The development stack, whole: Postgres and Redis included, so it runs
+# on a machine with nothing but Docker. `make up` starts it, reading the
+# repository root's .env — the one the README's Quick start makes — for
+# the ${...} values below; every one has a development default.
+#
+# The database and Redis are always the bundled ones, whatever .env says:
+# that .env is also what `make run` reads on the host, where they are
+# `localhost` — an address that inside a container is the container.
+x-postgres:
+  - &postgres_host POSTGRES_HOST=postgres
+  - &postgres_port POSTGRES_PORT=5432
+  - &postgres_user POSTGRES_USER=igni
+  - &postgres_password POSTGRES_PASSWORD=igni-dev-only
+  - &postgres_db POSTGRES_DB=igni
+
 services:
   # Database Migrations (Run once: docker-compose run --rm migrate)
   migrate:
-    container_name: igni__migrate
+    container_name: ${IGNI_STACK:-igni}__migrate
     build:
       context: ..
       dockerfile: containers/be/Dockerfile
@@ -17,9 +32,11 @@ services:
       - ../alembic_tenant:/app/alembic_tenant
       - ../alembic.ini:/app/alembic.ini
     env_file:
-      # Optional, so `docker compose config` works on a fresh checkout
-      # (CI checks it there). The development stack runs without one.
-      - path: .env
+      # The repository root's .env — the one the README's Quick start
+      # makes with `cp dist.env .env`. Optional, so `docker compose
+      # config` works on a fresh checkout (CI checks it there); the
+      # development stack runs without one.
+      - path: ../.env
         required: false
     # This file *is* the development stack, so it says so rather than
     # depending on what .env happens to contain. dist.env ships
@@ -33,6 +50,16 @@ services:
     # UnsafeDeployment("this deployment cannot authenticate anybody").
     environment:
       - APP_ENV=dev
+      - *postgres_host
+      - *postgres_port
+      - *postgres_user
+      - *postgres_password
+      - *postgres_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: "no"
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -41,7 +68,7 @@ services:
 
   # Application Backend (FastAPI) - Local Development Build
   igni_api:
-    container_name: igni__api
+    container_name: ${IGNI_STACK:-igni}__api
     build:
       context: ..
       dockerfile: containers/be/Dockerfile
@@ -58,9 +85,11 @@ services:
       # Local-stub Secret Manager backing file lives under scripts/
       - ../scripts:/app/scripts
     env_file:
-      # Optional, so `docker compose config` works on a fresh checkout
-      # (CI checks it there). The development stack runs without one.
-      - path: .env
+      # The repository root's .env — the one the README's Quick start
+      # makes with `cp dist.env .env`. Optional, so `docker compose
+      # config` works on a fresh checkout (CI checks it there); the
+      # development stack runs without one.
+      - path: ../.env
         required: false
     environment:
       - PYTHONUNBUFFERED=1
@@ -75,11 +104,24 @@ services:
       - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY:-jdlEOjgCCb-E6_7ChdCTvVPB7jmbuOSSpk21W4buHDQ=}
       # The issuer of every token, and where services find the public
       # keys: the gateway below, which routes /.well-known to this API.
-      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:7777}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:${IGNI_API_PORT:-7777}}
+      - PORTAL_BASE_URL=${PORTAL_BASE_URL:-http://localhost:${IGNI_PORTAL_PORT:-3000}}
       # No mail relay locally, so sign-in codes are written to this log —
       # off by default everywhere else (F35). The server warns at boot
       # while it is on; that is expected here.
       - LOG_SIGN_IN_CODES=${LOG_SIGN_IN_CODES:-true}
+      - *postgres_host
+      - *postgres_port
+      - *postgres_user
+      - *postgres_password
+      - *postgres_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     restart: always
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -95,7 +137,7 @@ services:
   # production.
   # See gateway/nginx.conf.
   gateway:
-    container_name: igni__gateway
+    container_name: ${IGNI_STACK:-igni}__gateway
     image: nginx:1.27-alpine
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -106,7 +148,10 @@ services:
       # admin API. Verified concretely: while a stack was up on 7777, a
       # GitHub load balancer (lb-140-82-121-6-fra.github.com) reached
       # /health and /ready on it from the internet.
-      - "127.0.0.1:7777:7777"
+      # The host port is `IGNI_API_PORT` (7777 by default), so a second
+      # stack — another checkout, the journey, a demo — can run beside this
+      # one: `make up IGNI_STACK=igni2 IGNI_API_PORT=7787 IGNI_PORTAL_PORT=3010`.
+      - "127.0.0.1:${IGNI_API_PORT:-7777}:7777"
     depends_on:
       - igni_api
     restart: always
@@ -114,7 +159,7 @@ services:
       - igni_network
 
   portal:
-    container_name: igni__portal
+    container_name: ${IGNI_STACK:-igni}__portal
     environment:
       # Explicit, like the production file. Inheriting the image's
       # default is how this pointed at a renamed service for months
@@ -125,10 +170,45 @@ services:
       context: ../portal
       dockerfile: Dockerfile
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${IGNI_PORTAL_PORT:-3000}:3000"
     restart: always
     networks:
       - igni_network
+
+  # Not published: the stack reaches them by name. The images are the
+  # production file's, pinned the same.
+  postgres:
+    container_name: ${IGNI_STACK:-igni}__postgres_local
+    image: postgres:17.6-alpine
+    environment:
+      - *postgres_user
+      - *postgres_password
+      - *postgres_db
+    volumes:
+      - pgdata_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: always
+    networks:
+      - igni_network
+
+  redis:
+    container_name: ${IGNI_STACK:-igni}__redis_local
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: always
+    networks:
+      - igni_network
+
+volumes:
+  pgdata_local:
 
 networks:
   igni_network:

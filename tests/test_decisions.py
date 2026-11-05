@@ -149,19 +149,19 @@ class TestEveryResolverLooksAtSomething:
         assert state_of(decision) == 'answered'
 
     def test_the_cli_resolver_finds_the_sibling_setting(self):
-        """`ember-code` is a separate checkout, so this is the one
+        """`igni` is a separate checkout, so this is the one
         resolver that can legitimately not look — but when the checkout
         is present it must find the real default rather than silently
         answering False."""
-        settings = _ROOT.parent / 'ember-code/src/ember_code/core/config/settings.py'
+        settings = _ROOT.parent / 'igni/src/ember_code/core/config/settings.py'
         if not settings.exists():
-            pytest.skip('the ember-code checkout is not present — skipped, not passed')
+            pytest.skip('the igni checkout is not present — skipped, not passed')
         assert re.search(r'api_url[^=\n]*=\s*[\'"]', settings.read_text()), (
             'the resolver cannot find `api_url` in the sibling settings, so DEC-14 would read '
             '`open` whatever the default is'
         )
         # Not pinned either way: DEC-14 is decided and the change lands
-        # in `ember-code`, so the value here is expected to flip. What is
+        # in `igni`, so the value here is expected to flip. What is
         # pinned is that the resolver found the setting to read.
         assert isinstance(_GEN.cli_api_url_default_is_gone(), bool)
 
@@ -213,7 +213,7 @@ class TestADecisionAPersonTookNeverReadsOpen:
 
     def test_decided_outranks_unknown(self):
         """A person choosing is a fact about the world, not about this
-        repository. A resolver that cannot reach `ember-code` must not
+        repository. A resolver that cannot reach `igni` must not
         turn a taken decision back into an unanswered one."""
 
         def explode() -> bool:
@@ -336,7 +336,7 @@ class TestEachDecisionIsActuallyDecidable:
 class TestTheDocumentDoesNotDependOnASiblingCheckout:
     """The generated file must mean the same thing everywhere.
 
-    Two resolvers read ``../ember-code``. When it is absent — which is
+    Two resolvers read ``../igni``. When it is absent — which is
     always, in CI — they returned ``False``, which the state machine
     reads as "checked, and the code has not done it". So the committed
     document, generated on a machine where the sibling exists, never
@@ -350,7 +350,7 @@ class TestTheDocumentDoesNotDependOnASiblingCheckout:
 
     def test_render_is_identical_without_the_sibling(self, monkeypatch):
         with_sibling = _GEN.render()
-        monkeypatch.setattr(_GEN, '_EMBER_CODE', pathlib.Path('/nonexistent/ember-code'))
+        monkeypatch.setattr(_GEN, '_IGNI', pathlib.Path('/nonexistent/igni'))
         without_sibling = _GEN.render()
         assert with_sibling == without_sibling
 

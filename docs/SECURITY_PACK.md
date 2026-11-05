@@ -43,7 +43,7 @@ tests come first.
 | 11 | Records of processing | The personal data igni stores, by column. | [RECORDS_OF_PROCESSING.md](RECORDS_OF_PROCESSING.md) |
 | 12 | Suppliers | Who else touches the data. For a self-hosted install, no sub-processors. | [SUPPLIERS.md](SUPPLIERS.md) |
 | 13 | Policies | Access control, cryptography, secure development and incident response. The secure development policy (SD-P1 to SD-P9) is igni's secure development lifecycle: each clause names the CI gate or test that enforces it, or says it is not enforced. | [POLICIES.md](POLICIES.md) |
-| 14 | Reporting a security problem | Where to send a report, and what is in scope. The address is not filled in yet (Gaps). | [SECURITY.md](../SECURITY.md) |
+| 14 | Reporting a security problem | Where to send a report (`dmytro.zezyk@ignite-ember.sh`, or GitHub's private vulnerability reporting), what is in scope, the response times and the disclosure terms, and where fixed vulnerabilities are published. | [SECURITY.md](../SECURITY.md) |
 
 Items 6 to 13 are generated from the code by `tools/generate_*.py`, and a test
 fails if a committed file and its generator disagree.
@@ -89,8 +89,9 @@ Known gaps, stated so the customer does not find them first.
   asyncio loop, because its guard cannot observe uvloop, which production
   uses; it does not see native-code networking or what a child process does
   after it starts. The client, CodeIndex, Artifacts and Fleet each have their
-  own source scan and runtime test; Fleet's repository has no CI yet, so its
-  test runs only when somebody runs it
+  own source scan and runtime test, and each runs them in CI; Fleet's
+  gateway tests run there too, but its tests on a real KVM host still run
+  only when somebody runs them
   ([NETWORK_DIAGRAM.md](NETWORK_DIAGRAM.md), Gaps, item 2). The inference
   server is the customer's own, and switching off its outbound calls is the
   customer's job ([MODEL_PROVENANCE.md](MODEL_PROVENANCE.md)).
@@ -102,12 +103,17 @@ Known gaps, stated so the customer does not find them first.
   sent out of band.
 - **The bundle holds igni's own images only.** Third-party images the
   deployment uses (`postgres` for the chart's backup job; `postgres`,
-  `redis` and `caddy` in the compose files) are not in it. Fleet is not
-  packaged as images and is not in it either.
-- **Bundles are kept as CI artefacts for 90 days.** There is no long-term
-  distribution point for bundles yet; Ignite Ember hands each bundle over
-  directly. The images in them come from GitHub Container Registry,
-  `ghcr.io/ignite-ember`, where CD publishes them.
+  `redis` and `caddy` in the compose files) are not in it. Fleet ships
+  binaries, not images; the bundle can carry its signed release
+  ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md)), but Fleet's CD does not yet
+  publish it where the bundle job picks it up, so it is not in a bundle
+  yet.
+- **Releases are kept on one provider.** Each release bundle is kept on
+  GitHub Container Registry beside its images, written once and never
+  deleted, so every security update stays available for ten years
+  ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md), "How long releases are
+  kept"). There is no second copy outside GitHub yet, and no bundle has
+  been kept until the key ceremony has happened.
 - **The licence signing key is not yet generated.** Each paid module checks
   an offline, Ed25519-signed licence file itself. A lapsed paid licence warns
   for 90 days and then goes read-only, never off; an ended evaluation is
@@ -134,6 +140,9 @@ Known gaps, stated so the customer does not find them first.
   audit trail exist. igni does not implement multi-factor authentication
   itself; it relies on the customer's identity provider
   ([POLICIES.md](POLICIES.md), AC-P10).
-- **The reporting address is blank.** [SECURITY.md](../SECURITY.md) has no
-  address, response target or disclosure terms until the organisation fills
-  them in.
+- **No PGP key for reports.** [SECURITY.md](../SECURITY.md) names the
+  address (`dmytro.zezyk@ignite-ember.sh`) and GitHub's private
+  vulnerability reporting, acknowledges within 3 business days, aims for a
+  first assessment within 10, and discloses after 90 days or the fix,
+  whichever is first. No PGP key is published yet; a reporter who needs one
+  asks for a channel first.

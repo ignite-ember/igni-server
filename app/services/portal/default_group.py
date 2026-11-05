@@ -16,11 +16,13 @@ as a copy of any existing one, and this is the one that holds what igni
 ships — so "the standard set, minus the coding agents" is two steps
 rather than a merge rule nobody can picture.
 
-The copy is a snapshot, deliberately. Once the group exists it belongs
-to the org, and a later igni release must not quietly overwrite
-what an admin has written. ``make refresh-default-agents`` re-copies the
-seed files from a checked-out igni for *new* orgs; existing groups
-are never touched.
+``make refresh-default-seed`` re-copies the seed files from a
+checked-out igni, and that reaches *new* orgs only: an existing Default
+group is read-only, so it is brought to a new seed by an
+``alembic_tenant`` migration that freezes it (t0025 was the first). A
+refresh without one fails
+``tests/test_an_existing_default_group_is_brought_to_what_igni_ships.py``.
+Other groups are the org's and no migration touches them.
 
 Seeding happens lazily — the first time we look up somebody's group —
 rather than at org creation, because it has to cover the orgs that
@@ -55,7 +57,7 @@ DEFAULT_GROUP_DESCRIPTION = (
 # Vendored copies of igni's ``bundled_agents`` and ``bundled_skills``,
 # kept in this repo rather than read from an installed igni: the server
 # has no reason to depend on the CLI package, and a deployment may not
-# have it at all. ``make refresh-default-agents`` re-copies both.
+# have it at all. ``make refresh-default-seed`` re-copies both.
 #: ``kind -> (directory, glob)``. The glob is per-kind because the seed
 #: loop used to hardcode ``*.md``, so adding a directory of ``.sh``
 #: scripts to it would have silently shipped nothing.

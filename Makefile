@@ -29,16 +29,31 @@ SRC_FMT := app
 # README documented `make run` as the last step of its Quick Start and
 # there was no such target.
 .PHONY: run test lint fmt migrate downgrade-one up down restart logs rebuild \
-        refresh-default-seed refresh-agent-tools \
+        refresh-default-seed default-seed-migration refresh-agent-tools \
         portal-dev portal-build portal-lint portal-test portal-test-watch \
         portal-e2e portal-e2e-update check-configs docs check-docs \
-        docs-check-siblings
+        docs-check-siblings dev-env
 
 # Run the API locally against whatever .env points at. --reload because
 # this is the development entry point; the container's CMD is the one
 # without it.
+#
+# --reload-dir: without it uvicorn watched the whole checkout, and
+# `npm ci` in portal/ (the Quick start's next step) writes .py files into
+# node_modules, so the API restarted under the person installing the portal.
 run:
-	$(PYTHON) -m uvicorn app.main:app --host 127.0.0.1 --port $(PORT) --reload
+	$(PYTHON) -m uvicorn app.main:app --host 127.0.0.1 --port $(PORT) --reload --reload-dir app
+
+# A development .env, from dist.env: localhost Postgres and Redis, a fresh
+# encryption key, the API and portal URLs, sign-in codes in the server log.
+# The Quick start's second step. PG_PORT / REDIS_PORT / PORTAL_PORT when
+# yours are not the defaults; FORCE=1 to replace an existing .env.
+PG_PORT ?= 5432
+REDIS_PORT ?= 6379
+PORTAL_PORT ?= 3000
+dev-env:
+	$(PYTHON) tools/dev_env.py --pg-port $(PG_PORT) --redis-port $(REDIS_PORT) \
+		--api-port $(PORT) --portal-port $(PORTAL_PORT) $(if $(FORCE),--force)
 
 # Run tests
 test:
@@ -73,6 +88,16 @@ DOCKER_COMPOSE_DIR := containers
 # checkout (../igni__artifacts), which only people with that private
 # repository have. See containers/docker-compose.artifacts.yml.
 COMPOSE_FILES := -f docker-compose.local.yml $(if $(ARTIFACTS),-f docker-compose.artifacts.yml)
+# The root .env the Quick start makes, for the compose files' ${...}
+# values (a SECRET_ENCRYPTION_KEY of your own, a LOG_LEVEL). Compose
+# would otherwise read containers/.env, which nothing tells you to make.
+COMPOSE_FILES += $(if $(wildcard .env),--env-file ../.env)
+# A second stack beside the first: its own compose project and container
+# names (IGNI_STACK), and its own host ports (IGNI_API_PORT,
+# IGNI_PORTAL_PORT, read by docker-compose.local.yml). Without a project of
+# its own, `make up` in a second checkout took over the first one's
+# containers — both directories are called `containers`.
+COMPOSE_FILES += $(if $(IGNI_STACK),-p $(IGNI_STACK))
 
 up:
 	cd $(DOCKER_COMPOSE_DIR) && docker-compose $(COMPOSE_FILES) up --build -d
@@ -90,16 +115,20 @@ rebuild:
 	cd $(DOCKER_COMPOSE_DIR) && docker-compose $(COMPOSE_FILES) up --build --force-recreate -d
 
 # Portal (frontend)
+# The portal's dev server proxies /v1 to the API on $(PORT) — the one
+# `make run` serves — so the two agree without IGNI_API_URL by hand.
 portal-dev:
-	cd portal && npm run dev
+	cd portal && IGNI_API_URL=$${IGNI_API_URL:-http://localhost:$(PORT)} npm run dev -- --port $(PORTAL_PORT)
 
 portal-build:
 	cd portal && npm run build
 
 # Re-copy what a new org's default group is seeded with — the agents and
 # skills igni bundles — from a checked-out CLI. Affects new orgs only: an
-# existing group's entries belong to the org that has been editing them.
-IGNI_CLI ?= ../ember-code
+# existing Default group needs an alembic_tenant migration that freezes the
+# new seed (`make default-seed-migration`, see t0025), and the suite fails
+# until it has one.
+IGNI_CLI ?= ../igni
 refresh-default-seed:
 	@test -d "$(IGNI_CLI)/src/ember_code/bundled_agents" || \
 		(echo "No igni checkout at $(IGNI_CLI); pass IGNI_CLI=<path>" && exit 1)
@@ -110,6 +139,13 @@ refresh-default-seed:
 		cp "$$d/SKILL.md" "app/services/portal/default_group_skills/$$(basename $$d).md"; \
 	done
 	@echo "Seeded from $(IGNI_CLI): $$(ls app/services/portal/default_group_agents/*.md | wc -l | tr -d ' ') agents, $$(ls app/services/portal/default_group_skills/*.md | wc -l | tr -d ' ') skills"
+
+# After refresh-default-seed: write the alembic_tenant migration that brings
+# every existing Default group to the new seed, frozen into the migration,
+# with a downgrade to the previous one. SLUG names the file.
+default-seed-migration:
+	@test -n "$(SLUG)" || (echo "Pass SLUG=<words_in_snake_case>, e.g. SLUG=the_default_group_follows_igni_0_7" && exit 1)
+	.venv/bin/python tools/write_default_seed_migration.py --slug "$(SLUG)"
 
 # Re-read the tool names igni offers, so the portal's typo warning does
 # not start rejecting tools that were added since.

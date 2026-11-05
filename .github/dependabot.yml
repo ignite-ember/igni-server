@@ -1,24 +1,59 @@
+# Version updates, weekly, for every lockfile the server ships from, for the
+# actions the workflows run, and for the base images. Security updates
+# (Dependabot alerts) are a repository setting and open their own pull
+# requests whenever an advisory lands; this file is the routine half.
+#
+# Minor and patch updates are grouped per ecosystem so a week's drift is one
+# pull request to review, not fourteen — each of which runs the whole CI,
+# kind cluster and journey included. Majors arrive one by one, because each
+# is a decision. An action pinned by commit SHA with a `# vX.Y.Z` comment
+# (OpenSSF Scorecard's Pinned-Dependencies check) is updated SHA and comment
+# together.
 version: 2
 updates:
-  - package-ecosystem: pip
+  # The API (uv.lock). `uv`, not `pip`: pip-ecosystem updates change
+  # pyproject.toml and leave uv.lock behind, so CI installs the old version
+  # and the pull request does not test what it says it bumps.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The portal.
   - package-ecosystem: npm
     directory: /portal
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Actions: minor and patch grouped, each major its own pull request. A
+  # major action release changes inputs and outputs, and cd.yml (signing,
+  # the offline bundle) is where that bites, so it is reviewed against its
+  # changelog on its own.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Base images.
   - package-ecosystem: docker
-    directory: /containers/be
+    directories:
+      - /containers/be
+      - /portal
     schedule:
       interval: weekly
-  - package-ecosystem: docker
-    directory: /portal
-    schedule:
-      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docker-minor-and-patch:
+        update-types: [minor, patch]

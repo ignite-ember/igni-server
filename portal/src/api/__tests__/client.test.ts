@@ -11,7 +11,8 @@
  * Response interceptor:
  *  - on HTTP 401 *from a /portal route*, clears the token AND navigates
  *    to /login — those are the routes carrying this session, so a 401
- *    there means the session is over
+ *    there means the session is over — unless the request went out with
+ *    an older token than the one stored now
  *  - on HTTP 401 from anywhere else, leaves the session alone and warns:
  *    that route wanted different credentials, which is a bug in the
  *    caller rather than an expired login
@@ -256,6 +257,31 @@ describe('401 handling is scoped to the session', () => {
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('does not use the portal session'))
     warn.mockRestore()
+  })
+
+  test('a late 401 for a request sent with an older token leaves the new session alone', async () => {
+    // The old session expired while the person signed in again: its
+    // request's 401 arrives after the fresh token is stored.
+    let answer: (() => void) | undefined
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    server.use(
+      http.get('/v1/portal/team', async () => {
+        await answered
+        return new HttpResponse(null, { status: 401 })
+      }),
+    )
+
+    const late = client.get('/portal/team')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    localStorage.setItem('igni_token', 'a-fresh-session')
+    answer?.()
+
+    await expect(late).rejects.toBeDefined()
+
+    expect(localStorage.getItem('igni_token')).toBe('a-fresh-session')
+    expect(hrefHistory).toHaveLength(0)
   })
 
   test('a non-401 failure on a portal route leaves the session alone', async () => {

@@ -17,15 +17,19 @@ repair in `services/ai/provider_quirks`, token estimation in
 """
 
 import asyncio
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Coroutine
+from dataclasses import dataclass, field
 import json
 import logging
 import time
+from typing import Any, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer
 import httpx
+from starlette.types import Receive, Scope, Send
+from uvicorn.protocols.utils import get_client_addr, get_path_with_query_string
 
 from app.api.base_v1.endpoints.client.openai_errors import error_envelope, OpenAICompatibleRoute, OpenAIErrorBody
 from app.api.base_v1.schema.chat import (
@@ -78,6 +82,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(route_class=OpenAICompatibleRoute)
 
 _oauth2 = OAuth2PasswordBearer(tokenUrl='token')
+_T = TypeVar('_T')
 _usage_db = ChatUsageDB()
 
 
@@ -301,17 +306,22 @@ async def chat_completions(
 
     # Every node full: wait in turn — fairly between organisations, then
     # producers — rather than being refused (docs/service-identity.md §19).
+    # A caller who leaves while waiting leaves the queue: the take is
+    # raced against the connection's disconnect, like the non-streamed
+    # completion below, and a slot granted as it gave up goes back.
     queue = FairQueue.of_loop(max_length=settings.chat_queue_max_length)
     try:
-        ai = await queue.take(
-            org=org_id or '',
-            producer=user_id,
-            user_id=user_id,
-            model=requested_model,
-            acquire=acquire,
-            release=pool.release,
-            max_wait=settings.chat_queue_max_wait_seconds,
-            gone=request.is_disconnected,
+        lease = await _unless_the_client_leaves(
+            request,
+            queue.take(
+                org=org_id or '',
+                producer=user_id,
+                user_id=user_id,
+                model=requested_model,
+                acquire=acquire,
+                release=pool.release,
+                max_wait=settings.chat_queue_max_wait_seconds,
+            ),
         )
     except ModelNotAvailableError as exc:
         raise HTTPException(
@@ -337,6 +347,9 @@ async def chat_completions(
             detail='Waited the longest a request may for a free inference node. Please retry.',
             headers={'Retry-After': '30'},
         )
+    if lease is None:
+        return _client_closed(request)
+    ai = lease
 
     # Honour the caller's model choice when set; fall back to whatever
     # model the node advertises only when the caller didn't pick one.
@@ -362,7 +375,122 @@ async def chat_completions(
 
     if body.stream:
         return await _stream_response(url, upstream_headers, upstream_body, ctx, request)
-    return await _non_stream_response(url, upstream_headers, upstream_body, ctx)
+    answer = await _unless_the_client_leaves(request, _non_stream_response(url, upstream_headers, upstream_body, ctx))
+    if answer is None:
+        return _client_closed(request)
+    return answer
+
+
+#: nginx's "client closed request". Never seen by the client, which has
+#: gone; it is what the access log says about the request.
+_CLIENT_CLOSED_REQUEST = 499
+
+#: uvicorn's access logger, so the line lands with the others, formatted alike.
+_access_log = logging.getLogger('uvicorn.access')
+
+
+def _client_closed(request: Request) -> Response:
+    """The answer to a caller who left: a 499, written to the access log here.
+
+    Here, because uvicorn writes no access line for a response to a
+    connection that has already closed — it drops the send — and that is
+    the only kind of connection a 499 is for. The status went nowhere:
+    the rerun's abandoned request left "Client left…" and no access line
+    at all. The line has uvicorn's shape, so whatever counts outcomes in
+    the access log counts this one. B32.
+    """
+    # Starlette's scope is a plain mapping; uvicorn's helpers are typed
+    # for its own scope TypedDicts, which this is at runtime.
+    scope: Any = request.scope
+    _access_log.info(
+        '%s - "%s %s HTTP/%s" %d',
+        get_client_addr(scope),
+        scope['method'],
+        get_path_with_query_string(scope),
+        scope.get('http_version', '1.1'),
+        _CLIENT_CLOSED_REQUEST,
+    )
+    return Response(status_code=_CLIENT_CLOSED_REQUEST)
+
+
+#: Tails a cancelled request handed off rather than abandon: held here,
+#: because the event loop keeps only a weak reference to a task.
+_tails: set[asyncio.Task[None]] = set()
+
+
+async def _whatever_happens(work: Coroutine[Any, Any, None]) -> None:
+    """Run *work* to its end even if the caller is cancelled while it runs.
+
+    For what a request owes after its answer: a usage row and a node's
+    slot. Run in a task of its own and awaited through `asyncio.shield`,
+    so a cancellation — Starlette's when a client disconnects, which it
+    delivers again at every await inside its cancel scope — stops the
+    wait and not the work.
+    """
+    task = asyncio.ensure_future(work)
+    _tails.add(task)
+    task.add_done_callback(_tails.discard)
+    await asyncio.shield(task)
+
+
+async def _until_disconnect(request: Request) -> None:
+    """Return when the caller's connection closes.
+
+    Reads `receive` and waits on it, rather than polling
+    `request.is_disconnected()`. That method looks with a cancel scope
+    that is already cancelled, and behind a `BaseHTTPMiddleware` — this
+    app has several — the disconnect arrives a scheduling step later
+    than that look, so it never saw one: a client that timed out under
+    uvicorn read as connected for the full 30 s of the test that
+    found it. The body has been read by now, so the only message left
+    to come is the disconnect.
+    """
+    while True:
+        message = await request.receive()
+        if message.get('type') == 'http.disconnect':
+            return
+
+
+async def _unless_the_client_leaves(request: Request, work: Coroutine[Any, Any, _T]) -> _T | None:
+    """Run *work*, and cancel it if the caller disconnects first.
+
+    Returns None when the caller left. A streamed response already stops
+    when its client goes — Starlette closes the generator, and that
+    closes the upstream read — but a non-streamed handler runs to the end
+    whether anyone is waiting or not: Starlette does not cancel it on a
+    disconnect. So a client that gave up still had its completion
+    generated, and billed. The igni CLI waits 60 s and retries three
+    times, which made one slow request run four times over and be logged
+    four times.
+
+    Cancelling the work cancels the `httpx` call inside it, which closes
+    the upstream connection — vLLM aborts a request whose connection
+    closes — and the `finally` in `_non_stream_response` still hands the
+    lease back. Only the prompt, estimated, is logged for a completion
+    nobody received: its prefill ran, its answer was never generated in
+    full.
+    """
+    task = asyncio.ensure_future(work)
+    watcher = asyncio.ensure_future(_until_disconnect(request))
+    try:
+        await asyncio.wait({task, watcher}, return_when=asyncio.FIRST_COMPLETED)
+        if task.done():
+            return task.result()
+        if watcher.exception() is not None:
+            # Could not tell whether the caller is there; a receive that
+            # failed is no reason to throw away their answer.
+            logger.warning('Could not watch for a disconnect: %s', watcher.exception())
+            return await task
+        logger.info('Client left before the completion arrived; cancelling the upstream call')
+        return None
+    finally:
+        # `wait`, not `await`: each one's own CancelledError is expected
+        # and not ours to raise, while a cancellation aimed at this
+        # handler still propagates.
+        for pending in (task, watcher):
+            if not pending.done():
+                pending.cancel()
+                await asyncio.wait({pending})
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +596,18 @@ async def _non_stream_response(
         await ctx.release()
 
 
+async def _log_abandoned(ctx: _RequestContext, body: dict, t0: float) -> None:
+    """Usage for a completion its caller left before it came back: the prompt, estimated."""
+    input_tokens, _, _ = TokenEstimator().estimate(body=body, output_pieces=[])
+    await ctx.log_usage(
+        input_tokens=input_tokens,
+        output_tokens=0,
+        total_tokens=input_tokens,
+        duration=time.monotonic() - t0,
+        stream=False,
+    )
+
+
 async def _non_stream_inner(
     url: str,
     headers: dict,
@@ -475,8 +615,18 @@ async def _non_stream_inner(
     ctx: _RequestContext,
     t0: float,
 ) -> ChatCompletionResponse:
-    async with httpx.AsyncClient(timeout=settings.ai.upstream_timeout) as client:
-        resp = await client.post(url, headers=headers, json=body)
+    try:
+        async with httpx.AsyncClient(timeout=settings.ai.upstream_timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
+    except asyncio.CancelledError:
+        # The caller left (`_unless_the_client_leaves`) while the node
+        # was working. The answer is thrown away, but the prompt was
+        # sent and its prefill ran on the GPU: that much is recorded,
+        # estimated the way a stream without a usage block is, with no
+        # output. Shielded, so the cancellation does not take the write
+        # with it — the same way a stream's tail is.
+        await _whatever_happens(_log_abandoned(ctx, body, t0))
+        raise
 
     if resp.status_code != 200:
         logger.error('Upstream AI error %s: %s', resp.status_code, resp.text[:500])
@@ -580,6 +730,82 @@ async def _stream_upstream(url: str, headers: dict, body: dict):
                 yield f'data: {json.dumps(chunk)}\n\n', chunk
 
 
+@dataclass
+class _StreamUsage:
+    """What a stream has used so far: the row written however it ends."""
+
+    t0: float = field(default_factory=time.monotonic)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    output_pieces: list[str] = field(default_factory=list)
+    recorded: bool = False
+
+    def start_over(self) -> None:
+        """A retry on another node: what the failed attempt produced is not billed."""
+        self.output_pieces.clear()
+        self.input_tokens = self.output_tokens = self.total_tokens = 0
+
+
+async def _finish_stream(
+    ctx: _RequestContext,
+    body: dict,
+    used: _StreamUsage,
+    upstream: AsyncGenerator[str, None],
+) -> None:
+    """A stream's tail: close the upstream read, record usage, free the node.
+
+    Once, however the stream ended — read to the end, left mid-way, or
+    left right after `[DONE]`. Without a usage block from the node (a
+    stream cut short never gets one), the prompt and the output so far
+    are estimated, as a cancelled non-streamed request's prompt is.
+    """
+    if used.recorded:
+        return
+    used.recorded = True
+    try:
+        try:
+            # Mid-stream, this is what closes the node's connection, and
+            # vLLM aborts a request whose connection closes.
+            await upstream.aclose()
+        except Exception as exc:  # noqa: BLE001 — the row and the slot still matter
+            logger.warning('Closing the upstream stream failed: %s', exc)
+        input_tokens, output_tokens, total_tokens = used.input_tokens, used.output_tokens, used.total_tokens
+        if not total_tokens:
+            input_tokens, output_tokens, total_tokens = TokenEstimator().estimate(
+                body=body, output_pieces=used.output_pieces
+            )
+        await ctx.log_usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            duration=time.monotonic() - used.t0,
+            stream=True,
+        )
+    finally:
+        await ctx.release()
+
+
+class _StreamThatEnds(StreamingResponse):
+    """A `StreamingResponse` that closes its generator however the response ends.
+
+    Starlette cancels the response when the client disconnects. If the
+    generator was waiting at a `yield` then — its chunk on its way out —
+    nothing closes it: its `finally` waits for the garbage collector,
+    and the node's slot with it. Closing it here runs that `finally` now.
+    """
+
+    def __init__(self, content: AsyncGenerator[str, None], **kwargs: Any) -> None:
+        super().__init__(content, **kwargs)
+        self._generator = content
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await _whatever_happens(self._generator.aclose())
+
+
 async def _stream_response(
     url: str,
     headers: dict,
@@ -589,23 +815,29 @@ async def _stream_response(
 ) -> StreamingResponse:
     body['stream'] = True
 
-    async def _generate():
+    used = _StreamUsage()
+
+    async def _generate() -> AsyncGenerator[str, None]:
+        inner = _generate_inner()
         try:
-            async for piece in _generate_inner():
+            async for piece in inner:
                 yield piece
         finally:
             # Reached on every exit: a completed stream, a client that
             # disconnected mid-stream, or an exception. The disconnect case
             # is the one that mattered — measured at 9 leaks from 9
             # cancelled streams, each held for 900s.
-            await ctx.release()
+            #
+            # And not run *in* the cancellation that brought it here. A
+            # client that closes right after `[DONE]` — the OpenAI SDK and
+            # httpx both do — is a disconnect too, and Starlette cancels
+            # the response's task on it: the usage write was cancelled
+            # mid-query and the release after it never ran, so the
+            # stream went unbilled and its node sat taken for the
+            # 900-second lease timeout. B30.
+            await _whatever_happens(_finish_stream(ctx, body, used, inner))
 
-    async def _generate_inner():
-        t0 = time.monotonic()
-
-        input_tokens = output_tokens = total_tokens = 0
-        output_pieces: list[str] = []
-
+    async def _generate_inner() -> AsyncGenerator[str, None]:
         _last_disconnect_check = time.monotonic()
         current_url = url
         current_headers = headers
@@ -649,13 +881,13 @@ async def _stream_response(
                         continue
                     u = chunk_data.get('usage')
                     if u:
-                        total_tokens = u.get('total_tokens', 0)
-                        input_tokens = u.get('prompt_tokens', 0)
-                        output_tokens = u.get('completion_tokens', 0)
+                        used.total_tokens = u.get('total_tokens', 0)
+                        used.input_tokens = u.get('prompt_tokens', 0)
+                        used.output_tokens = u.get('completion_tokens', 0)
                     for choice in chunk_data.get('choices', []):
                         piece = choice.get('delta', {}).get('content')
                         if piece:
-                            output_pieces.append(piece)
+                            used.output_pieces.append(piece)
                     yield line
                 break  # success — exit retry loop
 
@@ -682,8 +914,7 @@ async def _stream_response(
                         ctx.lease.backend_id,
                     )
                     yield ': retry\n\n'
-                    output_pieces.clear()
-                    input_tokens = output_tokens = total_tokens = 0
+                    used.start_over()
                     await asyncio.sleep(_RETRY_BACKOFF * attempt)
                 else:
                     logger.error('Upstream %s, giving up after attempt %d', label, attempt)
@@ -696,21 +927,9 @@ async def _stream_response(
                     refusal = _answer_for(exc)
                     yield _error_frame(str(refusal.detail), refusal.status_code)
                     break
+        # Usage is recorded by `_finish_stream`, from `used`, on every exit.
 
-        if not total_tokens:
-            input_tokens, output_tokens, total_tokens = TokenEstimator().estimate(
-                body=body, output_pieces=output_pieces
-            )
-
-        await ctx.log_usage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            duration=time.monotonic() - t0,
-            stream=True,
-        )
-
-    return StreamingResponse(
+    return _StreamThatEnds(
         _generate(),
         media_type='text/event-stream',
         headers={

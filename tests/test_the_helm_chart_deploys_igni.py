@@ -1232,8 +1232,50 @@ class TestBackupsAreOffUntilYouChooseWhereTheyGo:
         cron = next(m for m in rendered if m['kind'] == 'CronJob')
         image = cron['spec']['jobTemplate']['spec']['template']['spec']['containers'][0]['image']
 
-        assert image.startswith('postgres:'), image
+        assert image.rsplit('/', 1)[1].startswith('postgres:'), image
         assert image.rsplit(':', 1)[1] != 'latest', image
+
+    def test_it_comes_from_beside_the_api_image(self):
+        """B38. It used to default to `postgres:17.6-alpine`, which is
+        Docker Hub: an air-gapped cluster that turned backups on pulled
+        from the internet or failed. Every offline bundle carries Postgres,
+        and `igni-import` pushes it beside igni-api, so that is where the
+        chart looks."""
+        rendered = _render(*_MINIMAL, '--set', 'backup.enabled=true', '--set', 'backup.existingClaim=c')
+        cron = next(m for m in rendered if m['kind'] == 'CronJob')
+        image = cron['spec']['jobTemplate']['spec']['template']['spec']['containers'][0]['image']
+
+        assert image == 'registry.example.com/igni/postgres:17.6-alpine', image
+
+    def test_a_named_image_still_wins(self):
+        for args in (
+            [
+                '--set',
+                'backup.image.repository=mirror.example.com/pg/postgres',
+                '--set-string',
+                'backup.image.tag=16.4',
+            ],
+            # A full reference, as values files said it before it was a map.
+            ['--set', 'backup.image=mirror.example.com/pg/postgres:16.4'],
+        ):
+            rendered = _render(*_MINIMAL, '--set', 'backup.enabled=true', '--set', 'backup.existingClaim=c', *args)
+            cron = next(m for m in rendered if m['kind'] == 'CronJob')
+            image = cron['spec']['jobTemplate']['spec']['template']['spec']['containers'][0]['image']
+
+            assert image == 'mirror.example.com/pg/postgres:16.4', (args, image)
+
+    def test_with_nowhere_to_take_it_from_it_refuses(self):
+        message = _refuse(
+            *_without('image.repository'),
+            '--set',
+            'image.repository=igni-api',
+            '--set',
+            'backup.enabled=true',
+            '--set',
+            'backup.existingClaim=c',
+        )
+
+        assert 'backup.image.repository is required' in message, message
 
     def test_the_volume_is_writable_by_the_user_that_writes_to_it(self):
         """The Postgres image runs as uid 70, and a PVC is root-owned
@@ -1297,3 +1339,111 @@ class TestTheLicenceIsMountedWhereEveryComponentReadsIt:
         spec = self._api(_render(*_MINIMAL))
 
         assert all(v['name'] != 'licence' for v in spec['volumes'])
+
+
+class TestNothingIsPulledFromAPublicRegistry:
+    """B38, found by the air-gap rehearsal. With the images pointed at a
+    customer's registry, every image any manifest names comes from that
+    registry, with every optional feature on. One public reference is a
+    pull an air-gapped cluster cannot make, and that anywhere else leaves
+    the network unasked.
+
+    Checked on every field called `image`, wherever it is, so a new
+    template with a container of its own is covered without anybody
+    remembering to add it here."""
+
+    _PRIVATE = 'registry.example.com/'
+
+    #: Everything the chart can switch on, with what each one requires.
+    _EVERYTHING = (
+        _FULL
+        + _ARTIFACTS
+        + [
+            '--set',
+            'backup.enabled=true',
+            '--set',
+            'backup.existingClaim=igni-backups',
+            '--set',
+            'monitoring.serviceMonitor.enabled=true',
+            '--set',
+            'monitoring.prometheusRule.enabled=true',
+            '--set',
+            'monitoring.dashboard.enabled=true',
+            '--set',
+            'networkPolicy.enabled=true',
+            '--set',
+            'networkPolicy.ingressFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=ingress-nginx',
+            '--set',
+            'networkPolicy.metricsFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=monitoring',
+            '--set',
+            'marketplace.enabled=true',
+            '--set',
+            'ingress.tls.enabled=true',
+            '--set',
+            'ingress.tls.secretName=igni-tls',
+            '--set',
+            'artifacts.tls.secretName=artifacts-tls',
+            '--set',
+            'licence.existingSecret=igni-licence',
+            '--set',
+            'socialSignIn.googleClientId=igni.apps.googleusercontent.com',
+        ]
+    )
+
+    @staticmethod
+    def _images(node, path: str = '') -> list[tuple[str, str]]:
+        found: list[tuple[str, str]] = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == 'image' and isinstance(value, str):
+                    found.append((f'{path}.image', value))
+                else:
+                    found += TestNothingIsPulledFromAPublicRegistry._images(value, f'{path}.{key}')
+        elif isinstance(node, list):
+            for i, value in enumerate(node):
+                found += TestNothingIsPulledFromAPublicRegistry._images(value, f'{path}[{i}]')
+        return found
+
+    def test_every_feature_is_actually_on(self):
+        rendered = _render(*self._EVERYTHING)
+        kinds = {m['kind'] for m in rendered}
+
+        assert {'CronJob', 'NetworkPolicy', 'ServiceMonitor', 'PrometheusRule', 'Application'} <= kinds, kinds
+
+    def test_every_image_comes_from_the_customers_registry(self):
+        rendered = _render(*self._EVERYTHING)
+        images = [
+            (f'{m["kind"]}/{m["metadata"]["name"]}{path}', image) for m in rendered for path, image in self._images(m)
+        ]
+
+        assert len(images) >= 4, images  # api, portal, migrate, backup
+        public = [(where, image) for where, image in images if not image.startswith(self._PRIVATE)]
+        assert not public, f'pulled from outside {self._PRIVATE}: {public}'
+
+
+class TestGoogleSignInIsOffUntilItIsConfigured:
+    """B39. The chart listed Google in `OAUTH_PROVIDERS` by default. The
+    server already hid the button without credentials, but an air-gapped
+    deployment's configuration then names an outbound sign-in, and a
+    reviewer asks about it. Now it is listed only with a client ID."""
+
+    @staticmethod
+    def _providers(*args: str) -> list[str]:
+        config = next(m for m in _render(*_MINIMAL, *args) if m['metadata']['name'] == 'igni-config')
+        return json.loads(config['data']['OAUTH_PROVIDERS'])
+
+    def test_it_is_off_by_default(self):
+        assert self._providers() == []
+
+    def test_a_client_id_turns_it_on(self):
+        assert self._providers('--set', 'socialSignIn.googleClientId=igni.apps.googleusercontent.com') == ['google']
+
+    def test_an_explicit_list_still_wins(self):
+        off = self._providers(
+            '--set',
+            'socialSignIn.googleClientId=igni.apps.googleusercontent.com',
+            '--set-json',
+            'socialSignIn.providers=[]',
+        )
+
+        assert off == []

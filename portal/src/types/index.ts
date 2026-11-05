@@ -410,7 +410,7 @@ export interface TeamMember {
   full_name: string | null
   role: TeamRole
   status: TeamMemberStatus
-  total_sessions: number
+  total_requests: number
   total_tokens: number
   last_active: string | null
   joined_at: string
@@ -618,6 +618,12 @@ export interface VmProfileSettings {
    * has its memory, snapshots, volume and keys erased. Null: never.
    */
   erase_after_idle_days?: number | null
+  /**
+   * Whether a VM with the profile may reach the internet. False: only what
+   * its node allows. A security grant; a node that may not grant it
+   * (air-gapped, or without the capability) keeps the VM internal-only.
+   */
+  internet?: boolean
 }
 
 export interface VmProfile extends VmProfileSettings {
@@ -662,6 +668,33 @@ export interface VmProfilesOverview {
   profiles: VmProfile[]
   groups: ProducerAssignment[]
   apps: ProducerAssignment[]
+}
+
+/** What an app or an extension asked its VM to get: everything a profile says but its name. */
+export type VmProfileRequested = Omit<VmProfileSettings, 'name'> & {
+  volume_gib?: number
+  volume_max_gib?: number
+}
+
+/** One request, pending until an org admin approves or rejects it (service-identity §12.3). */
+export interface VmProfileRequest {
+  id: string
+  org_id: string
+  subject: { kind: 'app' | 'extension'; id: string; name: string }
+  state: 'pending' | 'approved' | 'rejected'
+  /** Exactly what would run. */
+  requested: VmProfileRequested
+  /** What an approval names: it covers exactly this version. */
+  version: string
+  packages_version: string
+  within_caps: boolean
+  requested_by: { kind: 'app' | 'service'; id: string }
+  requested_at: string
+  decided_by: { kind: string; id: string; acting_as: string } | null
+  decided_at: string | null
+  reason: string | null
+  /** The profile an approval made. */
+  profile_id: string | null
 }
 
 export type ProducerKind = 'person' | 'app'

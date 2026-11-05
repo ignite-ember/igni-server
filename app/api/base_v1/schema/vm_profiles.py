@@ -24,10 +24,12 @@ MAX_VOLUME_GIB = 65536
 MAX_IDLE_DAYS = 3650
 
 
-class VmProfileSettings(BaseModel):
-    """Everything a profile says — what an org admin writes, whole."""
+class VmProfileShape(BaseModel):
+    """Everything a profile says but its name: what a VM gets from it.
 
-    name: str = Field(min_length=1, max_length=60)
+    Also what an app or an extension asks for (`VmProfileRequestSettings`).
+    """
+
     #: The most memory the VM may have: its size at boot, which cannot
     #: change while it runs. Left out: the deployment's Standard value
     #: (`settings.cloud_vm`), as for every field below that has one.
@@ -62,20 +64,32 @@ class VmProfileSettings(BaseModel):
     erase_after_idle_days: int | None = Field(
         default_factory=lambda: settings.cloud_vm.standard_erase_after_idle_days, ge=1, le=MAX_IDLE_DAYS
     )
+    #: Whether the VM may reach the internet. False (the default): only
+    #: what its node allows (`[[network.allow]]`). True is a security
+    #: grant an org admin makes, or approves when an app or an extension
+    #: asks; a node that may not grant internet (air-gapped, or without the
+    #: capability) still starts the VM internal-only (§12.4).
+    internet: bool = False
 
     @model_validator(mode='after')
-    def _volume_fits(self) -> VmProfileSettings:
+    def _volume_fits(self) -> VmProfileShape:
         if self.volume_gib > self.volume_max_gib:
             raise ValueError('volume_gib may not exceed volume_max_gib')
         return self
 
     @model_validator(mode='after')
-    def _normal_fits(self) -> VmProfileSettings:
+    def _normal_fits(self) -> VmProfileShape:
         if self.normal_memory_mib > self.memory_mib:
             raise ValueError('normal_memory_mib may not exceed memory_mib')
         if self.expected_memory_mib is not None and self.expected_memory_mib > self.memory_mib:
             raise ValueError('expected_memory_mib may not exceed memory_mib')
         return self
+
+
+class VmProfileSettings(VmProfileShape):
+    """Everything a profile says — what an org admin writes, whole."""
+
+    name: str = Field(min_length=1, max_length=60)
 
 
 class VmProfileResponse(VmProfileSettings):

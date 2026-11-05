@@ -212,7 +212,7 @@ class TestWhatItRefusesToDo:
         """A customer installs three artefacts. This register describes
         one, and saying so is better than implying coverage."""
         prose = ' '.join(_DOC.read_text().split())
-        assert 'ember-code' in prose and 'igni__code-index' in prose
+        assert '`igni`' in prose and 'igni__code-index' in prose
 
     def test_it_declares_no_sub_processors_rather_than_inventing_any(self):
         prose = ' '.join(_DOC.read_text().split())

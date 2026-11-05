@@ -39,7 +39,7 @@ import sys
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TRACKER = _ROOT / 'docs/COMPLIANCE_TRACKER.md'
 _READINESS = _ROOT / 'docs/REVIEW_FINDINGS.md'
-_EMBER_CODE = _ROOT.parent / 'ember-code'
+_IGNI = _ROOT.parent / 'igni'
 _CODE_INDEX = _ROOT.parent / 'igni__code-index'
 _OUTPUT = _ROOT / 'docs/DECISIONS.md'
 
@@ -72,7 +72,7 @@ class Decision:
     #: on which branch it has checked out. A document that changes with
     #: the reader's filesystem cannot be committed and checked, which is
     #: exactly what happened: the generator is green on a developer's
-    #: machine, where ``../ember-code`` exists, and red in CI, where it
+    #: machine, where ``../igni`` exists, and red in CI, where it
     #: never does. The resolver is still run by ``--check-siblings``,
     #: which reports without touching the document.
     evidence_in: str = ''
@@ -120,7 +120,7 @@ def updater_endpoint_is_configurable() -> bool:
     request: a check that consults a setting one process away can be
     reached without consulting it.
     """
-    lib = _EMBER_CODE / 'clients/tauri/src-tauri/src/lib.rs'
+    lib = _IGNI / 'clients/tauri/src-tauri/src/lib.rs'
     if not lib.exists():
         return False
     source = lib.read_text()
@@ -151,7 +151,7 @@ def cli_api_url_default_is_gone() -> bool:
     """DP-5a. Answered when the CLI no longer defaults `api_url` to a
     vendor host."""
     for candidate in ('src/ember_code/core/config/settings.py', 'src/ember_code/config.py'):
-        path = _EMBER_CODE / candidate
+        path = _IGNI / candidate
         if path.exists():
             text = path.read_text()
             match = re.search(r'api_url[^=\n]*=\s*[\'"]([^\'"]*)[\'"]', text)
@@ -226,12 +226,12 @@ DECISIONS: tuple[Decision, ...] = (
         'The first. It changes what a release *is* — a mirrored artefact somebody publishes — '
         'which is why it is a decision rather than a change.',
         'updater_endpoint_is_configurable',
-        decided='A configurable endpoint. It lives in `ember-code`, so this reads `decided` '
+        decided='A configurable endpoint. It lives in `igni`, so this reads `decided` '
         'until the Tauri config stops naming a single host — the state that did not exist '
         'before this decision was taken.',
-        unverifiable='The evidence is in `ember-code`, a separate repository. Run '
+        unverifiable='The evidence is in `igni`, a separate repository. Run '
         '`make docs-check-siblings` beside a checkout of it to see what the code says today.',
-        evidence_in='ember-code',
+        evidence_in='igni',
         rows=('DP-5',),
     ),
     Decision(
@@ -322,12 +322,12 @@ DECISIONS: tuple[Decision, ...] = (
                 'default to.',
             ),
         ),
-        'The first, and it lives in `ember-code` — which is why B3 is `blocked` here rather than open.',
+        'The first, and it lives in `igni` — which is why B3 is `blocked` here rather than open.',
         'cli_api_url_default_is_gone',
-        decided='Empty default plus a refusal path, in `ember-code`.',
-        unverifiable='The evidence is in `ember-code`, a separate repository. Run '
+        decided='Empty default plus a refusal path, in `igni`.',
+        unverifiable='The evidence is in `igni`, a separate repository. Run '
         '`make docs-check-siblings` beside a checkout of it to see what the code says today.',
-        evidence_in='ember-code',
+        evidence_in='igni',
         rows=('DP-5',),
     ),
     Decision(

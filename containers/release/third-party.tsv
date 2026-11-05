@@ -1,0 +1,27 @@
+# Third-party images that go into each offline release bundle: images an
+# install runs that are not built by any Ignite Ember repository. Read by
+# the `offline-bundle` job in .github/workflows/cd.yml.
+#
+# Postgres is here for the chart's backup CronJob (`pg_dump`), which takes
+# its image from beside image.repository: registry.example.com/igni/igni-api
+# gives registry.example.com/igni/postgres:<tag>. Without it in the bundle,
+# an air-gapped install that turned backups on pulled from Docker Hub, or
+# failed to (B38). The chart deploys no database, so this is the client
+# only; keep the tag the chart's `backup.image.tag`.
+#
+# Pinned by digest: the upstream tag can move, and what is reviewed here is
+# the digest. CD copies it to ghcr.io/ignite-ember/<name>:<tag> with that
+# digest preserved, refuses if GHCR stores another, and signs and attests
+# it with the release key like every other image in the bundle. Bumping
+# one is a line in a pull request:
+#
+#   skopeo inspect --raw docker://docker.io/library/postgres:<tag> | sha256sum
+#
+# (the raw manifest: the image index, not one platform's entry).
+#
+# Columns, separated by whitespace:
+#   name     — on GHCR (ghcr.io/ignite-ember/<name>), in the bundle and in
+#              the customer's registry: one name everywhere
+#   upstream — where it is copied from, pinned by digest
+#   tag      — the tag it carries on GHCR, in the bundle and after import
+postgres  docker.io/library/postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94  17.6-alpine

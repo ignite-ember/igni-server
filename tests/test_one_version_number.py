@@ -109,3 +109,19 @@ def test_the_chart_still_refuses_latest():
 
     helpers = (_ROOT / 'charts/igni/templates/_helpers.tpl').read_text()
     assert 'latest' in helpers, 'the refusal of `latest` is no longer implemented'
+
+
+def test_the_version_has_a_changelog_entry_and_release_notes():
+    """A release is the version, its CHANGELOG.md section and its notes
+    (docs/RELEASING.md). Bumping the number without them is how a tag
+    ends up with nothing to say what it holds."""
+    version = _pyproject_version()
+    changelog = (_ROOT / 'CHANGELOG.md').read_text()
+
+    assert '## [Unreleased]' in changelog, 'CHANGELOG.md has no [Unreleased] section to collect the next changes in'
+    assert re.search(
+        rf'^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$', changelog, re.M
+    ), f'CHANGELOG.md has no dated section for {version}'
+    assert (
+        _ROOT / 'docs' / 'releases' / f'v{version}.md'
+    ).is_file(), f'no release notes at docs/releases/v{version}.md'

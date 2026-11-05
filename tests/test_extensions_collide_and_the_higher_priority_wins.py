@@ -30,7 +30,7 @@ from app.services.identity.impact import (
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'extension_impact_cases.json'
 CASES: dict[str, Any] = json.loads(FIXTURE.read_text())
-IGNI = Path(__file__).resolve().parents[2] / 'ember-code'
+IGNI = Path(__file__).resolve().parents[2] / 'igni'
 
 
 def _resolver(case: dict[str, Any]) -> ImpactResolver:
@@ -82,7 +82,7 @@ def test_an_event_igni_does_not_have_is_refused():
 
 def test_the_hook_events_are_igni_s():
     """The list here is igni's HookEvent, and the deciding five its DECIDING."""
-    igni = Path(__file__).resolve().parents[2] / 'ember-code' / 'src' / 'ember_code' / 'core' / 'hooks'
+    igni = Path(__file__).resolve().parents[2] / 'igni' / 'src' / 'ember_code' / 'core' / 'hooks'
     if not igni.is_dir():
         pytest.skip('igni is not checked out beside igni server')
     events = set(re.findall(r'= "([A-Za-z]+)"', (igni / 'events.py').read_text()))

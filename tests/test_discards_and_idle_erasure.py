@@ -156,11 +156,16 @@ class TestTheProfileSays:
         assert response.status_code == 422
 
     async def test_unset_it_leaves_every_version_as_it_was(self, client, acme):
-        """Adding the field must not change every producer's version: the gateway would re-provision every VM."""
+        """Adding the field must not change every producer's version: the gateway would re-provision every VM.
+
+        `internet` came later still (t0026) and is left out the same way."""
         [standard] = (await client.get(_profiles(acme), headers=acme.admin)).json()['profiles']
         settings_now = VmProfiles.settings_of(await VmProfiles().default(acme.org_id))
-        before = ProfileVersion._digest(
-            {'id': standard['id'], **settings_now.model_dump(mode='json', exclude={'erase_after_idle_days'})}
+        before = ProfileVersion.digest(
+            {
+                'id': standard['id'],
+                **settings_now.model_dump(mode='json', exclude={'erase_after_idle_days', 'internet'}),
+            }
         )
 
         assert standard['version'] == before
@@ -562,9 +567,7 @@ class TestDiscardingARemovedMember:
         assert (shown['state'], shown['exports'], shown['incarnation']) == ('scheduled', 1, incarnation)
 
     async def test_nobody_removed_is_a_404(self, client, acme):
-        response = await client.post(
-            f'/portal/orgs/{acme.org_id}/members/nobody/discard', json={}, headers=acme.admin
-        )
+        response = await client.post(f'/portal/orgs/{acme.org_id}/members/nobody/discard', json={}, headers=acme.admin)
 
         assert response.status_code == 404
 

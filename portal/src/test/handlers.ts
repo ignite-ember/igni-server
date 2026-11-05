@@ -24,6 +24,16 @@ const ME_DEFAULT = {
 export const defaultHandlers = [
   http.get('/v1/portal/me', () => HttpResponse.json(ME_DEFAULT)),
 
+  // A deployment with local accounts only: what the chart installs by
+  // default, and every air-gapped one (no Google, no SSO).
+  http.get('/v1/auth/methods', () =>
+    HttpResponse.json({
+      password: true,
+      oauth_providers: [],
+      sso: { enabled: false, label: 'SSO', start_url: '/v1/auth/oidc' },
+    }),
+  ),
+
   // The free base with no paid modules: nothing to say about a licence.
   http.get('/v1/portal/licence/notice', () => HttpResponse.json({ warnings: [] })),
 
@@ -40,7 +50,7 @@ export const defaultHandlers = [
           full_name: 'Alex Chen',
           role: 'admin',
           status: 'active',
-          total_sessions: 0,
+          total_requests: 0,
           total_tokens: 0,
           last_active: null,
           joined_at: '2026-01-01T00:00:00Z',
@@ -75,6 +85,8 @@ export const defaultHandlers = [
     HttpResponse.json({ entries: [], total: 0 }),
   ),
   http.get('/v1/portal/me/group', () => HttpResponse.json(null)),
+  // No app or extension has asked for a VM profile.
+  http.get('/v1/portal/orgs/:orgId/vm-profile-requests', () => HttpResponse.json({ requests: [] })),
   http.get('/v1/portal/me/group/pack', () => HttpResponse.json(null)),
 
   // The inference page polls this; a deployment with no GPUs configured

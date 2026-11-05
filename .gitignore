@@ -9,7 +9,7 @@
 ### Node (the portal keeps its own; a root one is only ever a stray cache) ###
 node_modules/
 
-### Local ember-code workspace (user-specific symlink or directory) ###
+### Local igni workspace (user-specific symlink or directory) ###
 /.igni
 # The pre-rename name, kept so an unmigrated workspace stays ignored.
 /.ember

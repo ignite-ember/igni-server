@@ -13,6 +13,7 @@ from app.api.base_v1.schema.portal.user import (
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import LastSuperAdmin, UserDB
+from app.services.cloud.producer_feed import ProducerFeed
 from app.services.identity.organisation_deletions import OrganisationDeletions
 
 logger = logging.getLogger(__name__)
@@ -156,11 +157,12 @@ class UserService:
         # deletion request, because it is the one they will not
         # discover until they try.
         try:
-            await self._user_db.delete_account(
-                user_id=current_user.user_id,
-                delete_org_ids=delete_org_ids,
-                leave_org_ids=leave_org_ids,
-            )
+            async with ProducerFeed().removal():
+                await self._user_db.delete_account(
+                    user_id=current_user.user_id,
+                    delete_org_ids=delete_org_ids,
+                    leave_org_ids=leave_org_ids,
+                )
         except LastSuperAdmin as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

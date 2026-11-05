@@ -54,6 +54,11 @@ class VmProfile(TenantBase):
     #: fresh); null is never. Never applied to a person's VM. At most the
     #: platform's `max_erase_after_idle_days` (`docs/service-identity.md` §12.2).
     erase_after_idle_days: Mapped[int | None] = Column(Integer, nullable=True)
+    #: Whether a VM with this profile may reach the internet. False: it
+    #: reaches only what its node allows (`[[network.allow]]`). Granting
+    #: it is a security decision; a node that may not grant it (air-gapped,
+    #: or without the capability) starts the VM internal-only anyway.
+    internet: Mapped[bool] = Column(Boolean, nullable=False, server_default=text('false'), default=False)
     created_by_user_id: Mapped[str | None] = Column(Text, nullable=True)
     updated_by_user_id: Mapped[str | None] = Column(Text, nullable=True)
     created_at: Mapped[datetime] = Column(

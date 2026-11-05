@@ -11,6 +11,7 @@ from .endpoints.client import (
     oidc,
 )
 from .endpoints.cloud import (
+    app_vm_profile as cloud_app_vm_profile,
     mcp_approvals as cloud_mcp_approvals,
     my_events as cloud_my_events,
     spaces as cloud_spaces,
@@ -23,6 +24,7 @@ from .endpoints.identity import (
     revocations as identity_revocations,
     service_events as identity_events,
     service_notifications as identity_notifications,
+    service_vm_profile as identity_vm_profile,
     token as identity_token,
 )
 from .endpoints.platform import (
@@ -81,6 +83,7 @@ router.include_router(identity_directory.router, tags=['Directory'])
 router.include_router(identity_extensions.router)
 router.include_router(identity_notifications.router)
 router.include_router(identity_events.router)
+router.include_router(identity_vm_profile.router)
 router.include_router(identity_revocations.router)
 # Documents are not served here. They live in `igni__artifacts`, which
 # the CLI reaches directly with a token igni issues for it, and which
@@ -145,3 +148,5 @@ router.include_router(cloud_mcp_approvals.router, tags=['MCP approvals'])
 router.include_router(cloud_my_events.router, tags=['Events'])
 # An app's spaces: a producer per end user of the app (§17).
 router.include_router(cloud_spaces.router, tags=['Spaces'])
+# An app asking for its VM's profile, and reading what it has (§12.3).
+router.include_router(cloud_app_vm_profile.router, tags=['VM profiles'])

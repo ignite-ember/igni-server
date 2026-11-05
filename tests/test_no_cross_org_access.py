@@ -102,6 +102,10 @@ CROSS_ORG_CALLS: list[tuple[str, str]] = [
     ('DELETE', '/portal/orgs/{org_b}/vm-profiles/{other}'),
     ('PUT', '/portal/orgs/{org_b}/groups/{group}/vm-profile'),
     ('PUT', '/portal/orgs/{org_b}/apps/{other}/vm-profile'),
+    # And the requests apps and extensions make for a profile (§12.3).
+    ('GET', '/portal/orgs/{org_b}/vm-profile-requests'),
+    ('POST', '/portal/orgs/{org_b}/vm-profile-requests/{other}/approve'),
+    ('POST', '/portal/orgs/{org_b}/vm-profile-requests/{other}/reject'),
     ('GET', '/portal/orgs/{org_b}/vm-quota'),
     ('PUT', '/portal/orgs/{org_b}/vm-quota'),
     # So do the limits on an app's spaces (§17.4).
