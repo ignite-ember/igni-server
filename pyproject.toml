@@ -49,7 +49,7 @@ dependencies = [
     # also what requires greenlet, so the explicit pin below is now a
     # second place naming one version; left alone rather than removed in
     # the same change, since nothing here is broken by it.
-    "sqlalchemy[asyncio]>=2.0.40,<2.1",
+    "sqlalchemy[asyncio]>=2.0.40,<2.2",
     "psycopg2-binary==2.9.13",
     "asyncpg>=0.30.0",
     "python-multipart>=0.0.20",
