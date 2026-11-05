@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { ActionList, ActionMenu, Dialog, FormControl, NavList, Stack, Text, TextInput } from '@primer/react'
+import { ActionList, ActionMenu, Dialog, FormControl, NavList, Stack, Text, TextInput, VisuallyHidden } from '@primer/react'
 import { SkeletonAvatar } from '@primer/react/experimental'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation } from 'react-router-dom'
@@ -412,7 +412,10 @@ export function Sidebar() {
         {/* Org section */}
         <ActionMenu>
           <ActionMenu.Anchor>
-            <button ref={createOrgRef} className="sidebar-org-section" aria-label="Switch organization">
+            {/* Named by what it shows, then what it does: an aria-label would
+                replace the visible org name, and a voice-control user who
+                says the name they see would miss it (WCAG 2.5.3). */}
+            <button ref={createOrgRef} className="sidebar-org-section">
               {activeOrg ? <OrgInitial name={activeOrg.display_name} /> : <OrganizationIcon size={16} />}
               <span className="sidebar-org-text">
                 <span className="sidebar-org-name">
@@ -420,6 +423,7 @@ export function Sidebar() {
                 </span>
                 <span className="sidebar-org-role">{orgRole}</span>
               </span>
+              <VisuallyHidden>Switch organization</VisuallyHidden>
               <ChevronDownIcon size={16} />
             </button>
           </ActionMenu.Anchor>
@@ -478,13 +482,14 @@ export function Sidebar() {
         {/* User section */}
         <ActionMenu>
           <ActionMenu.Anchor>
-            <button ref={userBtnRef} className="sidebar-user-section" aria-label="User menu">
+            <button ref={userBtnRef} className="sidebar-user-section">
               {meQuery.isLoading ? (
                 <SkeletonAvatar size={20} />
               ) : (
                 <UserInitials name={displayName} size={20} />
               )}
               <span className="sidebar-user-name">{meQuery.isLoading ? '' : displayName}</span>
+              <VisuallyHidden>User menu</VisuallyHidden>
             </button>
           </ActionMenu.Anchor>
           <ActionMenu.Overlay>

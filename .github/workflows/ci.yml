@@ -353,7 +353,7 @@ jobs:
     # a bare runner is a different set of both — so the job runs where
     # the baselines came from rather than hoping the two agree. Pinned
     # to the same version as package.json; bump both together. E4.
-    container: mcr.microsoft.com/playwright:v1.60.0-noble
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
     defaults:
       run:
         working-directory: portal
