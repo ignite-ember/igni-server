@@ -46,7 +46,7 @@ jobs:
           ref: ${{ env.IGNI_CLI_REF }}
           path: igni
 
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       # The CLI pins its own Python (3.12); uv fetches it.
       - name: Install the CLI
