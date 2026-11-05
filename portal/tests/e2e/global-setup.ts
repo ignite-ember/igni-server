@@ -51,6 +51,7 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
       throw new Error(
         `PORTAL_URL was set, so this run claims to test a deployment, ` +
           `and ${message}`,
+        { cause: err },
       )
     }
     console.log(
