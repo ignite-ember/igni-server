@@ -5,10 +5,10 @@ You carry it into your network, verify it with a public key you already
 hold, and import it into your own container registry when it suits you.
 Nothing in this process contacts Ignite Ember or the internet.
 
-**Status.** The bundle format, the signing steps in CD and `igni-import` are
+**Status.** The bundle format, the release workflow's signing steps and `igni-import` are
 built and tested (`tests/test_an_offline_bundle_is_verified_before_import.py`).
 The release keys are not: the key ceremony at the end of this document has
-not happened, so CD cannot sign yet and no bundle has been produced. Until it
+not happened, so no release can be signed yet and no bundle has been produced. Until it
 has, Ignite Ember cannot give you the public keys this document asks you to
 hold.
 
@@ -189,7 +189,7 @@ update (Art. 13(9)).
 | Their signatures and SBOM attestations | beside each image, at `sha256-<digest>.sig` and `.att` | as the image |
 | Module images | `ghcr.io/ignite-ember/<name>:<version>`, by their own CD | as the image |
 | Release notes and changelog | the git tag `v<version>`, its GitHub Release, `CHANGELOG.md` | as the repository |
-| The bundle as a CI artefact | the CD run | 90 days; a convenience copy, not the record |
+| The bundle as a CI artefact | the release run, in the private `igni__release` | 90 days; a convenience copy, not the record |
 
 GitHub Container Registry keeps a package version until somebody deletes
 it; there is no expiry to configure. The rule that makes this a policy:
@@ -209,15 +209,22 @@ Two things are a person's to do once, after the first bundle is kept:
 
 ## For Ignite Ember: how a bundle is made
 
-`.github/workflows/cd.yml` on `main`, in the private development
-repository `ignite-ember/igni__server` only. The public mirror
-`ignite-ember/igni-server` carries the same workflow but runs only its
-tests: a bundle holds the paid module images, and a public repository's CI
-artefacts are downloadable by any signed-in GitHub user, so the image
-builds, the bundle and its GHCR push are guarded by `github.repository ==
-'ignite-ember/igni__server'`. The module packages on GHCR stay private,
-readable by `igni__server`'s workflows only (package settings, "Manage
-Actions access").
+`.github/workflows/release.yml` in this repository, called from the
+private repository `ignite-ember/igni__release` with the tag or commit to
+release (docs/RELEASING.md). A bundle holds the paid module images, and a
+public repository's CI artefacts are downloadable by any signed-in GitHub
+user, so the release runs only in a run that belongs to `igni__release`:
+its first job, `resolve`, is guarded by `github.repository ==
+'ignite-ember/igni__release'` (in a called workflow that is the caller),
+and every other job needs it. `resolve` also refuses a ref that is not on
+`main` of this repository, or whose CD run on `main` (the tests) did not
+pass, and every job checks out the commit it resolved. This repository's
+own `cd.yml` runs the tests on each push to `main` and builds nothing.
+`igni__release` holds no source: one caller workflow, the `prod`
+environment and the keys. The module packages on GHCR stay private,
+readable by `igni__release`'s workflows only (package settings, "Manage
+Actions access"); `igni-api`, `igni-portal` and `igni-bundle` grant it
+write access the same way.
 
 Each image job pushes its image to
 `ghcr.io/ignite-ember/<name>` with `GITHUB_TOKEN`, signs it by digest and
@@ -238,12 +245,15 @@ its release directory (scripts/release/sign.sh in its repository) and, on
 master, pushes it to `ghcr.io/ignite-ember/igni-fleet:<version>` with
 `oras push`, once per version and never unsigned. Until Fleet's first
 signed push of the pinned version exists, and until that package grants
-this repository read access ("Manage Actions access"), the bundle job
+`igni__release` read access ("Manage Actions access"), the bundle job
 fails at `oras pull` rather than ship a bundle without Fleet.
 
 **Dev, stage and prod on one registry.** The three branches used to push
 into three Google Cloud projects. On GHCR each image has one name and the
-environment is in the tag, the same in all three repositories:
+environment is in the tag. igni server's images are built for releases
+only now, so `igni-api` and `igni-portal` get the `main` row alone, from
+`igni__release`; the module repositories still push all three, and the
+`dev-` and `stage-` tags pushed earlier remain:
 
 | Branch | GitHub environment | Tags pushed |
 |---|---|---|
@@ -256,15 +266,18 @@ release tags (the commit for igni-api and igni-portal, the pinned version
 for the modules). The naming is a convention; the guarantee is the key.
 `GITHUB_TOKEN` from any branch can write any tag of a package, and GHCR
 has no immutable tags, so what stops a non-release image reaching a
-customer is that the release cosign key lives in the `prod` environment
-only, whose deployment branch policy allows `main` only, and the bundle
-job refuses any image that key did not sign. `dev` and `stage` sign with a
-separate, non-release cosign key pair under the same secret names.
+customer is that the release cosign key lives in the `prod` environments
+only, whose deployment branch policy allows `main` only (for igni server,
+`igni__release`'s `main`, which runs the release from a commit on this
+repository's `main`), and the bundle job refuses any image that key did
+not sign. The modules' `dev` and `stage` sign with a separate,
+non-release cosign key pair under the same secret names.
 
 Secrets and variables, set on the `prod` GitHub environment of
-`igni__server` (not the public mirror), and the cosign ones also on the `prod` environments of
+`igni__release` (never on this public repository, whose workflows use
+no environment), and the cosign ones also on the `prod` environments of
 `igni__artifacts` and `igni__code-index`. Every push is signed, so the
-`dev` and `stage` environments of all three need the cosign names too,
+`dev` and `stage` environments of those two need the cosign names too,
 holding the non-release pair:
 
 | Name | Kind | Content |

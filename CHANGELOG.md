@@ -15,6 +15,19 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
+### Changed
+
+- Releases are built, signed and sealed by `.github/workflows/release.yml`,
+  run from the private repository `ignite-ember/igni__release` with a tag
+  or a commit on `main`, and only for a commit whose tests passed on `main`
+  ([docs/RELEASING.md](docs/RELEASING.md)). `cd.yml` runs the tests on each
+  push to `main` and builds nothing.
+
+### Removed
+
+- The `dev` and `stage` images of `igni-api` and `igni-portal` (`:dev-<sha>`,
+  `:dev`, `:stage-<sha>`, `:stage`): nothing deployed them.
+
 ## [0.6.0] - 2026-11-03
 
 The first tagged release. Versions before it were not tagged, so this entry

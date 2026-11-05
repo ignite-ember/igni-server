@@ -37,6 +37,7 @@ import yaml
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _BUNDLE = _ROOT / 'tools/release/igni-bundle'
 _IMPORT = _ROOT / 'tools/release/igni-import'
+_RELEASE = _ROOT / '.github/workflows/release.yml'
 _CD = _ROOT / '.github/workflows/cd.yml'
 
 _VERSION = '0.6.0'
@@ -87,7 +88,7 @@ class KeyPair(BaseModel):
 
 
 class Sealed(BaseModel):
-    """A bundle as CD produces it, and what is needed to import it."""
+    """A bundle as the release produces it, and what is needed to import it."""
 
     tarball: pathlib.Path
     staging: pathlib.Path
@@ -320,7 +321,7 @@ class TestTheTarball:
         assert not [n for n in names if pathlib.PurePosixPath(n).name.startswith('._')]
 
     def test_a_password_protected_key_signs_with_minisign_password(self, sealed: Sealed, tmp_path: pathlib.Path):
-        """How CD signs: the secret key is encrypted and its password is a
+        """How the release signs: the secret key is encrypted and its password is a
         second secret, read from the environment rather than a terminal."""
         protected = _keypair(tmp_path, name='protected', password=_PASSWORD)
         argv = [
@@ -716,31 +717,31 @@ def containers_release_names() -> list[str]:
     return names
 
 
-class TestCdSignsWhatItShips:
+class TestTheReleaseSignsWhatItShips:
     """The workflow half. Air-gapped customers verify with a public key and
     no network, so signing must be key-based and must not depend on a
     transparency log they cannot reach."""
 
-    def _cd(self) -> dict:
-        return yaml.safe_load(_CD.read_text())
+    def _release(self) -> dict:
+        return yaml.safe_load(_RELEASE.read_text())
 
     def _runs(self, job: dict) -> str:
         return '\n'.join(str(step.get('run') or '') for step in job.get('steps') or [])
 
     def test_every_job_that_pushes_an_image_signs_and_attests_it_with_the_key(self):
-        cd = self._cd()
-        pushing = {name: job for name, job in cd['jobs'].items() if 'docker push' in self._runs(job)}
+        release = self._release()
+        pushing = {name: job for name, job in release['jobs'].items() if 'docker push' in self._runs(job)}
 
         # A `skopeo copy` into GHCR is a push too: the third-party mirror.
         pushing.update(
             {
                 name: job
-                for name, job in cd['jobs'].items()
+                for name, job in release['jobs'].items()
                 if re.search(r'skopeo copy [^\n]*"docker://\$\{REGISTRY\}/', self._runs(job))
             }
         )
 
-        assert pushing, 'no job in cd.yml pushes an image; this test is stale'
+        assert pushing, 'no job in release.yml pushes an image; this test is stale'
         assert 'offline-bundle' in pushing, 'the third-party mirror is no longer seen as a push'
         for name, job in pushing.items():
             script = self._runs(job)
@@ -749,34 +750,77 @@ class TestCdSignsWhatItShips:
             assert '--tlog-upload=false' in script, f'{name} uploads to a public transparency log'
 
     def test_signing_is_never_keyless(self):
-        text = _CD.read_text()
+        text = _RELEASE.read_text()
 
         assert 'COSIGN_EXPERIMENTAL' not in text
         for line in re.findall(r'cosign (?:sign|attest)\b[^\n]*', text):
             assert '--key' in line, line
 
-    def test_a_release_on_main_is_sealed_into_a_bundle(self):
-        cd = self._cd()
-        job = cd['jobs']['offline-bundle']
+    def test_a_release_from_main_is_sealed_into_a_bundle(self):
+        release = self._release()
+        job = release['jobs']['offline-bundle']
         script = self._runs(job)
 
-        assert "needs.resolve-env.outputs.env == 'prod'" in str(job.get('if'))
+        assert job.get('environment') == 'prod', 'the bundle is not sealed with the release keys'
+        assert 'resolve' in job.get('needs', []), 'the bundle does not wait for the ref to be resolved to main'
         assert 'tools/release/igni-bundle seal' in script
         assert '--public-key' in script, 'the bundle job does not check its own signature'
+        assert '--commit "${{ needs.resolve.outputs.sha }}"' in script, 'the MANIFEST does not name the commit built'
         uploads = [s for s in job['steps'] if str(s.get('uses', '')).startswith('actions/upload-artifact')]
         assert uploads and 'igni-bundle-' in str(uploads[0]['with']['path'])
 
-    #: The private development repository; the only one that releases (S27).
-    _PRIVATE = "github.repository == 'ignite-ember/igni__server'"
+    def test_only_a_commit_on_main_that_passed_the_tests_is_released(self):
+        """The ref is a tag or a SHA a person types. A tag on a branch, or a
+        commit main never had, would be released unreviewed; one whose
+        tests never passed, untested (F74)."""
+        release = self._release()
+        resolve = release['jobs']['resolve']
+        script = self._runs(resolve)
+
+        triggers = release.get('on', release.get(True))  # PyYAML reads `on:` as True
+        assert triggers['workflow_call']['inputs']['ref']['required'] is True
+        checkout = resolve['steps'][0]
+        assert str(checkout['uses']).startswith('actions/checkout@')
+        assert checkout['with']['repository'] == 'ignite-ember/igni-server'
+        assert checkout['with']['ref'] == '${{ inputs.ref }}'
+        assert checkout['with']['fetch-depth'] == 0, 'without the history there is no origin/main to check against'
+        assert 'git merge-base --is-ancestor "${sha}" origin/main' in script
+        assert 'exit 1' in script
+        assert 'pyproject.toml' in script
+        assert 'actions/workflows/cd.yml/runs?head_sha=${SHA}&branch=main&event=push&status=success' in script
+        assert set(resolve['outputs']) == {'sha', 'version'}
+
+    def test_every_checkout_is_the_resolved_commit_of_the_public_repository(self):
+        """In a called workflow a bare checkout is the caller's repository,
+        igni__release, which holds no source; and `github.sha` is the
+        caller's commit. Every job after `resolve` builds the SHA it
+        resolved, never the ref, which can move."""
+        release = self._release()
+        text = _RELEASE.read_text()
+
+        assert 'github.sha' not in text and 'GITHUB_SHA' not in text, 'the caller\'s commit is named'
+        assert 'GITHUB_REPOSITORY' not in text and 'github.repository }}' not in text
+        for name, job in release['jobs'].items():
+            checkouts = [s for s in job.get('steps') or [] if str(s.get('uses', '')).startswith('actions/checkout@')]
+            assert checkouts, f'{name} checks nothing out'
+            for step in checkouts:
+                assert step['with']['repository'] == 'ignite-ember/igni-server', name
+                if name != 'resolve':
+                    assert step['with']['ref'] == '${{ needs.resolve.outputs.sha }}', name
+
+    #: The private release repository; the only one that releases (S27).
+    #: In a called workflow `github.repository` is the caller's.
+    _PRIVATE = "github.repository == 'ignite-ember/igni__release'"
 
     def test_bundles_and_images_are_made_in_the_private_repository_only(self):
         """The bundle carries the paid module images, and a public
         repository's CI artefacts are downloadable by any signed-in GitHub
-        user. The public mirror carries this same cd.yml, so every job that
-        pulls, builds, pushes or uploads an image or a bundle must name the
-        private repository in its own condition (S27)."""
-        cd = self._cd()
-        jobs = cd['jobs']
+        user. release.yml lives in this public repository and is called by
+        the private one, so `resolve` names the private repository in its
+        condition and every other job needs `resolve`: a fork, or this
+        repository, calling it runs nothing (S27)."""
+        release = self._release()
+        jobs = release['jobs']
         releasing = {
             name: job
             for name, job in jobs.items()
@@ -793,18 +837,56 @@ class TestCdSignsWhatItShips:
             )
         }
         assert {'build-backend', 'build-portal', 'offline-bundle'} <= set(releasing)
-        for name, job in releasing.items():
-            assert self._PRIVATE in str(job.get('if')), f'{name} could run in the public mirror'
-        assert "github.repository == 'ignite-ember/igni-server'" not in str(jobs['offline-bundle'].get('if'))
-        # resolve-env lets both of igni's repositories run the tests, and
-        # no fork: a fork has no keys, and every job needs resolve-env.
-        guard = str(jobs['resolve-env'].get('if'))
-        assert self._PRIVATE in guard
-        assert 'github.repository ==' in guard and '!=' not in guard
+
+        triggers = release.get('on', release.get(True))  # PyYAML reads `on:` as True
+        assert set(triggers) == {'workflow_call'}, 'release.yml must run only when called'
+        guard = str(jobs['resolve'].get('if'))
+        assert guard == self._PRIVATE, guard
+        for name, job in jobs.items():
+            if name == 'resolve':
+                continue
+            needs = job.get('needs') or []
+            needs = [needs] if isinstance(needs, str) else needs
+            assert 'resolve' in needs, f'{name} does not need resolve, so it runs wherever release.yml is called'
+            # Any condition of its own could only widen where it runs
+            # (`always()`, another repository); there is none.
+            assert 'if' not in job, f'{name} has a condition of its own: {job.get("if")}'
+        for name, job in jobs.items():
+            condition = str(job.get('if', ''))
+            assert 'igni-server' not in condition and 'igni__server' not in condition, name
+
+    def test_the_public_repositorys_cd_pushes_nothing(self):
+        """cd.yml runs in this public repository on every push to main. It
+        runs the tests and nothing else: no image, no bundle, no artefact,
+        no environment, no secret, and a token that cannot write a
+        package."""
+        cd = yaml.safe_load(_CD.read_text())
+        text = _CD.read_text()
+
+        assert cd['permissions'] == {'contents': 'read'}, cd['permissions']
+        assert set(cd['jobs']) == {'test'}, sorted(cd['jobs'])
+        assert cd['jobs']['test']['uses'] == './.github/workflows/ci.yml'
+        assert 'secrets' not in cd['jobs']['test']
+        for marker in (
+            'environment:',
+            'secrets.',
+            'vars.',
+            'docker push',
+            'upload-artifact',
+            'oras ',
+            'skopeo',
+            'cosign',
+            'packages: write',
+            'release.yml@',
+        ):
+            assert marker not in text, f'cd.yml mentions {marker}'
+        # PyYAML reads the `on:` key as True.
+        triggers = cd.get('on', cd.get(True))
+        assert triggers == {'push': {'branches': ['main']}}, triggers
 
     def test_no_other_workflow_touches_the_paid_images(self):
         for workflow in sorted((_ROOT / '.github/workflows').glob('*.yml')):
-            if workflow.name == 'cd.yml':
+            if workflow.name == 'release.yml':
                 continue
             text = workflow.read_text()
             for marker in ('modules.tsv', 'artefacts.tsv', 'igni-bundle', 'export-image'):
@@ -813,15 +895,15 @@ class TestCdSignsWhatItShips:
                 assert f'ghcr.io/ignite-ember/{line}' not in text, f'{workflow.name} names {line}'
 
     def test_the_documented_secret_names_are_the_ones_used(self):
-        text = _CD.read_text()
+        text = _RELEASE.read_text()
         doc = (_ROOT / 'docs/OFFLINE_UPDATES.md').read_text()
 
         for name in ('COSIGN_PRIVATE_KEY', 'COSIGN_PASSWORD', 'MINISIGN_SECRET_KEY', 'MINISIGN_PASSWORD'):
             assert f'secrets.{name}' in text, name
-            assert name in doc, f'{name} is used by cd.yml but not documented'
+            assert name in doc, f'{name} is used by release.yml but not documented'
         for name in ('COSIGN_PUBLIC_KEY', 'MINISIGN_PUBLIC_KEY'):
             assert f'vars.{name}' in text, name
-            assert name in doc, f'{name} is used by cd.yml but not documented'
+            assert name in doc, f'{name} is used by release.yml but not documented'
 
 
 # ── Signed releases that are not images ───────────────────────────────────
@@ -832,7 +914,7 @@ class TestCdSignsWhatItShips:
 # add-artefact` carries one into the bundle only if it is signed with the
 # release key; `igni-import` holds it to its SHA256SUMS and, with
 # --cosign-key, to that signature. cosign is the real one, with keys made
-# here; it signs offline, as CD does.
+# here; it signs offline, as the release does.
 
 if shutil.which('cosign') is None and os.environ.get('CI'):
     raise RuntimeError('cosign is not installed; the signed-artefact tests cannot run')
@@ -871,7 +953,7 @@ def cosign_keys(tmp_path_factory: pytest.TempPathFactory) -> CosignKeys:
 
 def _cosign_v3() -> bool:
     """cosign 3 writes a bundle unless told not to, and refuses
-    `--output-signature` without these flags. CD pins v2.4.1, which has
+    `--output-signature` without these flags. release.yml pins v2.4.1, which has
     neither; a developer's Homebrew cosign is 3."""
     version = subprocess.run(['cosign', 'version'], capture_output=True, text=True, check=False).stdout
     major = re.search(r'GitVersion:\s+v(\d+)', version)
@@ -1125,7 +1207,7 @@ class TestOnlyASignedArtefactIsCarried:
 
 class TestCdCarriesSignedArtefacts:
     def test_the_bundle_job_adds_each_pinned_artefact_with_the_release_key(self):
-        job = yaml.safe_load(_CD.read_text())['jobs']['offline-bundle']
+        job = yaml.safe_load(_RELEASE.read_text())['jobs']['offline-bundle']
         script = '\n'.join(str(step.get('run') or '') for step in job['steps'])
 
         assert 'containers/release/artefacts.tsv' in script
@@ -1180,7 +1262,7 @@ class TestTheThirdPartyImagesAreCarried:
         ], f'the chart runs postgres:{tag} for backups and the bundle does not carry it'
 
     def _script(self) -> str:
-        job = yaml.safe_load(_CD.read_text())['jobs']['offline-bundle']
+        job = yaml.safe_load(_RELEASE.read_text())['jobs']['offline-bundle']
         return '\n'.join(str(step.get('run') or '') for step in job['steps']).replace('\\\n', ' ')
 
     def test_each_is_mirrored_by_digest_and_signed_with_the_release_key(self):
@@ -1214,7 +1296,7 @@ class TestAReleaseIsKept:
     artefact expires after 90 days; GHCR keeps what is pushed to it."""
 
     def _steps(self) -> list[dict]:
-        return yaml.safe_load(_CD.read_text())['jobs']['offline-bundle']['steps']
+        return yaml.safe_load(_RELEASE.read_text())['jobs']['offline-bundle']['steps']
 
     def test_the_sealed_bundle_is_pushed_to_ghcr(self):
         steps = self._steps()
@@ -1227,7 +1309,11 @@ class TestAReleaseIsKept:
         assert 'ref="${REGISTRY}/igni-bundle:${VERSION}"' in script
         for pushed in ('igni-bundle-${VERSION}.tar:', 'igni-bundle-${VERSION}.tar.sha256:'):
             assert pushed in script, pushed
-        assert 'org.opencontainers.image.revision=${GITHUB_SHA}' in script
+        # The resolved commit of igni-server, not GITHUB_SHA: in a called
+        # workflow that is the caller's, igni__release's, commit.
+        assert 'org.opencontainers.image.revision=${COMMIT}' in script
+        assert keep['env']['COMMIT'] == '${{ needs.resolve.outputs.sha }}'
+        assert 'org.opencontainers.image.source=${GITHUB_SERVER_URL}/ignite-ember/igni-server' in script
 
     def test_a_kept_release_is_never_overwritten(self):
         """Without the check, every later build of the same version on

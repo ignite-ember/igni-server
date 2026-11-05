@@ -6,7 +6,7 @@
  * browser that is told to fetch a script from it waits, fails, and
  * leaves a blank widget — which is what the content editor did, because
  * `@monaco-editor/react` loads Monaco from jsdelivr unless told otherwise.
- * The source scan in igni__server's `tests/test_nothing_phones_home.py`
+ * The source scan in igni-server's `tests/test_nothing_phones_home.py`
  * cannot see that: the URL lives in a dependency, and only reaches the
  * product when Vite bundles it. So this reads what ships — `dist/` after
  * `npm run build` — and fails on any CDN host in it.

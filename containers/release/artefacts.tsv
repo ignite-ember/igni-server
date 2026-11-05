@@ -1,6 +1,6 @@
 # Signed releases that are not container images, carried in each offline
 # release bundle beside the images of modules.tsv. Read by the
-# `offline-bundle` job in .github/workflows/cd.yml.
+# `offline-bundle` job in .github/workflows/release.yml.
 #
 # Each is a release directory: the files, a CycloneDX SBOM (*.cdx.json)
 # for them, SHA256SUMS over all of them, and SHA256SUMS.sig, a cosign
@@ -27,7 +27,7 @@
 # igni-fleet: Fleet's CD (igni__cloudvm, .github/workflows/cd.yml) pushes
 # its signed release directory — binaries, Firecracker and jailer, guest
 # kernel and base, their SBOMs — on master, once per version, and never
-# pushes an UNSIGNED one. GITHUB_TOKEN here reads the package only while
-# it grants this repository read access (package settings, "Manage
-# Actions access").
+# pushes an UNSIGNED one. The release's GITHUB_TOKEN, igni__release's,
+# reads the package only while it grants that repository read access
+# (package settings, "Manage Actions access").
 igni-fleet  0.1.0

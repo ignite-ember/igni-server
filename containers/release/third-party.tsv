@@ -1,6 +1,6 @@
 # Third-party images that go into each offline release bundle: images an
 # install runs that are not built by any Ignite Ember repository. Read by
-# the `offline-bundle` job in .github/workflows/cd.yml.
+# the `offline-bundle` job in .github/workflows/release.yml.
 #
 # Postgres is here for the chart's backup CronJob (`pg_dump`), which takes
 # its image from beside image.repository: registry.example.com/igni/igni-api
@@ -10,7 +10,7 @@
 # only; keep the tag the chart's `backup.image.tag`.
 #
 # Pinned by digest: the upstream tag can move, and what is reviewed here is
-# the digest. CD copies it to ghcr.io/ignite-ember/<name>:<tag> with that
+# the digest. The release copies it to ghcr.io/ignite-ember/<name>:<tag> with that
 # digest preserved, refuses if GHCR stores another, and signs and attests
 # it with the release key like every other image in the bundle. Bumping
 # one is a line in a pull request:

@@ -36,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          path: igni__server
+          path: igni-server
 
       # Beside the server, where the script looks for it (IGNI_CLI
       # defaults to ../igni). Public, so the job's own token reads it.
@@ -69,7 +69,7 @@ jobs:
           kind version
 
       - name: Rehearse
-        working-directory: igni__server
+        working-directory: igni-server
         env:
           IGNI_AIRGAP_WORK: ${{ runner.temp }}/airgap
         run: tools/airgap-rehearsal.sh
