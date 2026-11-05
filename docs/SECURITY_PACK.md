@@ -97,9 +97,10 @@ Known gaps, stated so the customer does not find them first.
   customer's job ([MODEL_PROVENANCE.md](MODEL_PROVENANCE.md)).
 - **Release signing keys are not yet generated.** Signing, the offline bundle
   and the import tool are in place, but the cosign and minisign key pairs, and
-  the secrets CD reads them from, still need the one-off key ceremony
-  described in [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md). Until then CD cannot
-  sign and no bundle has been produced. Public keys and fingerprints will be
+  the secrets the release workflow reads them from (in the private release
+  repository, never the public source repository), still need the one-off
+  key ceremony described in [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md). Until
+  then no release can be signed and no bundle has been produced. Public keys and fingerprints will be
   sent out of band.
 - **The bundle holds igni's own images only.** Third-party images the
   deployment uses (`postgres` for the chart's backup job; `postgres`,

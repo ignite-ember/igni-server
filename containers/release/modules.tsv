@@ -1,5 +1,5 @@
 # Paid-module images that go into each offline release bundle, and which
-# version of each. Read by the `offline-bundle` job in .github/workflows/cd.yml.
+# version of each. Read by the `offline-bundle` job in .github/workflows/release.yml.
 #
 # A pin, not "latest": a release is a reviewed set of versions, and bumping
 # one is a line in a pull request. Each image must already be on

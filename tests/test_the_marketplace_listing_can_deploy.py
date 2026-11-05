@@ -131,17 +131,17 @@ class TestEveryRefusalCanBeAnswered:
         deployment missing part of the product; one that declares more
         produces a deployment waiting on an image nobody pushes.
 
-        Derived from `cd.yml` rather than listed here — this test was
+        Derived from `release.yml` rather than listed here — this test was
         named `test_both_...` and pinned the set to two, so adding the
         embedder failed it twice: once for the count, and once for the
         assertion that the count was still two.
         """
-        cd = (_ROOT / '.github/workflows/cd.yml').read_text()
-        pushed = set(re.findall(r'IMAGE="[^"]*/([A-Za-z0-9._-]+)"', cd))
+        release = (_ROOT / '.github/workflows/release.yml').read_text()
+        pushed = set(re.findall(r'IMAGE="[^"]*/([A-Za-z0-9._-]+)"', release))
 
-        assert pushed, 'no image build found in cd.yml; this test is stale'
+        assert pushed, 'no image build found in release.yml; this test is stale'
         assert len(schema['x-google-marketplace']['images']) == len(pushed), (
-            f'cd.yml pushes {sorted(pushed)} but the schema declares '
+            f'release.yml pushes {sorted(pushed)} but the schema declares '
             f'{len(schema["x-google-marketplace"]["images"])} images'
         )
 

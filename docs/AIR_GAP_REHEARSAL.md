@@ -12,7 +12,7 @@ tools/airgap-rehearsal.sh          # the whole thing; deletes the cluster at the
 tools/airgap-rehearsal.sh --keep   # leave the cluster and the gap's registry up
 ```
 
-Run it from a checkout of igni__server, with the igni CLI checked out beside
+Run it from a checkout of igni-server, with the igni CLI checked out beside
 it (`../igni`, `uv sync` run) if you want the CLI steps. Needs docker,
 kind, kubectl, helm, skopeo, minisign, jq and python3. cosign and syft
 are optional: with both, the images are signed and their SBOMs attested,
@@ -32,9 +32,9 @@ throwaway staging registry, where each is signed with a **TEST** cosign
 key and given a CycloneDX SBOM attestation (syft). Then
 `tools/release/igni-bundle export-image` exports each one, `helm package`
 adds the chart, and `igni-bundle seal` signs the bundle with a **TEST**
-minisign key. These are the same steps CD's `offline-bundle` job runs,
-with two differences: the keys, and the two third-party images that CD
-does not carry (see "What it found").
+minisign key. These are the same steps the release's `offline-bundle` job
+runs, with two differences: the keys, and the two third-party images that
+the release does not carry (see "What it found").
 
 **2. The gap.** It creates a Docker network for the gap, a registry on it
 (the customer's registry), and a kind cluster with one control-plane

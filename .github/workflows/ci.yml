@@ -3,11 +3,11 @@ name: CI
 on:
   pull_request:
     branches: ["**"]
-  # Callable, so cd.yml can gate a deploy on it. Without this there was no
-  # way to reuse it, and `cd.yml` triggers on `push` — so the commit that
-  # got built and pushed to the registry had never been tested. CI
-  # ran on the pull request's head, which is not the merge result, and a
-  # direct push to `main` skipped it entirely.
+  # Callable, so cd.yml runs it on every push to main and release.yml can
+  # refuse a commit it has not passed. Without this there was no way to
+  # reuse it, and the commit that got built and pushed to the registry had
+  # never been tested. CI ran on the pull request's head, which is not the
+  # merge result, and a direct push to `main` skipped it entirely.
   workflow_call:
 
 permissions:
@@ -528,7 +528,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          path: igni__server
+          path: igni-server
 
       # Public, so the job's own token reads it. Beside the server, where
       # the script looks for it (IGNI_CLI defaults to ../igni).
@@ -545,7 +545,7 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
 
       - name: Install the server
-        working-directory: igni__server
+        working-directory: igni-server
         run: uv sync
 
       # The CLI pins its own Python (3.12); uv fetches it.
@@ -557,23 +557,23 @@ jobs:
         with:
           node-version: "26"
           cache: npm
-          cache-dependency-path: igni__server/portal/package-lock.json
+          cache-dependency-path: igni-server/portal/package-lock.json
 
       - name: Install the portal and Chromium
-        working-directory: igni__server/portal
+        working-directory: igni-server/portal
         run: |
           npm ci
           npx playwright install --with-deps chromium
 
       - name: Journey
-        working-directory: igni__server
+        working-directory: igni-server
         env:
           JOURNEY_SERVICE: fixture
         run: tools/e2e_journey/journey.sh run
 
       - name: Results
         if: always()
-        working-directory: igni__server/tools/e2e_journey/run
+        working-directory: igni-server/tools/e2e_journey/run
         # Absent when the stack never came up; the journey step's log says why.
         run: if [ -f results.md ]; then cat results.md >> "$GITHUB_STEP_SUMMARY"; fi
 
@@ -583,14 +583,14 @@ jobs:
         with:
           name: journey-${{ github.sha }}
           path: |
-            igni__server/tools/e2e_journey/run/logs
-            igni__server/tools/e2e_journey/run/shots
-            igni__server/tools/e2e_journey/run/results.*
+            igni-server/tools/e2e_journey/run/logs
+            igni-server/tools/e2e_journey/run/shots
+            igni-server/tools/e2e_journey/run/results.*
           retention-days: 14
 
       - name: Tear down
         if: always()
-        working-directory: igni__server
+        working-directory: igni-server
         run: tools/e2e_journey/journey.sh down
 
   # ── The chart, on a cluster ──────────────────────────────────────────

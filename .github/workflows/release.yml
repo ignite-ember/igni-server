@@ -1,0 +1,648 @@
+name: Release
+
+# Builds, signs and seals one igni server release: the igni-api and
+# igni-portal images, and the offline bundle. The logic lives here, in
+# the public repository, where it is read, reviewed and tested
+# (tests/test_an_offline_bundle_is_verified_before_import.py and
+# tests/test_every_release_has_an_sbom.py); it runs only when the private
+# repository ignite-ember/igni__release calls it. S27: the bundle carries
+# the paid module images (containers/release/modules.tsv), and a CI
+# artefact of a public repository is downloadable by any signed-in GitHub
+# user, so no release is ever built in a run that belongs to this
+# repository. igni__release holds a caller workflow, the `prod`
+# environment and the release keys, and no source. docs/RELEASING.md.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          What to release from ignite-ember/igni-server: a tag such as
+          v0.6.0, or a full commit SHA. It must be on main.
+        required: true
+        type: string
+
+# Release images live on GitHub Container Registry, under the
+# organisation: ghcr.io/ignite-ember/<image>. GITHUB_TOKEN pushes them;
+# there is no cloud account and no long-lived registry credential. In a
+# called workflow it is the caller's token, igni__release's, so the
+# packages grant that repository's Actions access (its README).
+#
+# No `id-token: write`: it was for Workload Identity Federation into
+# Google Cloud, which is gone, and cosign signs with a key pair rather
+# than keylessly, so nothing here asks for an OIDC token.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/ignite-ember
+
+# One release at a time, whatever the ref. Two runs both tag `:latest`,
+# and whichever finished last won it regardless of which commit was
+# newer, so the group is not per ref. Never cancelled: a run cut off
+# between its push and its signature leaves an unsigned image on the
+# registry. The caller must not use this group name for its own
+# concurrency, or the two wait on each other.
+concurrency:
+  group: igni-server-release
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Resolve the ref to a commit on main, and its version
+  # ---------------------------------------------------------------------------
+  resolve:
+    name: Resolve the release
+    runs-on: ubuntu-latest
+    # In a called workflow `github.repository` is the caller's, so this
+    # names the repository that called, not this one. Only igni__release
+    # has the `prod` environment and the release keys. A fork that calls
+    # this, or this repository calling it, would have neither; skipping
+    # this job skips the rest, which all need it. S27.
+    if: github.repository == 'ignite-ember/igni__release'
+    # One image name per image, and the release is in the tag:
+    #
+    #   :<sha>, :<version> and the moving :latest
+    #
+    # The `dev-` and `stage-` prefixes are gone with the dev and stage
+    # images: nothing deployed them once the Google Cloud projects went.
+    # The tag is the naming; the release cosign key, held by
+    # igni__release's `prod` environment alone, is the guarantee: the
+    # bundle refuses any image it did not sign. docs/OFFLINE_UPDATES.md,
+    # "Where images come from".
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      # The whole history, so origin/main is there to check against.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ignite-ember/igni-server
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      # Every job after this checks out the SHA, not the ref: a tag can be
+      # moved while a release is running, a commit cannot.
+      - id: resolve
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          # A release is made from main only. A tag on a branch, or a
+          # commit of a pull request, has not been reviewed into main.
+          if ! git merge-base --is-ancestor "${sha}" origin/main; then
+            echo "::error::${REF} (${sha}) is not on main of ignite-ember/igni-server. A release is built from main only."
+            exit 1
+          fi
+          # Read from the source rather than written twice:
+          # `tests/test_one_version_number.py` holds the three copies of
+          # this number together.
+          version="$(python3 -c \
+            'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])' \
+          )"
+          # A release tag names the version it holds.
+          case "${REF}" in
+            v*)
+              if [ "${REF}" != "v${version}" ]; then
+                echo "::error::${REF} carries version ${version} in pyproject.toml; a release tag is v<version>."
+                exit 1
+              fi
+              ;;
+          esac
+          {
+            echo "sha=${sha}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Nothing is built that the tests have not passed on (F74). This
+      # workflow does not run them itself: ci.yml checks out the
+      # repository that runs it, which here is igni__release. They ran
+      # when the commit reached main (cd.yml), and that run is public, so
+      # the caller's token can ask for it. A commit that was never the
+      # head of a push to main has no run of its own; release main's
+      # head after the merge, or tag that.
+      - name: The tests passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          passed="$(gh api \
+            "repos/ignite-ember/igni-server/actions/workflows/cd.yml/runs?head_sha=${SHA}&branch=main&event=push&status=success" \
+            --jq '.total_count')"
+          if [ "${passed}" -lt 1 ]; then
+            echo "::error::No successful CD run on main for ${SHA}, so its tests have not passed. Nothing is released untested."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Build & push backend image
+  # ---------------------------------------------------------------------------
+  build-backend:
+    name: Build Backend
+    runs-on: ubuntu-latest
+    needs: [resolve]
+    # Only after `resolve`, which runs in igni__release only (S27).
+    environment: prod
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ignite-ember/igni-server
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - id: meta
+        run: |
+          echo "tag=${{ needs.resolve.outputs.sha }}" >> "$GITHUB_OUTPUT"
+          # The chart's `image.tag` defaults to its `appVersion`, and
+          # `latest` is refused there deliberately — so unless this tag
+          # exists, `helm install` with no `--set image.tag` asks for an
+          # image nothing ever pushed and lands in ImagePullBackOff. F1.
+          # `resolve` read it from pyproject.toml at this commit.
+          echo "version=${{ needs.resolve.outputs.version }}" >> "$GITHUB_OUTPUT"
+
+      # Nothing is pushed unsigned. The push below happens before the
+      # signature, so without the environment's signing key an image would
+      # reach the registry with no signature, and under a release tag.
+      # Until the key ceremony has put the keys in igni__release's `prod`
+      # environment (docs/OFFLINE_UPDATES.md), the job stops here, before
+      # the push.
+      - name: The signing key is in this environment
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          missing=()
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || missing+=(secret COSIGN_PRIVATE_KEY)
+          [ -n "${COSIGN_PASSWORD}" ] || missing+=(secret COSIGN_PASSWORD)
+          [ -n "${COSIGN_PUBLIC_KEY}" ] || missing+=(variable COSIGN_PUBLIC_KEY)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::No image is pushed unsigned. Missing in environment 'prod': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
+            exit 1
+          fi
+
+      # skopeo, cosign and docker all read the credentials this writes.
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The version tag is a release tag; this workflow alone writes it,
+      # from a commit on main.
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          IMAGE="${{ env.REGISTRY }}/igni-api"
+          TAGS=(-t "${IMAGE}:${{ steps.meta.outputs.tag }}" -t "${IMAGE}:latest"
+                -t "${IMAGE}:${{ steps.meta.outputs.version }}")
+          docker build "${TAGS[@]}" -f containers/be/Dockerfile .
+          docker push "${IMAGE}" --all-tags
+
+      # ── Signature ────────────────────────────────────────────────────
+      #
+      # A key pair, not keyless. Keyless signing proves an identity to a
+      # Fulcio CA and records it in Rekor, and verifying it needs both —
+      # which an air-gapped customer cannot reach. With a key, the public
+      # half is all they need, and `--tlog-upload=false` keeps our image
+      # digests and registry paths out of the public transparency log.
+      #
+      # Signed by digest, never by tag: a tag can be moved after signing.
+      # COSIGN_PRIVATE_KEY and COSIGN_PASSWORD are secrets of the
+      # environment; COSIGN_PUBLIC_KEY a variable. docs/OFFLINE_UPDATES.md.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.1
+
+      - id: sign
+        name: Sign the backend image
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          REPOSITORY="${{ env.REGISTRY }}/igni-api"
+          REF="$(docker inspect --format '{{index .RepoDigests 0}}' "${REPOSITORY}:${{ steps.meta.outputs.tag }}")"
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${REF}"
+
+      # ── SBOM ─────────────────────────────────────────────────────────
+      #
+      # CM-8 in COMPLIANCE_TRACKER.md. Both marketplaces increasingly
+      # expect one, and SOC 2 CC7.1 vulnerability management is a great
+      # deal easier when a customer can answer "what is in this" without
+      # asking us.
+      #
+      # Generated from the *pushed image* rather than from `uv.lock`,
+      # because the lock file is only half of what ships: this SBOM comes
+      # out with 239 components — 120 PyPI packages, 118 Debian packages
+      # and the OS. The Debian half is the part `pip-audit` cannot see and
+      # the part that produced F89's remaining advisories.
+      #
+      # Tagged with the commit SHA so the artefact and the image it
+      # describes cannot drift apart.
+      - name: SBOM — backend image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/igni-api:${{ steps.meta.outputs.tag }}
+          format: cyclonedx
+          output: sbom-api-image.cdx.json
+
+      # The SBOM as a signed statement about the image, so a customer can
+      # read it from their own registry and know it describes that digest.
+      # Then both are verified the way a customer will: public key, no log.
+      - name: Attest the backend SBOM
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+          REF: ${{ steps.sign.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cosign attest --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false --type cyclonedx \
+            --predicate sbom-api-image.cdx.json "${REF}"
+          printf '%s\n' "${COSIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/cosign.pub"
+          cosign verify --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true "${REF}" > /dev/null
+          cosign verify-attestation --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true \
+            --type cyclonedx "${REF}" > /dev/null
+
+      - name: Upload backend SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-api-${{ steps.meta.outputs.tag }}
+          path: sbom-api-image.cdx.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # Build & push portal image
+  # ---------------------------------------------------------------------------
+  build-portal:
+    name: Build Portal
+    runs-on: ubuntu-latest
+    needs: [resolve]
+    # Only after `resolve`, which runs in igni__release only (S27).
+    environment: prod
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ignite-ember/igni-server
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - id: meta
+        run: echo "tag=${{ needs.resolve.outputs.sha }}" >> "$GITHUB_OUTPUT"
+
+      # Nothing is pushed unsigned. The push below happens before the
+      # signature, so without the environment's signing key an image would
+      # reach the registry with no signature, and under a release tag.
+      # Until the key ceremony has put the keys in igni__release's `prod`
+      # environment (docs/OFFLINE_UPDATES.md), the job stops here, before
+      # the push.
+      - name: The signing key is in this environment
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          missing=()
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || missing+=(secret COSIGN_PRIVATE_KEY)
+          [ -n "${COSIGN_PASSWORD}" ] || missing+=(secret COSIGN_PASSWORD)
+          [ -n "${COSIGN_PUBLIC_KEY}" ] || missing+=(variable COSIGN_PUBLIC_KEY)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::No image is pushed unsigned. Missing in environment 'prod': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
+            exit 1
+          fi
+
+      # skopeo, cosign and docker all read the credentials this writes.
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        run: |
+          IMAGE="${{ env.REGISTRY }}/igni-portal"
+          docker build -t "${IMAGE}:${{ steps.meta.outputs.tag }}" \
+                       -t "${IMAGE}:latest" \
+                       -f portal/Dockerfile portal/
+          docker push "${IMAGE}" --all-tags
+
+      # Signed and attested as the backend is; see the comment there.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.1
+
+      - id: sign
+        name: Sign the portal image
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          REPOSITORY="${{ env.REGISTRY }}/igni-portal"
+          REF="$(docker inspect --format '{{index .RepoDigests 0}}' "${REPOSITORY}:${{ steps.meta.outputs.tag }}")"
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+          cosign sign --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${REF}"
+
+      # ── SBOM, in two parts ───────────────────────────────────────────
+      #
+      # The portal needs both, and the reason is the interesting half of
+      # CM-8. An image SBOM of this container returns 71 components, every
+      # one of them an Alpine package: the runtime image holds nginx and
+      # the *built bundle*, so the 242 npm packages that were compiled
+      # into that bundle appear nowhere in it.
+      #
+      # A customer asking "what JavaScript is in this" would have got the
+      # list of Alpine libraries. F68 found nine shipped npm advisories,
+      # axios alone carrying 28 — none of which an image scan of this
+      # container can see.
+      #
+      # So: one SBOM for what the container is, and one for what the
+      # bundle was built from.
+      - name: SBOM — portal image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/igni-portal:${{ steps.meta.outputs.tag }}
+          format: cyclonedx
+          output: sbom-portal-image.cdx.json
+
+      - name: SBOM — portal npm tree
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: portal
+          format: cyclonedx
+          output: sbom-portal-npm.cdx.json
+          skip-dirs: portal/node_modules
+
+      # The image SBOM is the attestation. The npm SBOM describes the
+      # source the bundle was built from, not the image, so it travels as
+      # a file: in the CI artefact below and in the offline bundle.
+      - name: Attest the portal SBOM
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+          REF: ${{ steps.sign.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cosign attest --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false --type cyclonedx \
+            --predicate sbom-portal-image.cdx.json "${REF}"
+          printf '%s\n' "${COSIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/cosign.pub"
+          cosign verify --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true "${REF}" > /dev/null
+          cosign verify-attestation --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true \
+            --type cyclonedx "${REF}" > /dev/null
+
+      - name: Upload portal SBOMs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-portal-${{ steps.meta.outputs.tag }}
+          path: |
+            sbom-portal-image.cdx.json
+            sbom-portal-npm.cdx.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # Offline bundle — one signed tarball per release, for air-gapped customers
+  # ---------------------------------------------------------------------------
+  #
+  # A bundle is something a customer installs, one per release. It holds
+  # every igni image (this repository's and the modules', pinned in
+  # containers/release/modules.tsv) and the third-party images an install
+  # runs (containers/release/third-party.tsv), each with its cosign
+  # signature and SBOM attestation, the signed releases that are not images
+  # (containers/release/artefacts.tsv), the Helm chart, the SBOMs, and
+  # igni-import, under a
+  # MANIFEST signed with minisign. docs/OFFLINE_UPDATES.md is the
+  # customer's side; tools/release/igni-bundle says why minisign.
+  #
+  # Every image is verified against the release key before it is copied
+  # in, so a module image that was never signed fails this job rather than
+  # reaching a customer unsigned.
+  #
+  # Built only in a run that belongs to igni__release, never to this
+  # public repository: the bundle carries the paid module images, and its
+  # CI artefact and the GHCR push below must not happen where anyone can
+  # download a run's artefacts (S27). The guard is on `resolve`, which
+  # every job here needs;
+  # tests/test_an_offline_bundle_is_verified_before_import.py pins it.
+  offline-bundle:
+    name: Offline Bundle
+    runs-on: ubuntu-latest
+    needs: [resolve, build-backend, build-portal]
+    environment: prod
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ignite-ember/igni-server
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - id: meta
+        run: |
+          VERSION="$(python3 -c \
+            'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])' \
+          )"
+          {
+            echo "version=${VERSION}"
+            echo "staging=${RUNNER_TEMP}/igni-bundle-${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      # skopeo and cosign both read the credentials docker login writes.
+      # The module images are other repositories' packages: GITHUB_TOKEN,
+      # the caller's, reads them only while they are public or grant
+      # igni__release read access (package settings, "Manage Actions
+      # access").
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.1
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.16.2
+
+      - name: Install minisign and skopeo
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign skopeo
+
+      # Pulls the signed releases that are not images (artefacts.tsv).
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        with:
+          version: 1.3.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom-portal-${{ needs.build-portal.outputs.tag }}
+          path: ${{ runner.temp }}/portal-sboms
+
+      # The SBOMs of the third-party images below. The same pin
+      # trivy-action v0.36.0 installs Trivy with, at its default version.
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.70.0
+
+      # Third-party images an install runs that are nobody's release here:
+      # Postgres for the chart's backup CronJob, which takes it from beside
+      # image.repository (B38). Pinned by digest in
+      # containers/release/third-party.tsv, copied to GHCR under our name
+      # with that digest preserved, then signed and attested with the
+      # release key like every other image in the bundle: the signature
+      # says Ignite Ember shipped exactly this digest, and a customer's
+      # admission controller checks one key for everything. Skipped when
+      # that digest is already signed, so a release does not pile
+      # signatures onto it.
+      - name: Mirror the pinned third-party images
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "${COSIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/cosign.pub"
+          grep -v '^#' containers/release/third-party.tsv | while read -r name upstream tag; do
+            [ -n "${name}" ] || continue
+            digest="${upstream##*@}"
+            ref="${REGISTRY}/${name}@${digest}"
+            skopeo copy --all --preserve-digests "docker://${upstream}" "docker://${REGISTRY}/${name}:${tag}"
+            [ "sha256:$(skopeo inspect --raw "docker://${REGISTRY}/${name}:${tag}" | sha256sum | cut -d' ' -f1)" = "${digest}" ] \
+              || { echo "${name}:${tag} on GHCR is not ${digest}" >&2; exit 1; }
+            if cosign verify --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true "${ref}" > /dev/null 2>&1; then
+              echo "${ref} is already signed"
+              continue
+            fi
+            trivy image --quiet --format cyclonedx --output "${RUNNER_TEMP}/${name}.cdx.json" "${ref}"
+            cosign sign --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "${ref}"
+            cosign attest --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false --type cyclonedx \
+              --predicate "${RUNNER_TEMP}/${name}.cdx.json" "${ref}"
+          done
+
+      - name: Export the images
+        env:
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+          STAGING: ${{ steps.meta.outputs.staging }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          API_TAG: ${{ needs.build-backend.outputs.tag }}
+          PORTAL_TAG: ${{ needs.build-portal.outputs.tag }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "${COSIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/cosign.pub"
+          export_image() {
+            tools/release/igni-bundle export-image --staging "${STAGING}" --cosign-key "${RUNNER_TEMP}/cosign.pub" "$@"
+          }
+          mkdir -p "${STAGING}"
+          # The same name on GHCR as in the bundle and the customer's
+          # registry, and only release tags, which are unprefixed.
+          export_image --name igni-api --repository "${REGISTRY}/igni-api" --source-tag "${API_TAG}" --tag "${VERSION}"
+          export_image --name igni-portal --repository "${REGISTRY}/igni-portal" --source-tag "${PORTAL_TAG}" --tag "${VERSION}"
+          grep -v '^#' containers/release/modules.tsv | while read -r name version; do
+            [ -n "${name}" ] || continue
+            export_image --name "${name}" --repository "${REGISTRY}/${name}" --source-tag "${version}" --tag "${version}"
+          done
+          # Under their upstream tag, mirrored and signed in the step above.
+          grep -v '^#' containers/release/third-party.tsv | while read -r name _upstream tag; do
+            [ -n "${name}" ] || continue
+            export_image --name "${name}" --repository "${REGISTRY}/${name}" --source-tag "${tag}" --tag "${tag}"
+          done
+          cp "${RUNNER_TEMP}/portal-sboms/sbom-portal-npm.cdx.json" "${STAGING}/sboms/igni-portal-npm.cdx.json"
+
+      # Releases that are not images (Fleet ships binaries), pinned in
+      # containers/release/artefacts.tsv and held on GHCR as OCI artefacts.
+      # add-artefact verifies each one's cosign signature over its
+      # SHA256SUMS with the release key, and every file against it, before
+      # it is staged; an unsigned one fails this job.
+      - name: Add the signed artefacts
+        env:
+          STAGING: ${{ steps.meta.outputs.staging }}
+        run: |
+          set -euo pipefail
+          grep -v '^#' containers/release/artefacts.tsv | while read -r name version; do
+            [ -n "${name}" ] || continue
+            pulled="${RUNNER_TEMP}/artefacts/${name}"
+            mkdir -p "${pulled}"
+            oras pull "${REGISTRY}/${name}:${version}" --output "${pulled}"
+            tools/release/igni-bundle add-artefact --staging "${STAGING}" --name "${name}" \
+              --version "${version}" --from "${pulled}" --cosign-key "${RUNNER_TEMP}/cosign.pub"
+          done
+
+      - name: Package the Helm chart
+        run: helm package charts/igni --destination "${{ steps.meta.outputs.staging }}/charts"
+
+      # The secret key reaches the disk only for the length of this step,
+      # readable by this user only. --public-key makes seal verify its own
+      # signature, so a secret and a variable that are not a pair fail
+      # here rather than at a customer.
+      - name: Seal and sign the bundle
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          MINISIGN_PUBLIC_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          trap 'rm -f "${RUNNER_TEMP}/minisign.key"' EXIT
+          printf '%s\n' "${MINISIGN_SECRET_KEY}" > "${RUNNER_TEMP}/minisign.key"
+          printf '%s\n' "${MINISIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/minisign.pub"
+          tools/release/igni-bundle seal \
+            --staging "${{ steps.meta.outputs.staging }}" \
+            --version "${{ steps.meta.outputs.version }}" \
+            --commit "${{ needs.resolve.outputs.sha }}" \
+            --key "${RUNNER_TEMP}/minisign.key" \
+            --public-key "${RUNNER_TEMP}/minisign.pub" \
+            --out dist
+          tools/release/igni-import --bundle "dist/igni-bundle-${{ steps.meta.outputs.version }}.tar" \
+            --public-key "${RUNNER_TEMP}/minisign.pub" --expect-version "${{ steps.meta.outputs.version }}" --verify-only
+
+      # The release, kept. The CI artefact below expires after 90 days;
+      # the Cyber Resilience Act (Art. 13(9)) wants each security update
+      # available for at least ten years. GHCR keeps a package version
+      # until somebody deletes it, so the bundle and its .sha256 go there
+      # as one OCI artefact, ghcr.io/ignite-ember/igni-bundle:<version>,
+      # beside the images it was made from.
+      #
+      # Written once per version, never overwritten: the first build of a
+      # version is its release. A later build of the same version (the
+      # same tag run again, or a later commit of main that has not bumped
+      # it) is kept as a CI artefact only and says so; bumping the version
+      # is what makes the next release.
+      # docs/OFFLINE_UPDATES.md, "How long releases are kept".
+      - name: Keep the release bundle
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          COMMIT: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/igni-bundle:${VERSION}"
+          if oras manifest fetch "${ref}" > /dev/null 2>&1; then
+            echo "::notice title=Release ${VERSION} already kept::${ref} exists and is never overwritten. This build is a CI artefact only; bump the version to release it."
+            exit 0
+          fi
+          cd dist
+          oras push "${ref}" \
+            --artifact-type application/vnd.ignite-ember.igni-bundle.v1 \
+            --annotation "org.opencontainers.image.version=${VERSION}" \
+            --annotation "org.opencontainers.image.revision=${COMMIT}" \
+            --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/ignite-ember/igni-server" \
+            "igni-bundle-${VERSION}.tar:application/x-tar" \
+            "igni-bundle-${VERSION}.tar.sha256:text/plain"
+          echo "kept ${ref}"
+
+      - name: Upload the bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: igni-bundle-${{ steps.meta.outputs.version }}-${{ needs.resolve.outputs.sha }}
+          path: dist/igni-bundle-*
+          retention-days: 90
+          # The images are already compressed; zipping them again costs
+          # minutes and saves nothing.
+          compression-level: 0
