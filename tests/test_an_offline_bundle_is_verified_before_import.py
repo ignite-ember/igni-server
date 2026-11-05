@@ -355,7 +355,8 @@ class TestATamperedBundleIsRefused:
     def test_a_changed_file(self, sealed: Sealed, tmp_path: pathlib.Path):
         def edit(top: pathlib.Path) -> None:
             blob = top / 'images' / 'igni-api' / 'image' / ('a' * 64)
-            blob.write_bytes(b'\x00' + blob.read_bytes()[1:])
+            data = blob.read_bytes()
+            blob.write_bytes(bytes([data[0] ^ 0xFF]) + data[1:])
 
         result = _import(sealed, '--registry', _REGISTRY, tarball=_rewrite(sealed.tarball, tmp_path, edit=edit))
 
@@ -1014,7 +1015,8 @@ class TestASignedArtefactIsCarried:
     def test_a_tampered_artefact_is_refused(self, with_fleet: Sealed, tmp_path: pathlib.Path):
         def edit(top: pathlib.Path) -> None:
             binary = top / 'artefacts' / 'igni-fleet' / 'igni-node-agent'
-            binary.write_bytes(b'\x00' + binary.read_bytes()[1:])
+            data = binary.read_bytes()
+            binary.write_bytes(bytes([data[0] ^ 0xFF]) + data[1:])
 
         result = _import(with_fleet, '--registry', _REGISTRY, tarball=_rewrite(with_fleet.tarball, tmp_path, edit=edit))
 
