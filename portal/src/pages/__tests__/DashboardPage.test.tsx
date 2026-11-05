@@ -38,9 +38,9 @@ function useDashboardHandlers(opts?: { usageEmpty?: boolean; usageError?: boolea
     http.get('/v1/portal/team', () =>
       HttpResponse.json({
         members: [
-          { id: 'u1', user_id: 'u1', email: ME.email, full_name: 'Alex', role: 'admin', tier: 'pro', status: 'active', total_sessions: 0, total_tokens: 0, last_active: null, joined_at: '2026-01-01T00:00:00Z', assigned_by: null },
-          { id: 'u2', user_id: 'u2', email: 'b@x.com', full_name: 'Bob', role: 'member', tier: 'lite', status: 'active', total_sessions: 0, total_tokens: 0, last_active: null, joined_at: '2026-02-01T00:00:00Z', assigned_by: 'u1' },
-          { id: 'u3', user_id: 'u3', email: 'i@x.com', full_name: null, role: 'member', tier: 'lite', status: 'invited', total_sessions: 0, total_tokens: 0, last_active: null, joined_at: '2026-03-01T00:00:00Z', assigned_by: 'u1' },
+          { id: 'u1', user_id: 'u1', email: ME.email, full_name: 'Alex', role: 'admin', tier: 'pro', status: 'active', total_requests: 0, total_tokens: 0, last_active: null, joined_at: '2026-01-01T00:00:00Z', assigned_by: null },
+          { id: 'u2', user_id: 'u2', email: 'b@x.com', full_name: 'Bob', role: 'member', tier: 'lite', status: 'active', total_requests: 0, total_tokens: 0, last_active: null, joined_at: '2026-02-01T00:00:00Z', assigned_by: 'u1' },
+          { id: 'u3', user_id: 'u3', email: 'i@x.com', full_name: null, role: 'member', tier: 'lite', status: 'invited', total_requests: 0, total_tokens: 0, last_active: null, joined_at: '2026-03-01T00:00:00Z', assigned_by: 'u1' },
         ],
         total: 3,
       }),

@@ -39,7 +39,7 @@ const TEAM_MEMBERS = {
       full_name: 'Me',
       role: 'admin',
       status: 'active',
-      total_sessions: 12,
+      total_requests: 12,
       total_tokens: 4500,
       last_active: '2026-05-28T12:00:00Z',
       joined_at: '2026-01-01T00:00:00Z',
@@ -52,7 +52,7 @@ const TEAM_MEMBERS = {
       full_name: 'Bob',
       role: 'member',
       status: 'active',
-      total_sessions: 0,
+      total_requests: 0,
       total_tokens: 0,
       last_active: null,
       joined_at: '2026-02-01T00:00:00Z',
@@ -65,7 +65,7 @@ const TEAM_MEMBERS = {
       full_name: null,
       role: 'member',
       status: 'invited',
-      total_sessions: 0,
+      total_requests: 0,
       total_tokens: 0,
       last_active: null,
       joined_at: '2026-05-01T00:00:00Z',
@@ -93,6 +93,20 @@ describe('TeamPage', () => {
     // Status badges
     expect(screen.getAllByText(/^Active$/i).length).toBeGreaterThan(0)
     expect(screen.getByText(/^Invited$/i)).toBeInTheDocument()
+  })
+
+  test('the usage column counts requests, which is what it always showed', async () => {
+    server.use(
+      http.get('/v1/portal/me', () => HttpResponse.json(meAs('admin'))),
+      http.get('/v1/portal/team', () => HttpResponse.json(TEAM_MEMBERS)),
+    )
+
+    renderWithProviders(<TeamPage />)
+    await screen.findByText('Bob')
+
+    expect(screen.getByRole('columnheader', { name: 'Requests (30d)' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: /Sessions/ })).not.toBeInTheDocument()
+    expect(screen.getByText('12')).toBeInTheDocument()
   })
 
   test('admin sees actions kebab on every row (including self)', async () => {

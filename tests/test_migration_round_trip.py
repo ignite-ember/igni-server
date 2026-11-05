@@ -1,11 +1,14 @@
 """A bad deploy can be rolled back, and rolled forward again.
 
 F3 found that `downgrade base` could not be rolled forward — orphaned enum
-types survived and the next `upgrade` collided with them. Each plane is one
-revision now, squashed before there were deployments to carry forward, so
-the cycle is the whole of what can go wrong: base, head, base, head, and
-the same schema each time — for the shared plane and for an organisation's
-own database.
+types survived and the next `upgrade` collided with them. Each plane was
+squashed to one revision before there were deployments to carry forward,
+and has gained revisions since (`alembic/` for the shared plane,
+`alembic_tenant/` for an organisation's own database); the cycle is base,
+head, base, head, and the same schema each time, for both. A data
+migration's round trip is tested with rows in place beside it, as
+0027's is below and t0025's is in
+`test_an_existing_default_group_is_brought_to_what_igni_ships.py`.
 
 These tests run against their own throwaway database, so they never touch
 the shared one and cannot depend on test ordering. They are skipped when a
@@ -168,7 +171,7 @@ class TestRunningAlembicDoesNotSilenceTheApplication:
     `test_ses_transport.py` tests that read `caplog.text`. They passed in
     isolation and failed when this module ran first.
 
-    Scope worth stating precisely: **ember-code already passes
+    Scope worth stating precisely: **igni already passes
     `disable_existing_loggers=False`** in its own `migrations/env.py`, so
     this does not explain the same-shaped mystery documented over there.
     That one has a different, still-unidentified cause — its
@@ -338,8 +341,16 @@ class TestTheNodeKeyMigrationCarriesTheRowsThere:
         finally:
             engine.dispose()
 
-    def test_upgrade_encrypts_and_downgrade_restores(self, scratch_db):
+    def test_upgrade_encrypts_and_downgrade_restores(self, scratch_db, monkeypatch):
+        from cryptography.fernet import Fernet
+
+        from app.config import settings
         from app.services.secrets import decrypt_secret
+
+        # Its own key, as every other test that encrypts has: CI exports
+        # SECRET_ENCRYPTION_KEY for the run, a local `pytest` of this file
+        # alone does not.
+        monkeypatch.setattr(settings, 'secret_encryption_key', Fernet.generate_key().decode())
 
         command.upgrade(scratch_db, 'head')
         command.downgrade(scratch_db, '0026')

@@ -200,7 +200,7 @@ user agent. They are dropped before export, whatever an instrumentation
 recorded (`app/observability/otel.py`). Traces only — the metrics are §2's.
 
 The igni client can export to the same collector: `telemetry.otlp` in its
-managed settings, or the same `OTEL_*` variables (ember-code
+managed settings, or the same `OTEL_*` variables (igni
 `docs/CONFIGURATION.md`, "OpenTelemetry"). Its spans carry no prompt, response,
 file content or tool argument unless the organisation sets
 `capture_content: true`.

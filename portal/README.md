@@ -1,73 +1,36 @@
-# React + TypeScript + Vite
+# igni portal
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The admin portal of igni server: React 19, TypeScript, Vite and Primer React.
+It talks only to the igni server API, under `/v1`.
 
-Currently, two official plugins are available:
+## Run it against a local API
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+From the repository root, with the API running (`make run`, see the root
+README's Quick start):
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd portal && npm ci && cd ..
+make portal-dev                    # http://localhost:3000, proxying /v1 to the API on :7777
+make portal-dev PORT=7787 PORTAL_PORT=3010   # an API and a portal on other ports
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The dev server proxies `/v1` to `IGNI_API_URL` (`make portal-dev` sets it from
+`PORT`); `vite.config.ts` falls back to `http://localhost:7777`. The API's
+`PORTAL_BASE_URL` must name the portal's address, since invitation and sign-in
+links point there.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Checks
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+The same ones CI runs:
+
+```bash
+npm run typecheck                  # tsc
+npx eslint src --max-warnings 0
+npm test -- --run                  # vitest
+npx playwright test                # E2E; needs a stack: tools/portal-e2e-stack.sh
+npm run build
 ```
+
+Visual baselines are generated in a pinned Linux image
+(`scripts/baselines-linux.sh`); see `docs/VISUAL_BASELINES.md`. Manual checks
+are in `docs/PORTAL_MANUAL_QA.md`.

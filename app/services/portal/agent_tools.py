@@ -14,6 +14,17 @@ list is a copy of igni's, and a copy can lag. Refusing an unknown name
 would mean a deployment running a newer igni could not use its newer
 tools until somebody refreshed this file — a false rejection is worse
 than a missed typo, because it blocks work that is correct.
+
+**A module's or extension's tools are not names here, and that is
+right.** An agent naming ``CodeIndex`` (or any tool a paid module or an
+approved extension provides) in ``tools:`` is warned about, and the
+warning is true: igni resolves ``tools:`` against its own catalogue
+only, and an extension's tools reach an agent over MCP — the
+extension's server, offered to the agents it ships and to any whose
+``mcp_servers:`` names it — never by a name in this list. igni's own
+agents panel reports such a name as unknown, and the agent raises when
+called. Accepting the names approved extensions declare would silence
+the one warning that says so; the agent is what needs changing.
 """
 
 from __future__ import annotations
@@ -29,14 +40,9 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
     {
         'Bash',
         'BashOutput',
-        'CodeIndex',
         'Edit',
-        'Glob',
-        'Grep',
-        'LS',
         'NotebookEdit',
-        'Python',
-        'Read',
+        'Orchestrate',
         'Schedule',
         'Visualize',
         'WebFetch',

@@ -19,6 +19,7 @@ from app.db.sql.group_extensions import GroupExtensionsDB
 from app.db.sql.groups import GroupsDB
 from app.db.sql.models.app_space import SPACE
 from app.db.sql.models.registered_client import APP
+from app.db.sql.schemas.group import GroupSummary
 from app.db.sql.service_extensions import ServiceExtensionDB
 from app.db.sql.spaces import SpacesDB
 from app.security.producer import ProducerCaller
@@ -33,6 +34,8 @@ class Entitlement(BaseModel):
     #: The person's group in the organisation they are signed in to;
     #: always null for an app, which is in no group.
     group: str | None = None
+    #: That group's name, for a client to show (the id means nothing to a person).
+    group_name: str | None = None
     #: Extension id → every group in the organisation it is on for,
     #: only for the extensions this producer gets.
     enabled: dict[str, list[str]] = Field(default_factory=dict)
@@ -92,14 +95,16 @@ class GroupExtensions:
 
     async def of_person(self, user_id: str, org_id: str | None) -> Entitlement:
         """What a person signed in to *org_id* gets. Nothing without an organisation or a group."""
-        group = await self.group_of(user_id, org_id)
-        if group is None or org_id is None:
+        summary = await self._group_summary_of(user_id, org_id)
+        if summary is None or org_id is None:
             return Entitlement()
+        group = summary.id
         every = await self._enabled.groups_enabling(org_id)
         apps = await AppExtensionsDB().apps_enabling(org_id)
         mine = [extension_id for extension_id, groups in every.items() if group in groups]
         return Entitlement(
             group=group,
+            group_name=summary.name,
             enabled={extension_id: every[extension_id] for extension_id in mine},
             apps={extension_id: apps.get(extension_id, []) for extension_id in mine},
         )
@@ -131,9 +136,13 @@ class GroupExtensions:
         what their token says and what their pack holds come from the
         same group.
         """
+        summary = await self._group_summary_of(user_id, org_id)
+        return summary.id if summary is not None else None
+
+    async def _group_summary_of(self, user_id: str, org_id: str | None) -> GroupSummary | None:
         if not org_id:
             return None
         summary = await DefaultGroup.ensure_for_user(user_id, org_id)
         if summary is None or str(summary.org_id) != str(org_id):
             return None
-        return str(summary.id)
+        return GroupSummary(id=str(summary.id), org_id=str(summary.org_id), name=summary.name)

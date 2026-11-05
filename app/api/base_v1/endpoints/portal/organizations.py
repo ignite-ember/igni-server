@@ -12,6 +12,7 @@ from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
+from app.services.cloud.producer_feed import ProducerFeed
 from app.services.identity.organisation_deletions import OrganisationDeletions
 
 router = APIRouter()
@@ -256,7 +257,10 @@ async def delete_organization(
             detail=f'Remove all members before deleting. {len(active_others)} member(s) still in this organization.',
         )
 
-    await _db.delete(org_id)
+    # Deactivated members are still in it, and go with it: their removal
+    # is numbered here, like any other member's, not left for a later read.
+    async with ProducerFeed().removal():
+        await _db.delete(org_id)
     # Tell the services now rather than at the next round.
     OrganisationDeletions.nudge()
     return DeleteOrgResponse(message='Organization deleted')

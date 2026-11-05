@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useDropzone } from 'react-dropzone'
-import Editor from '@monaco-editor/react'
 import { Button, FormControl, Stack, Text } from '@primer/react'
 import { ScreenFullIcon, ScreenNormalIcon, UploadIcon } from '@primer/octicons-react'
 
 import { CONTENT_EXTENSION, EDITOR_LANGUAGE, type ContentType } from '../lib/entryKinds'
 import './ContentEditor.css'
+
+// Monaco is bundled rather than fetched from a CDN (see lib/monaco.ts),
+// which makes it the largest thing the portal ships. Loaded here, on the
+// pages that edit an entry, rather than in the chunk every page needs.
+const Editor = lazy(() => import('./MonacoEditor'))
 
 /**
  * The entry body, in Monaco, with room to work in.
@@ -118,24 +122,26 @@ export function ContentEditor({
         )}
 
         <div className="content-editor-frame">
-          <Editor
-            height="100%"
-            language={EDITOR_LANGUAGE[contentType]}
-            value={value}
-            onChange={(v) => onChange(v ?? '')}
-            theme="github-light"
-            options={{
-              readOnly,
-              minimap: { enabled: expanded },
-              fontSize: 13,
-              wordWrap: 'on',
-              scrollBeyondLastLine: false,
-              // Monaco does not observe its parent's size; without this
-              // it collapses to a couple of pixels when the container
-              // changes, which is exactly what expanding does.
-              automaticLayout: true,
-            }}
-          />
+          <Suspense fallback={<div className="content-editor-loading">Loading editor…</div>}>
+            <Editor
+              height="100%"
+              language={EDITOR_LANGUAGE[contentType]}
+              value={value}
+              onChange={(v) => onChange(v ?? '')}
+              theme="github-light"
+              options={{
+                readOnly,
+                minimap: { enabled: expanded },
+                fontSize: 13,
+                wordWrap: 'on',
+                scrollBeyondLastLine: false,
+                // Monaco does not observe its parent's size; without this
+                // it collapses to a couple of pixels when the container
+                // changes, which is exactly what expanding does.
+                automaticLayout: true,
+              }}
+            />
+          </Suspense>
         </div>
       </div>
 

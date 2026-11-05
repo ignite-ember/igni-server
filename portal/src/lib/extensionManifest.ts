@@ -6,7 +6,7 @@
  * present or has the type the schema says. A missing list reads as
  * empty, a missing value as `null`, and an entry of the wrong shape is
  * dropped rather than rendered half-way. The schema itself lives with
- * the host (`docs/extension-manifest.schema.json` in ember-code).
+ * the host (`docs/extension-manifest.schema.json` in igni).
  */
 
 type Json = Record<string, unknown>

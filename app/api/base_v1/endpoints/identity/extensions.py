@@ -111,6 +111,8 @@ class Distributed(BaseModel):
     #: for an app, which is in no group, and for somebody in no
     #: organisation, who gets nothing.
     group: str | None
+    #: That group's name, for a client to show; null when `group` is.
+    group_name: str | None = None
     extensions: list[DistributedExtension]
     #: The super admin's priority order of extensions, highest first. A
     #: machine gives every collision to the higher one, stacks prompt
@@ -173,6 +175,7 @@ async def distributed(caller: ProducerCaller = Depends(current_producer)) -> Dis
     return Distributed(
         producer=ListedProducer(kind=caller.kind, id=caller.id),
         group=entitlement.group,
+        group_name=entitlement.group_name,
         extensions=[
             DistributedExtension(
                 extension_id=extension.extension_id,

@@ -113,10 +113,17 @@ async def oidc_callback(code: str = Query(...), state: str = Query(...)):
 
     # A one-time code, never the token — the same reasoning as the other
     # providers. See app/db/redis/auth_handoff.py.
+    #
+    # To the sign-in page, as the other providers do: that is where the
+    # portal exchanges the code. This said `/auth/callback`, a path the
+    # portal has no route for, so its catch-all sent the browser to the
+    # dashboard with the code dropped, and from there back to sign in.
+    # Every SSO login succeeded at the provider and here, and signed
+    # nobody in. Found by the journey (tools/e2e_journey) against Dex.
     query: dict[str, str] = {'code': await _handoff.issue(result.token.access_token)}
     if signin.return_to:
         query['returnTo'] = signin.return_to
     return RedirectResponse(
-        url=f'{settings.oauth_frontend_base_url.rstrip("/")}/auth/callback?{urlencode(query)}',
+        url=f'{settings.oauth_frontend_base_url.rstrip("/")}/login?{urlencode(query)}',
         status_code=status.HTTP_302_FOUND,
     )

@@ -2,10 +2,11 @@
 
 A thin layer, on purpose. Everything underneath already exists:
 creating an account is the path every sign-up goes through,
-deprovisioning is ``UserDB.set_deactivated`` — which withdraws the
-person's sessions in the same statement — and the door refuses them
-from the next request. SCIM adds the vocabulary an IdP speaks and
-nothing else.
+deprovisioning is the portal's own deactivation (``MemberStatus``) —
+the account, which withdraws the person's sessions in the same
+statement, and the membership, which is what the Team page shows —
+and the door refuses them from the next request. SCIM adds the
+vocabulary an IdP speaks and nothing else.
 
 **``active: false`` is the whole point.** It is how Okta and Entra say
 somebody left, and it is the event that used to arrive nowhere: an
@@ -41,7 +42,7 @@ from app.api.scim.errors import scim_error
 from app.db.sql.org_domains import OrgDomainDB
 from app.db.sql.user import UserDB
 from app.services.auth.person_name import split_full_name
-from app.services.cloud.vm_credentials import VmCredentials
+from app.services.portal.member_status import MemberStatus
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,12 @@ def _as_bool(value) -> bool:
     return bool(value)
 
 
+async def organisation_of(address: str) -> str | None:
+    """The organisation a person at *address* belongs to: whose audit trail records what SCIM did to them."""
+    org = await _domains.org_for_address(address) if address else None
+    return str(org.id) if org is not None else None
+
+
 async def find_by_address(address: str):
     return await _users.get_by_email(address) if address else None
 
@@ -160,7 +167,7 @@ async def provision(payload: ScimUser):
     # A provider may create somebody already deactivated — a leaver
     # synced for the first time. Honoured rather than assumed active.
     if not payload.active:
-        await _users.set_deactivated(str(user.user_id), deactivated=True)
+        await MemberStatus().set_everywhere(str(user.user_id), active=False)
         # Re-read so the response carries the deactivated flag. Kept
         # only if it finds the row: the account was created moments
         # ago, so a miss means something removed it concurrently, and
@@ -176,13 +183,12 @@ async def provision(payload: ScimUser):
 async def set_active(user_id: str, *, active: bool):
     """The deprovisioning lever, and the thing SCIM is here for.
 
+    Exactly what an org admin's deactivation and reactivation do, for
+    each organisation the person is in — see :class:`MemberStatus`.
     Deactivating withdraws every session the person holds, in the same
-    statement — see :meth:`UserDB.set_deactivated`. So a directory
-    removal stops them on their next request rather than when their
-    token happens to expire.
+    statement, so a directory removal stops them on their next request
+    rather than when their token happens to expire.
     """
-    await _users.set_deactivated(user_id, deactivated=not active)
-    if not active:
-        await VmCredentials().revoke_person(user_id)
+    await MemberStatus().set_everywhere(user_id, active=active)
     logger.info('scim: %s %s', 'deactivated' if not active else 'reactivated', user_id)
     return await _users.get_by_user_id(user_id)

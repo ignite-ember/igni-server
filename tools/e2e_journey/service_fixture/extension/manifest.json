@@ -1,0 +1,25 @@
+{
+  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+  "id": "journey.fixture",
+  "version": "0.1.0",
+  "contract": ">=1.0 <2",
+  "name": "Journey fixture",
+  "description": "The free-base journey's own extension: one tool that says it is there.",
+  "vendor": "igni server's journey (tools/e2e_journey)",
+  "trust": "unsigned",
+  "python": {
+    "package": "journey-extension",
+    "entry": "journey-extension",
+    "wheels": "wheels",
+    "mcp": { "transport": "stdio" }
+  },
+  "permissions": {
+    "workspace": "none",
+    "egress": [],
+    "secrets": [],
+    "tools": [
+      { "name": "journey.fixture.ping", "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false } }
+    ],
+    "rpc": []
+  }
+}

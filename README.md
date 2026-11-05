@@ -1,5 +1,7 @@
 # igni server
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ignite-ember/igni-server/badge)](https://scorecard.dev/viewer/?uri=github.com/ignite-ember/igni-server)
+
 **igni server is the free, Apache-2.0 base of igni**, the agentic platform
 that regulated organisations run on their own infrastructure: air-gapped
 on their own hardware, or in a private cloud on GPUs they rent. It owns
@@ -63,30 +65,69 @@ honest accounting of what still assumes infrastructure we operate.
   database of its own, created the first time it is needed
 - Redis
 
+Or only Docker: [Docker Compose](#docker-compose) below runs all of it,
+Postgres and Redis included.
+
 ### Installation
 
 ```bash
-git clone https://github.com/ignite-ember/igni-server
+git clone https://github.com/ignite-ember/igni-server   # the public mirror
 cd igni-server
 
 uv venv
 source .venv/bin/activate
 uv sync
 
-cp dist.env .env
-# Edit .env — at minimum set SECRET_ENCRYPTION_KEY, see "Environment" below
+# A development .env: dist.env with APP_ENV=dev, Postgres and Redis on
+# localhost, a fresh SECRET_ENCRYPTION_KEY, the API and portal URLs, and
+# one-time sign-in codes written to the server log. PG_PORT=, REDIS_PORT=,
+# PORT= (the API) and PORTAL_PORT= when yours differ. For a real deployment,
+# copy dist.env and go through it instead — see "Environment" below.
+make dev-env
+
+# Postgres and Redis, if you do not have them (any way you like; this is one):
+docker run -d --name igni-pg -e POSTGRES_USER=myuser -e POSTGRES_PASSWORD=mysecretpassword \
+  -p 127.0.0.1:5432:5432 postgres:17
+docker run -d --name igni-redis -p 127.0.0.1:6379:6379 redis:7
 
 # Create the database. The migration refuses to create one for you
 # outside dev, deliberately: see "Data you own" below.
-createdb -h localhost -p 5432 -U myuser igni
+PGPASSWORD=mysecretpassword createdb -h localhost -p 5432 -U myuser igni
 
 make migrate
-make run
+make run              # the API, on 127.0.0.1:7777 (PORT=…)
+make portal-dev       # in a second terminal: npm ci in portal/ first; the portal, on :3000
 ```
 
-`make run` serves on `127.0.0.1:7777` with reload. There is nothing else
-to start: the periodic work this product does — retention sweeps — runs on
+`make run` serves the API with reload; `make portal-dev` serves the portal
+and proxies its API calls to the API on the same `PORT`. There is nothing
+else to start: the periodic work this product does — retention sweeps — runs on
 its own asyncio task inside the API process, which is what DEC-13 settled.
+
+### The first sign-in
+
+A new deployment has no accounts, no organisation and no model.
+
+1. **The first account is a super admin.** Open the portal
+   (`http://localhost:3000`), sign up, and read the code from the API's log —
+   with no mail relay, `LOG_SIGN_IN_CODES=true` (which `make dev-env` sets)
+   writes it there: `sign-up code for you@example.com is 123456`. An address
+   on a special-use domain (`.test`, `.localhost`, `.local`, `.invalid`) is refused;
+   `you@acme.example.com` is fine.
+2. **Create an organisation** — the portal offers it, or
+   `POST /v1/portal/organizations` with `{"display_name": …, "domains": [...]}`.
+   Organisations are created, not given: nobody is in one until then.
+3. **Add a model.** On the portal's inference page, add the
+   OpenAI-compatible endpoint you serve (vLLM, or anything that speaks
+   `/v1/chat/completions`), or set `INFERENCE_BACKENDS` in `.env`, or have the
+   node register itself against `/v1/nodes` ([gpu-clusters.md](docs/gpu-clusters.md)).
+4. **Point igni at it.** In `~/.igni/config.yaml` on the developer's machine:
+   `api_url: http://localhost:7777` and `portal_url: http://localhost:3000`,
+   then `igni login` (see igni's QUICKSTART); `igni -m "…"` then uses the
+   models this server routes to.
+
+Turn `LOG_SIGN_IN_CODES` off once a mail relay or SSO works: anyone who can
+read the log can sign in as anybody.
 
 ### Tests
 
@@ -95,22 +136,41 @@ make test            # or: .venv/bin/python -m pytest tests/ -q
 make lint            # black --check, ruff, mypy
 ```
 
-Tests need Postgres on 5432 (they create and migrate `ember_test`
-themselves) and Redis on 6379.
+Tests need Postgres (a role `myuser` / `mysecretpassword` that may create
+databases; they create and migrate `ember_test` themselves) and Redis, and run
+with `APP_ENV=dev` and a `SECRET_ENCRYPTION_KEY` of their own, as CI does.
+On other ports than 5432 and 6379:
+
+```bash
+IGNI_TEST_PG_PORT=56701 REDIS_HOST=127.0.0.1 REDIS_PORT=57701 APP_ENV=dev \
+SECRET_ENCRYPTION_KEY="$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')" \
+  .venv/bin/python -m pytest tests/ -q
+```
 
 ## Docker Compose
 
 Local:
 
 ```bash
-cd containers
-docker compose -f docker-compose.local.yml --env-file .env up --build
+make up              # make down to stop it
 ```
 
-Starts the migration runner, API (`:7777`) and portal (`:3000`) — both
-ports bound to `127.0.0.1`. Source is volume-mounted for reload and
-`PORTAL_AUTH_BYPASS=1` is set. That is the whole open server; nothing in
-it needs a paid module.
+A second stack beside one already running — another checkout, a demo — needs
+its own name and ports, or it takes over the first one's containers:
+`make up IGNI_STACK=igni2 IGNI_API_PORT=7787 IGNI_PORTAL_PORT=3010` (and the
+same variables for `make down`).
+
+Starts Postgres and Redis, the migration runner, the API (`:7777`) and
+the portal (`:3000`) — both ports bound to `127.0.0.1`; Postgres and
+Redis are not published, the stack reaches them by name. Docker is all
+it needs. It reads the same `.env` as the Quick start, at the repository
+root, when there is one — without it, the compose file's development
+defaults (`make up` is
+`cd containers && docker compose -f docker-compose.local.yml --env-file ../.env up --build -d`).
+The database and Redis are always the bundled ones: that `.env`
+describes a server run on the host, where they are `localhost`. Source
+is volume-mounted for reload and `PORTAL_AUTH_BYPASS=1` is set. That is
+the whole open server; nothing in it needs a paid module.
 
 If you also have the Artifacts module's source (a separate, licensed
 repository) checked out beside this one, as `../igni__artifacts`, add
@@ -285,19 +345,21 @@ calling out, not a substitute for reading it.
 
 ## API
 
-85 documented paths; `/docs` and `/openapi.json` are the authoritative
-list. The shape of it:
+`/docs` and `/openapi.json` are the authoritative list (168 paths at the
+time of writing; this section used to say 85, and its per-prefix counts had
+drifted the same way). The shape of it:
 
-| Prefix | Count | What lives there |
-|---|---|---|
-| `/v1/portal/*` | 45 | Everything the admin portal calls |
-| `/v1/auth/*`, `/v1/sign-in{,-with-code}`, `/v1/sign-up`, `/v1/send-*-code`, `/v1/reset-password`, `/v1/cli/*` | 14 | Authentication |
-| `/.well-known/*`, `/v1/clients`, `/v1/oauth/token`, `/v1/directory/*`, `/v1/service-notifications`, `/v1/extensions` | 12 | Services such as Artifacts and CodeIndex: registration, tokens, the directory, notifications, and the extensions they ship — see [service-identity.md](docs/service-identity.md) |
-| `/v1/nodes/*` | 3 | Inference-node registration and heartbeat |
-| `/v1/chat/*` | 2 | The live inference path |
-| `/v1/notifications/*` | 3 | A person's notification feed |
-| `/scim/v2/*` | 3 | Provisioning from the customer's identity provider |
-| `/health`, `/ready`, `/version` | 3 | Operations |
+| Prefix | What lives there |
+|---|---|
+| `/v1/portal/*` | Everything the admin portal calls |
+| `/v1/auth/*`, `/v1/sign-in{,-with-code}`, `/v1/sign-up`, `/v1/send-*-code`, `/v1/reset-password`, `/v1/cli/*` | Authentication |
+| `/.well-known/*`, `/v1/clients`, `/v1/oauth/*`, `/v1/directory/*`, `/v1/revocations`, `/v1/service-*`, `/v1/extensions` | Services such as Artifacts and CodeIndex: registration, tokens, the directory, notifications, and the extensions they ship — see [service-identity.md](docs/service-identity.md) |
+| `/v1/platform/*`, `/v1/apps/*`, `/v1/vm/*` | What a service's producers and their VMs pull and report |
+| `/v1/nodes/*` | Inference-node registration and heartbeat |
+| `/v1/chat/*` | The live inference path |
+| `/v1/me/*`, `/v1/notifications/*`, `/v1/organisations/*` | A person's own view: notifications, the organisations served |
+| `/scim/v2/*` | Provisioning from the customer's identity provider |
+| `/health`, `/ready`, `/version` | Operations |
 
 `/health` is deliberately unconditional — it decides whether to restart
 the container, and a restart does not fix an unreachable database.

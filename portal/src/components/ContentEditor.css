@@ -49,3 +49,10 @@
 .content-editor-drop--active {
   background-color: var(--bgColor-inset, #f6f8fa);
 }
+
+/* What the frame shows for the moment the Monaco chunk takes to load. */
+.content-editor-loading {
+  padding: var(--base-size-12, 12px);
+  color: var(--fgColor-muted);
+  font-size: var(--text-body-size-small, 12px);
+}

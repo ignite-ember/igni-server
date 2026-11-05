@@ -109,6 +109,8 @@ class TestOffUntilAnAdminSwitchesItOn:
 
         assert _ids(listing) == [EXTENSION]
         assert listing['group'] == legal
+        # So `igni ext sync` can say which group, not print its id.
+        assert listing['group_name'] == 'Legal'
         assert listing['extensions'][0]['groups'] == [legal]  # type: ignore[index]
         assert (await client.get(f'/extensions/{EXTENSION}/bundle', headers=person)).status_code == 200
 

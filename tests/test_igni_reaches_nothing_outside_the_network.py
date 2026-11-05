@@ -22,8 +22,10 @@ uvloop (`uvicorn[standard]`), which resolves and connects inside libuv
 where the audit hook cannot hear it. Here the app runs in-process on the
 stdlib asyncio loop, so the guard sees every call; *which* hosts are
 called is the application's choice, not the loop's, so the result
-carries over. The portal is a static bundle served by nginx and loads no analytics
-tag; the source scan in `test_nothing_phones_home.py` keeps it that way.
+carries over. The portal is a static bundle served by nginx; it loads no analytics
+tag and fetches nothing from a CDN — Monaco included, which it once took from
+jsdelivr (B34). `test_nothing_phones_home.py` and the portal image's own
+`scripts/check-no-cdn.mjs`, run on the build, keep it that way.
 """
 
 from __future__ import annotations

@@ -20,7 +20,9 @@
 #   --authfile FILE        registry credentials for skopeo (default: skopeo's)
 #   --dest-tls-verify BOOL passed to skopeo; `false` for a plain-HTTP registry
 #   --cosign-key FILE      after the push, check each image's cosign signature
-#                          and SBOM attestation in your registry with this key
+#                          and SBOM attestation in your registry with this key,
+#                          and, before anything is pushed (also with
+#                          --verify-only), each non-image release's signature
 #
 # Order of work, and why it is this order:
 #
@@ -33,7 +35,11 @@
 #   3. Every file is hashed and compared with the MANIFEST. A file that is
 #      missing, altered or *not listed* is a refusal: an extra file is how
 #      something unsigned would ride along.
-#   4. Only then is anything pushed, by digest-preserving `skopeo copy`, and
+#   4. Each release that is not an image (artefacts.tsv: Fleet's binaries)
+#      is checked against its own SHA256SUMS, and with --cosign-key its
+#      cosign signature over SHA256SUMS is verified. They are not pushed
+#      anywhere; --keep leaves them in DIR/<bundle>/artefacts/<name>/.
+#   5. Only then is anything pushed, by digest-preserving `skopeo copy`, and
 #      the digest the registry reports is compared with the signed one.
 #
 # Any failure exits non-zero having pushed nothing that failed, and says
@@ -84,7 +90,7 @@ while [ $# -gt 0 ]; do
         --authfile) authfile="${2:?--authfile needs a file}"; shift 2 ;;
         --dest-tls-verify) dest_tls_verify="${2:?--dest-tls-verify needs true or false}"; shift 2 ;;
         --cosign-key) cosign_key="${2:?--cosign-key needs a file}"; shift 2 ;;
-        -h | --help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h | --help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown option '$1' (see --help)" ;;
     esac
 done
@@ -217,16 +223,76 @@ done
 
 [ -f "$root/images.tsv" ] || die 'no images.tsv index in the bundle'
 
+# ── 4. Releases that are not images ─────────────────────────────────────
+#
+# Everything here is already covered by the MANIFEST signature. This also
+# holds each one to the SHA256SUMS its own build signed, and with
+# --cosign-key checks that signature, so the bundle cannot carry an
+# artefact that was not a signed release when it was added.
+
+check_release_dir() {
+    local dir="$1" what="$2" line file listed=() present
+    [ -f "$dir/SHA256SUMS" ] || die "$what has no SHA256SUMS"
+    [ -f "$dir/SHA256SUMS.sig" ] || die "$what has no SHA256SUMS.sig"
+    [ ! -e "$dir/UNSIGNED" ] || die "$what is marked UNSIGNED"
+    [ -z "$(find "$dir" -mindepth 1 ! -type f -print -quit)" ] || die "$what holds something other than files"
+    local sums_line='^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]*)$'
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ "$line" =~ $sums_line ]] || die "$what: malformed SHA256SUMS line: $line"
+        file="${BASH_REMATCH[2]}"
+        case "$file" in SHA256SUMS | SHA256SUMS.sig | UNSIGNED) die "$what: SHA256SUMS lists $file" ;; esac
+        [ -f "$dir/$file" ] || die "$what: SHA256SUMS lists $file, which is not in the bundle"
+        [ "$(sha256_of "$dir/$file")" = "${BASH_REMATCH[1]}" ] || die "$what: hash mismatch against its SHA256SUMS: $file"
+        listed+=("$file")
+    done < "$dir/SHA256SUMS"
+    [ "${#listed[@]}" -gt 0 ] || die "$what: SHA256SUMS lists no files"
+    while IFS= read -r present; do
+        case "$present" in SHA256SUMS | SHA256SUMS.sig) continue ;; esac
+        printf '%s\n' "${listed[@]}" | grep -qxF -- "$present" || die "$what: $present is not listed in its SHA256SUMS"
+    done < <(cd "$dir" && find . -type f | sed 's#^\./##')
+    printf '%s\n' "${#listed[@]}"
+}
+
+artefact_names=()
+artefact_versions=()
+artefact_notes=()
+tab=$'\t'
+if [ -f "$root/artefacts.tsv" ]; then
+    [ -z "$cosign_key" ] || need cosign
+    artefact_line="^([a-z0-9][a-z0-9._-]*)${tab}([A-Za-z0-9_][A-Za-z0-9_.+-]{0,127})${tab}(sha256:[0-9a-f]{64})\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        [[ "$line" =~ $artefact_line ]] || die "malformed artefacts.tsv line: $line"
+        name="${BASH_REMATCH[1]}"
+        dir="$root/artefacts/$name"
+        [ -d "$dir" ] || die "artefacts.tsv names $name but the bundle holds no artefact for it"
+        [ "sha256:$(sha256_of "$dir/SHA256SUMS" 2> /dev/null || true)" = "${BASH_REMATCH[3]}" ] \
+            || die "$name: SHA256SUMS is not the one artefacts.tsv records"
+        count="$(check_release_dir "$dir" "$name")" || exit 1
+        note="$count files, SHA256SUMS matches"
+        if [ -n "$cosign_key" ]; then
+            cosign verify-blob --key "$cosign_key" --insecure-ignore-tlog=true \
+                --signature "$dir/SHA256SUMS.sig" "$dir/SHA256SUMS" > /dev/null 2>&1 \
+                || die "$name: its cosign signature over SHA256SUMS does not verify"
+            note="$note, cosign-verified"
+        fi
+        artefact_names+=("$name")
+        artefact_versions+=("${BASH_REMATCH[2]}")
+        artefact_notes+=("$note")
+    done < "$root/artefacts.tsv"
+elif [ -e "$root/artefacts" ]; then
+    die 'the bundle has artefacts/ but no artefacts.tsv index'
+fi
+
 info "Verified igni $version (commit ${commit:-unknown}, built ${created:-unknown})"
 info "  signature: good, key $public_key"
 info "  files:     ${#manifest_paths[@]}, every sha256 matches the signed MANIFEST"
 
-# ── 4. Import ───────────────────────────────────────────────────────────
+# ── 5. Import ───────────────────────────────────────────────────────────
 
 image_names=()
 image_tags=()
 image_digests=()
-tab=$'\t'
 image_line="^([a-z0-9][a-z0-9._-]*)${tab}([A-Za-z0-9_][A-Za-z0-9_.-]{0,127})${tab}(sha256:[0-9a-f]{64})\$"
 while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
@@ -243,6 +309,10 @@ if [ "$verify_only" -eq 1 ]; then
     info '  images:'
     for i in "${!image_names[@]}"; do
         info "    ${image_names[$i]}:${image_tags[$i]}@${image_digests[$i]}"
+    done
+    for i in "${!artefact_names[@]}"; do
+        [ "$i" -gt 0 ] || info '  artefacts:'
+        info "    ${artefact_names[$i]} ${artefact_versions[$i]} (${artefact_notes[$i]})"
     done
     info 'Verify only: nothing imported.'
     [ -z "$keep_dir" ] || info "Verified contents kept in $root"
@@ -300,11 +370,14 @@ done
 for chart in "$root"/charts/*.tgz; do
     [ -f "$chart" ] && info "Helm chart: charts/$(basename "$chart")"
 done
+for i in "${!artefact_names[@]}"; do
+    info "Artefact:   artefacts/${artefact_names[$i]}/ ${artefact_versions[$i]} (${artefact_notes[$i]})"
+done
 for sbom in "$root"/sboms/*; do
     [ -f "$sbom" ] && info "SBOM:       sboms/$(basename "$sbom")"
 done
 if [ -n "$keep_dir" ]; then
     info "Verified contents kept in $root"
 else
-    info 'Use --keep DIR to keep the chart and SBOMs.'
+    info 'Use --keep DIR to keep the chart, the SBOMs and any artefacts.'
 fi

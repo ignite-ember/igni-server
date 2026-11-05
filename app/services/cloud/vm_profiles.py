@@ -29,6 +29,7 @@ from app.api.base_v1.schema.vm_profiles import (
     ProducerVmProfile,
     VmProfileResponse,
     VmProfileSettings,
+    VmProfileShape,
     VmProfilesOverview,
 )
 from app.config import settings
@@ -96,7 +97,7 @@ class VmCaps:
         return await self.get()
 
     @staticmethod
-    def refusal(settings: VmProfileSettings, caps: PlatformVmCapsBody) -> str | None:
+    def refusal(settings: VmProfileShape, caps: PlatformVmCapsBody) -> str | None:
         """Why *settings* does not fit *caps*, or None."""
         if settings.memory_mib > caps.max_memory_mib:
             return f'The memory ceiling may be at most {caps.max_memory_mib} MiB on this platform'
@@ -146,14 +147,14 @@ class ProfileVersion:
     """Content hashes: equal exactly when what they cover is equal."""
 
     @staticmethod
-    def _digest(value: object) -> str:
+    def digest(value: object) -> str:
         return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()[:32]
 
     #: Fields added after versions were first handed out, and their values
     #: then: left out of the digest while they have them, so adding a field
     #: does not change every producer's version (which the gateway would
     #: answer by re-provisioning every VM).
-    LATER_FIELDS: dict[str, object] = {'erase_after_idle_days': None}
+    LATER_FIELDS: dict[str, object] = {'erase_after_idle_days': None, 'internet': False}
 
     @classmethod
     def of(cls, profile_id: str, effective: VmProfileSettings) -> str:
@@ -161,11 +162,11 @@ class ProfileVersion:
         for field, then in cls.LATER_FIELDS.items():
             if values.get(field) == then:
                 values.pop(field)
-        return cls._digest({'id': profile_id, **values})
+        return cls.digest({'id': profile_id, **values})
 
     @classmethod
-    def packages(cls, effective: VmProfileSettings) -> str:
-        return cls._digest({'packages': effective.packages.model_dump(), 'setup_script': effective.setup_script})
+    def packages(cls, effective: VmProfileShape) -> str:
+        return cls.digest({'packages': effective.packages.model_dump(), 'setup_script': effective.setup_script})
 
 
 class VmProfiles:
@@ -189,6 +190,7 @@ class VmProfiles:
             volume_gib=profile.volume_gib,
             volume_max_gib=profile.volume_max_gib,
             erase_after_idle_days=profile.erase_after_idle_days,
+            internet=profile.internet,
         )
 
     @staticmethod
@@ -206,6 +208,7 @@ class VmProfiles:
             setup_script=effective.setup_script,
             volume_max_gib=effective.volume_max_gib,
             erase_after_idle_days=effective.erase_after_idle_days,
+            internet=effective.internet,
         )
 
     def response(self, profile: VmProfile, caps: PlatformVmCapsBody) -> VmProfileResponse:

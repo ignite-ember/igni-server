@@ -124,6 +124,13 @@ class TestCiRunsTheSuiteThatEnforcesEverythingElse:
         assert 'tools/kind/install.sh' in ci, 'CI no longer installs the chart on a cluster'
         assert 'tools/restore-drill.sh' in ci, 'CI no longer runs the restore drill'
 
+    def test_it_runs_the_journey_with_a_real_sign_in(self, ci):
+        """The one job that crosses the repositories, and the only place
+        SSO runs end to end — the first run of it found every SSO login
+        signing nobody in."""
+        assert 'tools/e2e_journey/journey.sh run' in ci, 'CI no longer runs the free-base journey'
+        assert 'repository: ignite-ember/igni' in ci, 'the journey no longer checks out the igni CLI'
+
     def test_the_gates_are_not_allowed_to_fail_silently(self, ci):
         """`|| true` on a gate is a gate that reports rather than gates.
         The Makefile uses it deliberately for the formatter; a CI job

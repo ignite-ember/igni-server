@@ -86,7 +86,7 @@ docker run --rm --platform linux/amd64 \
   bash -euc "
     cp -r /src /work
     cd /work
-    npm ci --legacy-peer-deps --no-audit --no-fund > /dev/null
+    npm ci --no-audit --no-fund > /dev/null
     # No backend in here. global-setup says so and carries on; every
     # /v1 call the visual suite makes is replayed from fixtures.
     $INNER

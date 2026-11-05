@@ -9,7 +9,7 @@ with another person's, or deleted, and igni had no way to tell.
 So the pack also leaves here as a compact JWS, signed with the key igni
 signs its tokens with and published at `/.well-known/jwks.json`. The
 client stores that string exactly as received and verifies it before any
-of it is merged (ember-code `core/config/group_policy_signature.py`).
+of it is merged (igni `core/config/group_policy_signature.py`).
 
 ## The payload
 

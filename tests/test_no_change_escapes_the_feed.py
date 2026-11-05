@@ -13,6 +13,7 @@ from cryptography.fernet import Fernet
 import pytest
 
 from app.config import settings
+from app.db.sql.producer_feed import ProducerFeedDB
 from app.services.cloud.producer_feed import ProducerFeed
 from tests.cloud_world import CloudOrg, make_super_admin
 from tests.conftest import auth_header, make_token
@@ -78,6 +79,17 @@ async def _escaped() -> int:
     return await ProducerFeed().reconcile()
 
 
+async def _escaped_a_removal(user_id: str) -> int:
+    """A removal is numbered by the request that made it (`ProducerFeed.removal`), so nothing is left to number.
+
+    The person's row must say so — removed — or the test proves nothing.
+    """
+    assert await ProducerFeed().drain() == 0, 'the removal left marks for a read to number'
+    rows = [row for row in await ProducerFeedDB().after(0, limit=1000) if row.producer_id == user_id]
+    assert [row.removed for row in rows] == [True]
+    return await ProducerFeed().reconcile()
+
+
 async def test_joining(world):
     await world.acme.person('eve@acme.com')
     assert await _escaped() == 0
@@ -92,7 +104,7 @@ async def test_deactivation_and_reactivation(world):
 
 async def test_removal(world):
     await world.call('DELETE', f'/portal/team/{world.max}')
-    assert await _escaped() == 0
+    assert await _escaped_a_removal(world.max) == 0
 
 
 async def test_a_group_move(world):
@@ -161,15 +173,21 @@ async def test_lowering_the_caps(world):
 async def test_deleting_an_account(world):
     response = await world.client.delete('/portal/me', headers=auth_header(make_token(world.max)))
     assert response.status_code == 200, response.text
-    assert await _escaped() == 0
+    assert await _escaped_a_removal(world.max) == 0
 
 
 async def test_deleting_the_organisation(world):
-    for user_id in (world.ada, world.max):
-        await world.call('DELETE', f'/portal/team/{user_id}')
+    """Deactivated members may stay until the end; the organisation's deletion takes them with it.
+
+    Their removal is numbered by the deletion itself (`ProducerFeed.removal`),
+    like any other: before, it waited for some later read to number it.
+    """
+    await world.call('PATCH', f'/portal/team/{world.ada}/status', json={'status': 'deactivated'})
+    await world.call('DELETE', f'/portal/team/{world.max}')
     await world.call('DELETE', f'/portal/apps/{world.app}')
+    await ProducerFeed().drain()
     await world.call('DELETE', f'/portal/organizations/{world.acme.org_id}')
-    assert await _escaped() == 0
+    assert await _escaped_a_removal(world.ada) == 0
 
 
 async def test_a_spaces_life(world):

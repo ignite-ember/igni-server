@@ -42,9 +42,10 @@ import re
 import tarfile
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, model_validator, ValidationError
 import yaml
 
+from app.api.base_v1.schema.vm_profile_requests import ManifestVm
 from app.db.sql.models.registered_client import APPROVED, RegisteredClient, SERVICE
 from app.db.sql.models.service_extension import HELD, LIVE, ServiceExtension
 from app.db.sql.registered_clients import RegisteredClientDB
@@ -98,6 +99,14 @@ class Manifest(BaseModel):
     description: str = ''
     vendor: str = ''
     contributes: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode='before')
+    @classmethod
+    def _vm_is_readable(cls, data: Any) -> Any:
+        """`vm`, what its VMs in igni's cloud would get, kept as sent but refused when malformed (§12.3)."""
+        if isinstance(data, dict) and data.get('vm') is not None:
+            ManifestVm.model_validate(data['vm'])
+        return data
 
 
 class PluginAgent(BaseModel):

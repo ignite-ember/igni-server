@@ -6,11 +6,10 @@
 # repository). Without it, docker-compose.local.yml alone runs the whole
 # open server.
 #
-#   cd containers
-#   docker compose -f docker-compose.local.yml -f docker-compose.artifacts.yml \
-#     --env-file .env up --build
+#   make up ARTIFACTS=1
 #
-# or `make up ARTIFACTS=1`.
+# which is `cd containers && docker compose -f docker-compose.local.yml
+# -f docker-compose.artifacts.yml --env-file ../.env up --build -d`.
 
 services:
   # igni__artifacts' embedder, built from the same sibling checkout as
@@ -83,8 +82,9 @@ services:
       # organisation's graph password; a value in .env wins, so secrets
       # written under another key stay readable.
       - GRAPH_CREDENTIALS_KEY=${ARTIFACTS_GRAPH_CREDENTIALS_KEY:-dHC78sDn0HeJYeEVxzWXUs52rxFaoGAUiIb0SrDGUa4=}
-      # DEV ONLY credentials: the same local Postgres and Redis as the API
-      # (.env), in a database and a logical db of its own (12, see
+      # DEV ONLY credentials: a Postgres and Redis on this machine, not
+      # the stack's bundled ones (igni__artifacts expects its database to
+      # exist), in a database and a logical db of its own (12, see
       # igni__artifacts app/config.py).
       - POSTGRES_URL=${ARTIFACTS_POSTGRES_URL:-postgresql+asyncpg://ember:ember@host.docker.internal:5532/igni_artifacts}
       - REDIS_URL=${ARTIFACTS_REDIS_URL:-redis://host.docker.internal:6379/12}

@@ -798,3 +798,54 @@ class TestThePortalStartsWithoutTheApi:
         environment = str(portal.get('environment') or '')
 
         assert 'API_UPSTREAM' in environment, f'{which} leaves the portal upstream to the image default'
+
+
+def _environment(service: dict) -> dict[str, str]:
+    """A service's `environment`, as a mapping, whichever spelling the file uses."""
+    raw = service.get('environment') or {}
+    if isinstance(raw, dict):
+        return {str(k): str(v) for k, v in raw.items()}
+    return dict(str(item).split('=', 1) for item in raw)
+
+
+class TestTheLocalStackIsTheOneTheReadmeDescribes:
+    """`make up` on a machine with nothing but Docker, reading the Quick start's .env.
+
+    The local file had no Postgres or Redis — the API waited on a server
+    the README never asked anybody to start — and it read
+    `containers/.env`, while the Quick start makes `.env` at the root.
+    """
+
+    def test_it_brings_its_own_postgres_and_redis(self, local):
+        services = local['services']
+        assert {'postgres', 'redis'} <= set(services)
+        for name in ('migrate', 'igni_api'):
+            environment = _environment(services[name])
+            assert environment['POSTGRES_HOST'] == 'postgres', name
+            assert environment['REDIS_HOST'] == 'redis', name
+        assert services['migrate']['depends_on']['postgres']['condition'] == 'service_healthy'
+        assert services['igni_api']['depends_on']['migrate']['condition'] == 'service_completed_successfully'
+
+    def test_the_database_it_creates_is_the_one_it_connects_to(self, local):
+        services = local['services']
+        database = _environment(services['postgres'])
+        for name in ('migrate', 'igni_api'):
+            environment = _environment(services[name])
+            for key in ('POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB'):
+                assert environment[key] == database[key], (name, key)
+
+    def test_it_reads_the_env_file_the_quick_start_makes(self, local):
+        readme = (_ROOT.parent / 'README.md').read_text()
+        # `make dev-env` writes it (tools/dev_env.py, default --out is the root
+        # .env); copying dist.env by hand is the production route.
+        assert '\nmake dev-env\n' in readme or '\ncp dist.env .env\n' in readme, (
+            'the Quick start no longer makes the root .env'
+        )
+        assert '--env-file .env' not in readme, 'the README still points compose at containers/.env'
+
+        for name in ('migrate', 'igni_api'):
+            env_files = local['services'][name]['env_file']
+            paths = [entry['path'] if isinstance(entry, dict) else entry for entry in env_files]
+            assert paths == ['../.env'], (name, paths)
+        makefile = (_ROOT.parent / 'Makefile').read_text()
+        assert '--env-file ../.env' in makefile, '`make up` interpolates from containers/.env'

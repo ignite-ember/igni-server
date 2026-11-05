@@ -11,7 +11,7 @@ import logging
 from sqlalchemy import cast, Date, func, select
 
 from app.db.sql.models.chat_usage import ChatUsage
-from app.db.sql.schemas.chat_usage import DailyUsage, UsageTotals
+from app.db.sql.schemas.chat_usage import DailyUsage, PersonUsage, UsageTotals
 from app.db.sql.tenancy import TenantData
 
 logger = logging.getLogger(__name__)
@@ -116,3 +116,35 @@ class ChatUsageDB(TenantData):
                 total_tokens=int(r.total_tokens),
                 request_count=int(r.request_count),
             )
+
+    async def per_person(self, *, org_id: str, user_ids: list[str], days: int = 30) -> dict[str, PersonUsage]:
+        """Each person's requests and tokens over the last N days, and when they were last active.
+
+        One grouped query for the whole list, not one per member: the team
+        page reads it for every member at once. `last_active` is over all
+        time; the counts are over the window, with a `FILTER` so a single
+        scan answers both. A person with no rows is absent from the result.
+        """
+        if not user_ids:
+            return {}
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        in_window = ChatUsage.created_at >= since
+        async with self.session_scope(org_id) as session:
+            rows = (
+                await session.execute(
+                    select(
+                        ChatUsage.user_id,
+                        func.count().filter(in_window).label('requests'),
+                        func.coalesce(func.sum(ChatUsage.total_tokens).filter(in_window), 0).label('total_tokens'),
+                        func.max(ChatUsage.created_at).label('last_active'),
+                    )
+                    .where(ChatUsage.org_id == org_id, ChatUsage.user_id.in_(user_ids))
+                    .group_by(ChatUsage.user_id)
+                )
+            ).all()
+        return {
+            str(r.user_id): PersonUsage(
+                requests=int(r.requests), total_tokens=int(r.total_tokens), last_active=r.last_active
+            )
+            for r in rows
+        }

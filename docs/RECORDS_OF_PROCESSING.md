@@ -19,7 +19,7 @@
 
 igni runs in the customer's own infrastructure and no data reaches the vendor, so the customer is the controller and there is no processor relationship to describe. What a controller cannot write without the vendor is the inventory: what the software stores, why, and for how long. That is what follows.
 
-It covers **211 classified personal-data columns across 38 tables**, plus one table whose personal data lives in a JSON payload, grouped into 8 processing activities.
+It covers **217 classified personal-data columns across 39 tables**, plus one table whose personal data lives in a JSON payload, grouped into 8 processing activities.
 
 ## Documents are processed by a paired service
 
@@ -158,11 +158,11 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 
 ### The cloud's producers and their VMs
 
-**Purpose (30(1)(b)).** Run each producer — a person, an app an org admin registered, or a space the app declared for one of its own users — in a microVM of its own: which apps an organisation has and who owns them, which extensions each app has on, which VM profile each group and app gets and who defined it, the commands run as root in a producer's VM with who asked and what came of them, the messages, chats, actions and events services asked to deliver to a producer's agent or extension, with the thread key and the files that came with them, and which MCP servers a person approved, and the credential each producer's VM holds of its own — hashed, rotated on every use — so the platform never mints a token for anybody. Without these the platform cannot say who may run what in whose VM, or answer for it afterwards.
+**Purpose (30(1)(b)).** Run each producer — a person, an app an org admin registered, or a space the app declared for one of its own users — in a microVM of its own: which apps an organisation has and who owns them, which extensions each app has on, which VM profile each group and app gets and who defined it, what an app or an extension asked its VM to get and which admin approved or rejected it, the commands run as root in a producer's VM with who asked and what came of them, the messages, chats, actions and events services asked to deliver to a producer's agent or extension, with the thread key and the files that came with them, and which MCP servers a person approved, and the credential each producer's VM holds of its own — hashed, rotated on every use — so the platform never mints a token for anybody. Without these the platform cannot say who may run what in whose VM, or answer for it afterwards.
 
 **Legal basis (30(1)(b)).** `__CONTROLLER_TO_COMPLETE__`
 
-**Categories of data subject (30(1)(c)).** Members of an organisation who own or registered an app, defined a VM profile, asked for or were the target of a command, were sent an event, or approved an MCP server; the super admin who set the platform's caps or an organisation's quota; and an app's own users, named only by the id the app gives each of their spaces.
+**Categories of data subject (30(1)(c)).** Members of an organisation who own or registered an app, defined a VM profile or decided a request for one, asked for or were the target of a command, were sent an event, or approved an MCP server; the super admin who set the platform's caps or an organisation's quota; and an app's own users, named only by the id the app gives each of their spaces.
 
 **Retention (30(1)(f)).** For the life of the organisation. Commands are the audit log of what ran in whose VM and are kept with it. An event waits at most `SERVICE_EVENT_MAX_WAIT_SECONDS` (14 days) to be delivered and is deleted `SERVICE_EVENT_RETENTION_DAYS` (30) after it was delivered, expired or dropped, by `app/services/retention.py`. A file a service sends with an item is deleted a day after upload if no item names it, and otherwise when its item expires. A VM credential is kept, revoked, for the life of the organisation as the record of who could reach a VM; it stops working after 90 days unused. The gateway's feed keeps one row per producer — whether they are one still, and when that changed. A member removed from an organisation has their VM's state, volume and keys erased after the organisation's `removed_member_retention_days` (default 30, at most the platform's maximum; 0 is at once), or at once on an erasure request; a legal hold an admin places stops that clock until it is released, and an erasure request is refused while it stands. Every erasure scheduled, moved or stopped is audited. An export of a removed member's data an admin asks for during retention is kept `PRODUCER_EXPORT_RETENTION_DAYS` (7) for the organisation to download. A feed row is kept `PRODUCER_FEED_RETENTION_DAYS` (30) after the erasure, by `app/services/retention.py`. A member who was only deactivated keeps their row while their suspended VM exists. A revocation telling the gateway and services to stop accepting a person's tokens is kept 31 days, past the longest a token lives. A mark naming a changed producer is deleted at the gateway's next poll.
 
@@ -172,7 +172,8 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 |---|---|---|---|---|
 | `org_apps` | 3 | `created_at`, `created_by_user_id`, `owner_user_id` | — | 2 |
 | `org_app_extensions` | 4 | `app_id`, `enabled_at`, `enabled_by_user_id`, `extension_id` | — | 1 |
-| `vm_profiles` | 5 | `created_at`, `created_by_user_id`, `name`, `updated_at`, `updated_by_user_id` | — | 12 |
+| `vm_profiles` | 5 | `created_at`, `created_by_user_id`, `name`, `updated_at`, `updated_by_user_id` | — | 13 |
+| `vm_profile_requests` | 6 | `decided_at`, `decided_by_user_id`, `reason`, `state`, `subject_id`, `subject_kind` | — | 8 |
 | `vm_commands` | 13 | `command`, `created_at`, `error`, `exit_code`, `finished_at`, `output`, `producer_id`, `producer_kind`, `requested_as`, `requested_by_id`, `requested_by_kind`, `started_at`, `state` | — | 6 |
 | `vm_jobs` | 7 | `cancelled_at`, `cancelled_by_id`, `command`, `created_at`, `requested_as`, `requested_by_id`, `requested_by_kind` | — | 4 |
 | `producer_events` | 17 | `action`, `attachment_ids`, `created_at`, `delivered_at`, `event_type`, `extension_id`, `failed_reason`, `kind`, `not_handled_reason`, `payload`, `producer_id`, `producer_kind`, `start_run`, `state`, `text`, `thread`, `title` | — | 7 |

@@ -75,6 +75,18 @@ data:
   `toJson` rather than `quote`: the setting is a list, and
   `OAUTH_PROVIDERS=google` is a startup crash rather than a
   one-element list.
+
+  Google is listed only when it has a client ID (B39), unless
+  `socialSignIn.providers` says otherwise. It used to be listed by
+  default, which an air-gapped deployment's reviewer reads as a
+  configured outbound call to Google.
   */}}
-  OAUTH_PROVIDERS: {{ .Values.socialSignIn.providers | toJson | quote }}
+  {{- $social := .Values.socialSignIn | default dict }}
+  {{- $providers := list }}
+  {{- if hasKey $social "providers" }}
+  {{- $providers = $social.providers | default list }}
+  {{- else if $social.googleClientId }}
+  {{- $providers = list "google" }}
+  {{- end }}
+  OAUTH_PROVIDERS: {{ $providers | toJson | quote }}
   OAUTH_GOOGLE_CLIENT_ID: {{ .Values.socialSignIn.googleClientId | quote }}

@@ -6,7 +6,12 @@ singleton DB managers connect to ember_test via patched settings.
 """
 
 from datetime import datetime, timezone
+import os
 import uuid
+
+# Before anything imports `app.config`: the suite reads the environment, never
+# the checkout's `.env` (see `_DOTENV` there).
+os.environ['IGNI_IGNORE_DOTENV'] = '1'
 
 import bcrypt
 from httpx import ASGITransport, AsyncClient
@@ -24,8 +29,18 @@ from app.services.auth.jwt_service import JWTService
 from app.services.identity.key_ring import KeyRing, SigningKeys
 from tests.egress_guard import EgressGuard, InternalNetwork
 
-TEST_DB_URL_ASYNC = 'postgresql+asyncpg://myuser:mysecretpassword@localhost:5432/ember_test'
-TEST_DB_URL_SYNC = 'postgresql+psycopg2://myuser:mysecretpassword@localhost:5432/ember_test'
+#: `IGNI_TEST_PG_PORT` moves the suite off 5432 so it can run beside another
+#: Postgres (a sibling repo's suite, a dev stack). CI leaves it unset.
+_TEST_PG_PORT = os.environ.get('IGNI_TEST_PG_PORT', '5432')
+#: The URLs stay plain literals with 5432 in them: `test_lint_is_the_same_locally_and_in_ci`
+#: reads the database name and credentials out of this file and compares them with CI's.
+#: 127.0.0.1, not `localhost`: see `test_the_suite_connects_to_127_0_0_1`.
+TEST_DB_URL_ASYNC = 'postgresql+asyncpg://myuser:mysecretpassword@127.0.0.1:5432/ember_test'.replace(
+    ':5432/', f':{_TEST_PG_PORT}/'
+)
+TEST_DB_URL_SYNC = 'postgresql+psycopg2://myuser:mysecretpassword@127.0.0.1:5432/ember_test'.replace(
+    ':5432/', f':{_TEST_PG_PORT}/'
+)
 
 #: Each organisation's own database is `ember_test_t<n>`, copied from the
 #: template (`app.db.sql.tenancy`). Matched with LIKE, so `_` is escaped.

@@ -104,7 +104,18 @@
         "existingClaim": { "type": "string" },
         "schedule": { "type": "string", "minLength": 9 },
         "retainDays": { "type": "integer", "minimum": 1 },
-        "image": { "type": "string", "minLength": 1 }
+        "image": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            {
+              "type": "object",
+              "properties": {
+                "repository": { "type": "string" },
+                "tag": { "type": ["string", "number"], "minLength": 1 }
+              }
+            }
+          ]
+        }
       }
     },
     "ingress": {

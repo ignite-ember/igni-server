@@ -184,7 +184,7 @@ test.describe('DashboardPage (authenticated)', () => {
           total_tokens: 1_500_000, total_input_tokens: 1_000_000, total_output_tokens: 500_000, total_requests: 42,
         })),
       'GET /v1/portal/team': (r) =>
-        r.fulfill(json({ members: [{ id: 'u1', user_id: 'u1', email: 'a@b.com', full_name: 'A', role: 'admin', tier: 'pro', status: 'active', total_sessions: 0, total_tokens: 0, last_active: null, joined_at: '2026-01-01T00:00:00Z', assigned_by: null }], total: 1 })),
+        r.fulfill(json({ members: [{ id: 'u1', user_id: 'u1', email: 'a@b.com', full_name: 'A', role: 'admin', tier: 'pro', status: 'active', total_requests: 0, total_tokens: 0, last_active: null, joined_at: '2026-01-01T00:00:00Z', assigned_by: null }], total: 1 })),
     })
 
     await page.goto('/dashboard')

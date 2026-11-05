@@ -54,3 +54,7 @@ class EffectiveVmProfile(BaseModel):
     #: and volume are erased; null is never. Not applied to a person's
     #: VM (§12.2). Absent on a row written before profiles had it: never.
     erase_after_idle_days: int | None = None
+    #: Whether the VM may reach the internet; false: only what its node
+    #: allows. The node grants it only where it may (§12.4). Absent on a
+    #: row written before profiles had it: false.
+    internet: bool = False

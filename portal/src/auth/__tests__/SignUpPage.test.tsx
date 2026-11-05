@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import userEvent from '@testing-library/user-event'
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import { Routes, Route } from 'react-router-dom'
 import { renderWithProviders } from '../../test/render'
 import { server } from '../../test/server'
@@ -150,5 +150,50 @@ describe('SignUpPage step 3 (password validation)', () => {
     await userEvent.click(screen.getByRole('button', { name: /Create account/i }))
 
     expect(await screen.findByText(/Passwords do not match/i)).toBeInTheDocument()
+  })
+})
+
+/**
+ * B39. The page offers only what `/auth/methods` reports. It used to show
+ * a Google button on every deployment, which on one without Google — the
+ * chart's default, and every air-gapped install — led to an error.
+ */
+describe('SignUpPage other ways in', () => {
+  test('shows no Google button when the server reports none', async () => {
+    let asked = false
+    server.use(
+      http.get('/v1/auth/methods', () => {
+        asked = true
+        return HttpResponse.json({
+          password: true,
+          oauth_providers: [],
+          sso: { enabled: false, label: 'SSO', start_url: '/v1/auth/oidc' },
+        })
+      }),
+    )
+
+    renderSignup()
+    // Absence is asserted after the answer arrived, not before it was asked.
+    await waitFor(() => expect(asked).toBe(true))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.queryByRole('button', { name: 'Google' })).toBeNull()
+    expect(screen.queryByText('Or continue with')).toBeNull()
+  })
+
+  test('shows the Google button when the server offers it', async () => {
+    server.use(
+      http.get('/v1/auth/methods', () =>
+        HttpResponse.json({
+          password: true,
+          oauth_providers: ['google'],
+          sso: { enabled: false, label: 'SSO', start_url: '/v1/auth/oidc' },
+        }),
+      ),
+    )
+
+    renderSignup()
+
+    expect(await screen.findByRole('button', { name: 'Google' })).toBeInTheDocument()
   })
 })

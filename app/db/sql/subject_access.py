@@ -214,6 +214,12 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 'WHERE created_by_user_id = :u OR updated_by_user_id = :u',
                 u=user_id,
             ),
+            'vm_profile_requests': await self._org_rows(
+                org_id,
+                'SELECT subject_kind, subject_id, state, decided_at, reason FROM vm_profile_requests '
+                'WHERE decided_by_user_id = :u',
+                u=user_id,
+            ),
             # Commands they asked for, and those run in their own VM.
             'vm_commands': await self._org_rows(
                 org_id,

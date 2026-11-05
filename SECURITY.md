@@ -22,6 +22,19 @@ tell you rather than going quiet.
 
 What follows is a property of the software rather than of a company.
 
+## Advisories
+
+A fixed vulnerability is published as a **GitHub Security Advisory on
+`ignite-ember/igni-server`** (the Security tab, then Advisories), with a CVE
+identifier assigned through GitHub, which is a CVE Numbering Authority.
+The advisory is published once the fixed release is available, and names
+that version; the release notes and `CHANGELOG.md` name the advisory.
+Watching the repository for security alerts is how to hear of one;
+customers under contract are also told directly. How a report becomes an
+advisory, and how that lines up with the Cyber Resilience Act's reporting
+duties, is in `docs/VULNERABILITY_MANAGEMENT.md` ("Advisories and CVE
+identifiers").
+
 ## Please do not open a public issue first
 
 Not because disclosure is unwelcome — because this product is
@@ -73,7 +86,7 @@ anything is claimed about it:
 ## Scope
 
 **In scope:** this repository, the portal it serves, the desktop client
-and CLI in `ember-code`, the paid modules — CodeIndex in
+and CLI in `igni`, the paid modules — CodeIndex in
 `igni__code-index`, Artifacts in `igni__artifacts`, Fleet in
 `igni__cloudvm` — the extensions they ship, the release bundle and
 `igni-import`, the Helm chart, and the compose files:

@@ -12,9 +12,13 @@ newer igni from using its newer tools. A false rejection is worse than
 a missed typo, because it stops work that is correct.
 """
 
+from pathlib import Path
+import subprocess
+
 import pytest
 
-from app.services.portal.agent_tools import declared_tools, unknown_tools, warning_for
+from app.services.portal.agent_tools import declared_tools, KNOWN_TOOLS, unknown_tools, warning_for
+from app.services.portal.default_group import seed_entries
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 AGENT = """---
@@ -53,7 +57,17 @@ class TestSpottingTheOnesThatDoNotExist:
         assert unknown_tools(AGENT.format(tools='WebSarch, Bash')) == ['WebSarch']
 
     def test_real_tools_are_left_alone(self):
-        assert unknown_tools(AGENT.format(tools='WebSearch, Bash, Read')) == []
+        assert unknown_tools(AGENT.format(tools='WebSearch, Bash, Edit')) == []
+
+    def test_a_tool_igni_dropped_is_unknown_now(self):
+        """igni reads files through Bash: `Read`, `Grep`, `Glob` and `LS`
+        are gone, and an agent still naming them fails when it is called."""
+        assert unknown_tools(AGENT.format(tools='Read, Grep, Glob, LS, Bash')) == ['Read', 'Grep', 'Glob', 'LS']
+
+    def test_orchestrate_is_not_a_typo(self):
+        """A pseudo-tool the agent builder attaches. igni lists it among
+        the names a definition may declare, so declaring it is correct."""
+        assert unknown_tools(AGENT.format(tools='Orchestrate, Bash')) == []
 
     def test_an_mcp_tool_is_not_a_typo(self):
         """Those resolve at runtime from whatever MCP servers the group
@@ -201,8 +215,6 @@ class TestTheToolsEndpoint:
     async def test_it_is_the_same_list_the_write_path_checks(self, client, headers):
         """Two lists that can disagree would be worse than one warning
         in one place."""
-        from app.services.portal.agent_tools import KNOWN_TOOLS
-
         tools = (await client.get('/portal/agent-tools', headers=headers)).json()['tools']
 
         assert set(tools) == set(KNOWN_TOOLS)
@@ -211,3 +223,47 @@ class TestTheToolsEndpoint:
         """Not admin-only: anybody who can open an entry can be shown
         the warning."""
         assert (await client.get('/portal/agent-tools', headers=headers)).status_code == 200
+
+
+#: The CLI checkout beside this one, where `make refresh-agent-tools` reads.
+_IGNI_PYTHON = Path(__file__).resolve().parents[2] / 'igni' / '.venv' / 'bin' / 'python'
+
+
+class TestTheListIsIgnis:
+    """A copy of igni's list, refreshed by `make refresh-agent-tools`.
+
+    It had lagged: `Read`, `Grep`, `Glob`, `LS`, `Python` and `CodeIndex`
+    were still accepted after igni dropped them, and `Orchestrate` was
+    warned about though igni lists it.
+    """
+
+    @pytest.mark.skipif(not _IGNI_PYTHON.is_file(), reason='no igni checkout beside this one — skipped, not passed')
+    def test_it_is_what_igni_answers(self):
+        answered = subprocess.run(
+            [
+                str(_IGNI_PYTHON),
+                '-c',
+                'from ember_code.core.tools.registry import ToolRegistry; '
+                "print(chr(10).join(ToolRegistry(base_dir='.').available_tools))",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=120,
+        ).stdout
+
+        assert set(answered.split()) == set(KNOWN_TOOLS)
+
+    def test_a_modules_tool_named_in_tools_is_still_warned_about(self):
+        """`CodeIndex` is a paid module's, and igni gives a module's or an
+        extension's tools to agents over MCP, not by name: igni cannot
+        resolve it in `tools:` either, and the agent raises when called.
+        The warning is the true answer, not a gap in this list."""
+        assert unknown_tools(AGENT.format(tools='CodeIndex, Bash')) == ['CodeIndex']
+
+    def test_no_agent_the_default_group_ships_is_warned_about(self):
+        """A new member must not be told about an agent nobody in their
+        organisation has touched."""
+        warned = [(name, unknown_tools(content)) for kind, name, content in seed_entries() if kind == 'agents']
+
+        assert [(name, unknown) for name, unknown in warned if unknown] == []

@@ -444,11 +444,13 @@ export function TeamPage() {
                 renderCell: (row) => <StatusBadge status={row.status} />,
               },
               {
-                header: 'Sessions',
-                field: 'total_sessions',
+                // Requests, not sessions: each chat request is a row in
+                // chat usage, and nothing records a session.
+                header: 'Requests (30d)',
+                field: 'total_requests',
                 align: 'end',
                 renderCell: (row) => (
-                  <Text>{row.total_sessions > 0 ? row.total_sessions : '—'}</Text>
+                  <Text>{row.total_requests > 0 ? row.total_requests : '—'}</Text>
                 ),
               },
               {

@@ -16,7 +16,8 @@ route list:
 
 * any `POST`/`PUT`/`PATCH`/`DELETE` under `/v1/portal`, `/v1/admin` or
   `/v1/directory` or `/v1/service-notifications` — every mutation a
-  person or a registered service performs;
+  person or a registered service performs — and under `/scim/v2`, an
+  identity provider creating and deprovisioning people;
 * the authentication endpoints, whatever their method, because a *failed*
   sign-in is among the most valuable things an audit trail holds and is
   the one event with no authenticated actor to attribute it to.
@@ -60,6 +61,10 @@ _AUDITED_PREFIXES = (
     '/v1/service-items',
     '/v1/service-attachments',
     '/v1/me/mcp-approvals',
+    # An identity provider creating, changing, deactivating and deleting
+    # people: deprovisioning is the event an auditor samples. Not under
+    # `/v1` because the standard fixes the path.
+    '/scim/v2',
 )
 
 #: Paths a timer calls, which are never events.
@@ -98,6 +103,9 @@ _AUDITED_SUFFIXES = (
     '/exports/pull',
     '/archive',
     '/failed',
+    # An app asking for a VM profile: packages and a script that would
+    # run as root once an org admin approves (docs/service-identity.md §12.3).
+    '/vm-profile-request',
 )
 
 #: Reads audited for who took a copy: an export of a removed member's data.

@@ -6,7 +6,7 @@ import logging
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.sql import SQLAlchemySessionManager
@@ -265,6 +265,17 @@ class TeamDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             row.updated_at = datetime.now(timezone.utc)  # type: ignore[assignment]
             await session.flush()
             return old_status
+
+    async def move_status(self, user_id: str, *, from_status: str, to_status: str) -> list[str]:
+        """Every membership of a person in *from_status* set to *to_status*. Answers their organisations."""
+        async with self.session_scope() as session:
+            moved = await session.execute(
+                update(OrgMembership)
+                .where(OrgMembership.user_id == user_id, OrgMembership.status == from_status)
+                .values(status=to_status, updated_at=datetime.now(timezone.utc))
+                .returning(OrgMembership.org_id)
+            )
+            return sorted(str(org_id) for org_id in moved.scalars().all())
 
     async def delete(self, org_id: str, user_id: str) -> None:
         """Permanently remove a member from an org."""

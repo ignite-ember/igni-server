@@ -442,10 +442,15 @@ class TestTheSignInPageKnowsWhatExists:
 
     def test_the_portal_renders_from_it_rather_than_hardcoding(self):
         """The page used to show three providers whether or not the
-        server accepted them."""
-        source = (_ROOT / 'portal/src/auth/LoginPage.tsx').read_text()
+        server accepted them, and the sign-up page a Google button on every
+        deployment (B39). Both render the server's answer, through one
+        component and one query."""
+        auth = _ROOT / 'portal/src/auth'
 
-        assert "'/auth/methods'" in source
-        assert 'OtherWaysIn' in source
-        # The old shape: a literal button per provider, twice over.
-        assert source.count("handleOAuth('github')") == 0, 'a hardcoded provider button is back'
+        assert "'/auth/methods'" in (auth / 'useAuthMethods.ts').read_text()
+        for page in ('LoginPage.tsx', 'SignUpPage.tsx'):
+            source = (auth / page).read_text()
+            assert 'useAuthMethods()' in source, page
+            assert '<OtherWaysIn' in source, page
+            # The old shape: a literal button per provider.
+            assert "handleOAuth('" not in source, f'{page}: a hardcoded provider button is back'

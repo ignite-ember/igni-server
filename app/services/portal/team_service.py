@@ -12,17 +12,24 @@ from app.api.base_v1.schema.portal.team import (
     TeamMemberResponse,
 )
 from app.api.base_v1.schema.portal.user import PortalUser
+from app.db.sql.chat_usage import ChatUsageDB
 from app.db.sql.models.user import User
 from app.db.sql.models.user_role import Role
 from app.db.sql.org_domains import OrgDomainDB
+from app.db.sql.schemas.chat_usage import PersonUsage
 from app.db.sql.team import TeamDB
 from app.db.sql.tenancy import TenantData
 from app.db.sql.user import UserDB
 from app.security.account_domains import email_domain
+from app.services.cloud.producer_feed import ProducerFeed
 from app.services.cloud.revocations import Revocations
 from app.services.cloud.vm_credentials import VmCredentials
+from app.services.portal.member_status import MemberStatus
 
 logger = logging.getLogger(__name__)
+
+#: The window the team list's request and token counts cover — the portal labels it "30d".
+_USAGE_WINDOW_DAYS = 30
 
 
 class TeamService:
@@ -33,25 +40,29 @@ class TeamService:
     patching the module.
     """
 
-    def __init__(self, *, team: TeamDB | None = None, users: UserDB | None = None) -> None:
+    def __init__(
+        self, *, team: TeamDB | None = None, users: UserDB | None = None, usage: ChatUsageDB | None = None
+    ) -> None:
         self._db = team or TeamDB()
         self._user_db = users or UserDB()
+        self._usage = usage or ChatUsageDB()
 
     async def list_members(self, org_id: str) -> TeamMemberList:
         rows, total = await self._db.list_members(org_id)
 
         user_ids: list[str] = [r.user_id for r in rows]  # type: ignore[misc]
 
-        # Resolve names/emails from users table
-        user_profiles: dict[str, tuple[str | None, str | None]] = {}
-        for uid in user_ids:
-            user = await self._user_db.get_by_user_id(uid)
-            if user:
-                user_profiles[uid] = (user.full_name, user.email)  # type: ignore[assignment]
+        # Names and emails from the users table, in one query rather than one per member.
+        user_profiles: dict[str, tuple[str | None, str | None]] = {
+            str(user.user_id): (user.full_name, user.email) for user in await self._user_db.by_user_ids(user_ids)
+        }
+
+        usage = await self._usage.per_person(org_id=org_id, user_ids=user_ids, days=_USAGE_WINDOW_DAYS)
 
         members = []
         for r in rows:
             full_name, email = user_profiles.get(r.user_id, (None, None))  # type: ignore[call-overload]
+            used = usage.get(str(r.user_id), PersonUsage())
             # Fall back to invited_email if no user profile
             display_email = email or r.invited_email
             members.append(
@@ -62,9 +73,9 @@ class TeamService:
                     full_name=full_name,
                     role=r.role,
                     status=r.status or 'active',
-                    total_sessions=0,
-                    total_tokens=0,
-                    last_active=None,
+                    total_requests=used.requests,
+                    total_tokens=used.total_tokens,
+                    last_active=used.last_active,
                     joined_at=r.created_at,
                     assigned_by=r.invited_by,
                 )
@@ -122,7 +133,7 @@ class TeamService:
             full_name=None,
             role=role,
             status='invited',
-            total_sessions=0,
+            total_requests=0,
             total_tokens=0,
             last_active=None,
             joined_at=member.created_at,
@@ -162,7 +173,7 @@ class TeamService:
             full_name=account.full_name,
             role=role,
             status='active',
-            total_sessions=0,
+            total_requests=0,
             total_tokens=0,
             last_active=None,
             joined_at=member.created_at,
@@ -223,18 +234,11 @@ class TeamService:
                 detail=f'Cannot change status of a member who is {member.status}',
             )
 
-        old_status = await self._db.update_status(current_user.org_id, user_id, new_status)
-
-        # And on the account, which is what actually deprovisions them.
-        # The membership row is read by the portal's own dependency and
-        # by nothing else, so setting it alone left a deactivated person
-        # holding their documents, their notifications and the ability
-        # to publish until their token expired. Deactivating withdraws
-        # their sessions in the same statement; reactivating does not
-        # re-admit the ones they held before they left.
-        await self._user_db.set_deactivated(user_id, deactivated=new_status == 'deactivated')
-        if new_status == 'deactivated':
-            await VmCredentials().revoke_person(user_id)
+        # The membership and the account together, as SCIM's `active` does:
+        # `MemberStatus` says why the account is the half that deprovisions.
+        old_status = await MemberStatus(team=self._db, users=self._user_db).set_in_org(
+            current_user.org_id, user_id, active=new_status == 'active'
+        )
 
         return StatusChangeResponse(user_id=user_id, old_status=old_status, new_status=new_status)
 
@@ -283,5 +287,6 @@ class TeamService:
                 detail='Cannot remove yourself',
             )
 
-        await self._db.delete(current_user.org_id, user_id)
+        async with ProducerFeed().removal():
+            await self._db.delete(current_user.org_id, user_id)
         await VmCredentials().revoke_person(user_id, org_ids=[current_user.org_id])
