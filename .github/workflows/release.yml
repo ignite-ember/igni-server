@@ -75,7 +75,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
       # The whole history, so origin/main is there to check against.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ignite-ember/igni-server
           ref: ${{ inputs.ref }}
@@ -148,7 +148,7 @@ jobs:
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ignite-ember/igni-server
           ref: ${{ needs.resolve.outputs.sha }}
@@ -289,7 +289,7 @@ jobs:
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ignite-ember/igni-server
           ref: ${{ needs.resolve.outputs.sha }}
@@ -439,7 +439,7 @@ jobs:
     needs: [resolve, build-backend, build-portal]
     environment: prod
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ignite-ember/igni-server
           ref: ${{ needs.resolve.outputs.sha }}
