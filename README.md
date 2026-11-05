@@ -71,7 +71,7 @@ Postgres and Redis included.
 ### Installation
 
 ```bash
-git clone https://github.com/ignite-ember/igni-server   # the public mirror
+git clone https://github.com/ignite-ember/igni-server
 cd igni-server
 
 uv venv
@@ -373,11 +373,18 @@ permissions and no secrets, so it is safe for pull requests from forks:
 lint (black, ruff, mypy), a security audit (pip-audit, bandit), the Python
 suite, and the portal (tsc, npm audit, vitest, Playwright).
 
-`.github/workflows/cd.yml` runs only in this repository, on pushes to its
-release branches. It builds two images, `ghcr.io/ignite-ember/igni-api` and
+`.github/workflows/cd.yml` runs the same suite on every push to `main`,
+and builds nothing.
+
+`.github/workflows/release.yml` makes a release. It runs only when the
+private repository `ignite-ember/igni__release` calls it with a tag or a
+commit on `main`: the offline bundle carries the paid module images, and a
+public repository's CI artefacts can be downloaded by anyone. It builds
+two images, `ghcr.io/ignite-ember/igni-api` and
 `ghcr.io/ignite-ember/igni-portal`, pushes them to GitHub Container
-Registry, signs them with cosign and attaches a CycloneDX SBOM; on `main`
-it also seals the minisign-signed offline bundle. It deploys nothing.
+Registry, signs them with cosign, attaches a CycloneDX SBOM, and seals the
+minisign-signed offline bundle. It deploys nothing.
+[RELEASING.md](docs/RELEASING.md) is how a release is cut, and
 [OFFLINE_UPDATES.md](docs/OFFLINE_UPDATES.md) explains how to verify an
 image or a bundle.
 
@@ -434,7 +441,7 @@ igni-server/
 ├── portal/                   # React admin frontend
 ├── docs/
 ├── tests/                    # pytest suite
-└── .github/workflows/        # ci.yml, cd.yml
+└── .github/workflows/        # ci.yml, cd.yml, release.yml
 ```
 
 ## Licence

@@ -270,10 +270,10 @@ def test_every_setting_in_a_table_is_real(doc):
         'LOG_LEVEL',
         'DATABASE_URL',
         'PGPASSWORD',
-        # Release-signing secrets and variables, read by CD
-        # (.github/workflows/cd.yml) and `tools/release/igni-bundle`, never
-        # by a deployment. OFFLINE_UPDATES.md tabulates them for whoever
-        # sets up the GitHub environment.
+        # Release-signing secrets and variables, read by the release
+        # (.github/workflows/release.yml) and `tools/release/igni-bundle`,
+        # never by a deployment. OFFLINE_UPDATES.md tabulates them for
+        # whoever sets up igni__release's GitHub environment.
         'COSIGN_PRIVATE_KEY',
         'COSIGN_PASSWORD',
         'COSIGN_PUBLIC_KEY',

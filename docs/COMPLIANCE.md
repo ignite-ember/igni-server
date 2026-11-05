@@ -171,7 +171,7 @@ deployment loses history by upgrading.
 
 **3. ~~No SBOM.~~ Built — CM-4.**
 
-`cd.yml` generates a CycloneDX SBOM for the shipped image, not from the
+`release.yml` generates a CycloneDX SBOM for the shipped image, not from the
 lock file — the lock file is half of what ships. Both marketplaces
 increasingly expect one and it is the artefact auditors ask for, where
 `pip-audit`, `npm audit` and Trivy only cover detection.

@@ -74,27 +74,27 @@ def test_the_version_looks_like_one():
     assert re.fullmatch(r'\d+\.\d+\.\d+', _pyproject_version()), _pyproject_version()
 
 
-def test_cd_publishes_a_tag_the_chart_can_default_to():
+def test_the_release_publishes_a_tag_the_chart_can_default_to():
     """The other half, and the reason the mismatch mattered.
 
     Asserted against the workflow rather than against a registry — there
-    is no registry to ask from a test — so what this pins is that CD
-    still tags the image with the version, and still derives that
+    is no registry to ask from a test — so what this pins is that the
+    release still tags the image with the version, and still derives that
     version from `pyproject.toml` rather than repeating the literal.
     """
-    cd = (_ROOT / '.github/workflows/cd.yml').read_text()
+    release = (_ROOT / '.github/workflows/release.yml').read_text()
 
-    assert 'steps.meta.outputs.version' in cd, (
-        "CD no longer tags the image with the application version, so the chart's "
+    assert 'steps.meta.outputs.version' in release, (
+        "the release no longer tags the image with the application version, so the chart's "
         'default `image.tag` (its appVersion) resolves to nothing'
     )
     assert (
-        'pyproject.toml' in cd
-    ), 'CD should read the version from pyproject.toml; a literal here would be a fourth copy of the number'
+        'pyproject.toml' in release
+    ), 'the release should read the version from pyproject.toml; a literal here would be a fourth copy of the number'
     # Both images: an API published with a version tag and a portal
     # without one would leave `portalImage.tag` in the same state this
     # finding was about.
-    assert cd.count('steps.meta.outputs.version') >= 1
+    assert release.count('steps.meta.outputs.version') >= 1
 
 
 def test_the_chart_still_refuses_latest():
