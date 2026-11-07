@@ -15,7 +15,7 @@
 #      (Postgres, Redis) to a throwaway staging registry, signs each with
 #      a TEST cosign key and attests a CycloneDX SBOM (syft), exports them
 #      with `tools/release/igni-bundle export-image`, packages the chart
-#      and seals the bundle with a TEST minisign key.
+#      and seals the bundle with the same TEST cosign key.
 #   2. The air gap: a kind cluster (one control-plane node) on its own
 #      Docker network, a registry on that network, and netfilter rules in
 #      the node's network namespace — where every pod and every node
@@ -26,7 +26,7 @@
 #      first from the node and from a pod: before the rules (it works, so
 #      the check means something) and after (it fails).
 #   3. The import, as a customer does it: `igni-import` from inside the
-#      bundle, against the TEST public keys, into the air-gapped registry;
+#      bundle, against the TEST public key, into the air-gapped registry;
 #      the Helm chart from the verified bundle, nothing else.
 #   4. Smoke: migration job, rollouts, /health, /ready, /version, the
 #      portal; then sign-up, an organisation, a member, the igni CLI's
@@ -39,14 +39,14 @@
 #      dropped (NFLOG capture), each with the pod or node process it came
 #      from. Any of those leaving the cluster fails the run.
 #
-# TEST KEYS. Release keys do not exist yet (docs/OFFLINE_UPDATES.md, "Key
-# generation is a person's job"). The keys made here are generated per
+# TEST KEYS. The release key is in Cloud KMS and only CD signs with it
+# (docs/OFFLINE_UPDATES.md, "The release key"). The keys made here are generated per
 # run in $WORK/keys, named TEST-*, and deleted with it. They sign nothing
 # that leaves this machine. Never point this at a real key.
 #
-# Needs: docker, kind, kubectl, helm, skopeo, minisign, jq, python3;
-# cosign and syft for the image signatures (skipped, and said so, when
-# either is missing). Docker must have about 4 GB free for the node.
+# Needs: docker, kind, kubectl, helm, skopeo, cosign, jq, python3; syft
+# for the image signatures and SBOM attestations (skipped, and said so,
+# when it is missing). Docker must have about 4 GB free for the node.
 #
 # Environment (all optional):
 #   IGNI_AIRGAP_NAME      cluster, network and container prefix (igni-airgap)
@@ -92,7 +92,6 @@ VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "${ROOT}/pyproject.toml" | head -
 BUNDLE="igni-bundle-${VERSION}"
 export KUBECONFIG="${WORK}/kubeconfig"
 export COSIGN_PASSWORD=TEST-only-not-a-release-key
-export MINISIGN_PASSWORD=''
 
 step() { printf '\n\033[1m→ %s\033[0m\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -103,14 +102,12 @@ fail() {
 need() { command -v "$1" >/dev/null || fail "$1 is not installed"; }
 node() { docker exec "$NODE" "$@"; }
 
-for tool in docker kind kubectl helm skopeo minisign jq python3 curl; do need "$tool"; done
+for tool in docker kind kubectl helm skopeo cosign jq python3 curl; do need "$tool"; done
 SIGN=1
-for tool in cosign syft; do
-  command -v "$tool" >/dev/null || {
-    SIGN=0
-    printf 'note: %s not found; images are bundled without cosign signatures and SBOM attestations\n' "$tool"
-  }
-done
+command -v syft >/dev/null || {
+  SIGN=0
+  printf 'note: syft not found; images are bundled without cosign signatures and SBOM attestations\n'
+}
 [[ -n "$VERSION" ]] || fail "no version in pyproject.toml"
 
 forwards=()
@@ -160,12 +157,10 @@ docker pull -q "$PG_IMAGE" >/dev/null
 docker pull -q "$REDIS_IMAGE" >/dev/null
 
 step "TEST keys, made for this run only (${WORK}/keys)"
-minisign -G -W -f -p "${WORK}/keys/TEST-igni-release.pub" -s "${WORK}/keys/TEST-igni-release.key" >/dev/null
-note "minisign: TEST-igni-release.{key,pub} (no password)"
-if [[ $SIGN -eq 1 ]]; then
-  (cd "${WORK}/keys" && cosign generate-key-pair --output-key-prefix TEST-cosign >/dev/null 2>&1)
-  note "cosign:   TEST-cosign.{key,pub}"
-fi
+# One key, as in a release: it signs the images and the bundle's MANIFEST.
+(cd "${WORK}/keys" && cosign generate-key-pair --output-key-prefix TEST-cosign >/dev/null 2>&1) ||
+  fail "cosign could not generate the TEST key"
+note "cosign: TEST-cosign.{key,pub}"
 
 step "Staging registry (Ignite Ember's side) on 127.0.0.1:${STAGING_PORT}"
 docker run -d --name "$STAGING" -p "127.0.0.1:${STAGING_PORT}:5000" registry:2 >/dev/null
@@ -211,11 +206,11 @@ for line in "${images[@]}"; do
   note "$(grep '^exported ' "${WORK}/export-${name}.log")"
 done
 
-step "Chart, and the seal (TEST minisign key)"
+step "Chart, and the seal (TEST cosign key)"
 helm package "${ROOT}/charts/igni" --destination "${WORK}/staging/${BUNDLE}/charts" >/dev/null
 "${ROOT}/tools/release/igni-bundle" seal --staging "${WORK}/staging/${BUNDLE}" --version "$VERSION" \
-  --commit "$(git -C "$ROOT" rev-parse HEAD)" --key "${WORK}/keys/TEST-igni-release.key" \
-  --public-key "${WORK}/keys/TEST-igni-release.pub" --out "${WORK}/dist" | sed 's/^/    /'
+  --commit "$(git -C "$ROOT" rev-parse HEAD)" --key "${WORK}/keys/TEST-cosign.key" \
+  --public-key "${WORK}/keys/TEST-cosign.pub" --out "${WORK}/dist" | sed 's/^/    /'
 note "$(du -h "${WORK}/dist/${BUNDLE}.tar" | cut -f1) ${WORK}/dist/${BUNDLE}.tar"
 docker rm -f -v "$STAGING" >/dev/null
 rm -rf "${WORK}/staging"
@@ -328,7 +323,7 @@ probe_node "registry-1.docker.io (containerd pull)" crictl pull docker.io/librar
 step "igni-import, from inside the bundle, into the gap's registry"
 mkdir -p "${WORK}/import"
 tar -xf "${WORK}/dist/${BUNDLE}.tar" -C "${WORK}/import" "${BUNDLE}/igni-import"
-import_args=(--bundle "${WORK}/dist/${BUNDLE}.tar" --public-key "${WORK}/keys/TEST-igni-release.pub"
+import_args=(--bundle "${WORK}/dist/${BUNDLE}.tar" --public-key "${WORK}/keys/TEST-cosign.pub"
   --registry "$FROM_HOST" --dest-tls-verify false --expect-version "$VERSION" --keep "${WORK}/import/kept")
 [[ $SIGN -eq 0 ]] || import_args+=(--cosign-key "${WORK}/keys/TEST-cosign.pub")
 "${WORK}/import/${BUNDLE}/igni-import" "${import_args[@]}" >"${WORK}/report/igni-import.log" 2>&1 ||

@@ -28,6 +28,18 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ### Changed
 
+- **The offline bundle is signed with cosign instead of minisign**, with the
+  same release key as the images. A customer now holds one public key
+  (`cosign.pub`) and needs one tool (`cosign`): `igni-import --public-key
+  cosign.pub`, or `cosign verify-blob --key cosign.pub
+  --insecure-ignore-tlog=true --signature MANIFEST.sig MANIFEST` by hand.
+  The signature is `MANIFEST.sig` (was `MANIFEST.minisig`), and the bundle
+  format is 2: an earlier `igni-import` refuses it, so verify the first
+  format-2 bundle by hand or with the `igni-import` from this release. The
+  release key is a Cloud KMS key, reached by CD through GitHub OIDC from
+  the `release` environment of `ignite-ember/igni__release`; there is no
+  signing secret in GitHub
+  ([docs/OFFLINE_UPDATES.md](docs/OFFLINE_UPDATES.md)).
 - Releases are built, signed and sealed by `.github/workflows/release.yml`,
   run from the private repository `ignite-ember/igni__release` with a tag
   or a commit on `main`, and only for a commit whose tests passed on `main`

@@ -1,15 +1,13 @@
 """The public keys a licence may be signed with. Shipped in the release.
 
 Only public halves live here. Ignite Ember's private signing key never
-enters any repository: `tools/licence/issue_licence.py` reads it from a
-file or the environment on the machine that issues licences.
+enters any repository, or any machine: it is in Cloud KMS, and
+`tools/licence/issue_licence.py` asks KMS to sign.
 
-**Release keys.** `RELEASE_KEYS` is empty until Ignite Ember generates
-its signing key (`issue_licence.py keygen`) and pastes the public half
-here, in every copy of this file and in
-`igni__cloudvm/crates/licence/src/keys.rs`. Until then no deployment
-outside development accepts any licence, so every paid module stays
-off. That is deliberate: a placeholder key would be a key somebody holds.
+**Release keys.** `ie-2026` is that key, created 2026-11-07 (KMS key
+`licence-ie-2026`, version 1, in project `ignite-ember-signing`). The
+same entry is in every copy of this file and in
+`igni__cloudvm/crates/licence/src/keys.rs`.
 
 **The test key** is in the repository, private half included
 (`tests/fixtures/licence/test-signing-key.pem`), so anybody can sign
@@ -28,7 +26,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from .verifier import Base64Url
 
 #: Ignite Ember's licence signing keys: key id → raw Ed25519 public key, base64url.
-RELEASE_KEYS: dict[str, str] = {}
+RELEASE_KEYS: dict[str, str] = {'ie-2026': '0VYq6jXE1VdFxmb6U1xmUPCoUxhDQ92pyUhLDQJYyTg'}
 
 #: The development and test key. Trusted only with `APP_ENV=dev`.
 TEST_KEY_ID = 'igni-test-1'

@@ -26,7 +26,7 @@ tests come first.
 |---|---|---|---|
 | 1 | Egress tests | Two tests. A source scan of the server and the client fails the build on any outbound host that is not on the allow-list, and on any vendor telemetry package. The OpenTelemetry OTLP exporters are allowed, by name: they send only to a collector you configure, there is no default endpoint, and the client refuses one outside the network when air-gapped ([observability.md](observability.md) §5). A runtime test boots the server, drives it through a working day against stand-ins on 127.0.0.1, and fails on any connection or name lookup outside the network. What neither can see is under Gaps. | [`tests/test_nothing_phones_home.py`](../tests/test_nothing_phones_home.py), [`tests/test_igni_reaches_nothing_outside_the_network.py`](../tests/test_igni_reaches_nothing_outside_the_network.py) |
 | 2 | SBOM | Every component in each igni image (API, portal, Artifacts, embedder, CodeIndex) and the portal npm packages, in CycloneDX format, generated on each release. Each image SBOM is also a cosign attestation signed with the release key, and every SBOM is in the offline bundle. | `.github/workflows/cd.yml`; `sboms/` in the bundle; `cosign verify-attestation --type cyclonedx` |
-| 2a | Signed releases and offline updates | Each release is one tarball: images, Helm chart, SBOMs and a MANIFEST of sha256 hashes signed with minisign. `igni-import` verifies it offline with your copy of the public key and refuses any mismatch before pushing to your registry. Images are published to `ghcr.io/ignite-ember/<name>` (release tags only in a bundle), signed with cosign (key pair, no transparency log), and keep their digests, so signatures verify in your registry. The keys do not exist yet (Gaps). | [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md), `tools/release/`, [`tests/test_an_offline_bundle_is_verified_before_import.py`](../tests/test_an_offline_bundle_is_verified_before_import.py) |
+| 2a | Signed releases and offline updates | Each release is one tarball: images, Helm chart, SBOMs and a MANIFEST of sha256 hashes signed with cosign. `igni-import` verifies it offline with your copy of the public key and refuses any mismatch before pushing to your registry. Images are published to `ghcr.io/ignite-ember/<name>` (release tags only in a bundle), signed with cosign (no transparency log), and keep their digests, so signatures verify in your registry. One release key signs the images and the bundle, so you hold one public key and need one tool. The key is in Cloud KMS (ECDSA P-256, in an HSM, not exportable) in Ignite Ember's Google Cloud project; CD signs through GitHub OIDC (Workload Identity Federation) from the private release repository's `release` environment, and there is no signing secret in GitHub. The keys do not exist yet (Gaps). | [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md), `tools/release/`, [`tests/test_an_offline_bundle_is_verified_before_import.py`](../tests/test_an_offline_bundle_is_verified_before_import.py) |
 | 3 | Network diagram | Every component inside your network, every flow between them, and what crosses the boundary. | [NETWORK_DIAGRAM.md](NETWORK_DIAGRAM.md) |
 | 4 | Exit-test runbook | How to rehearse a lapsed licence, an ended evaluation, Ignite Ember stopping, and leaving altogether, with the evidence to keep for a DORA exit plan. | [EXIT_TEST_RUNBOOK.md](EXIT_TEST_RUNBOOK.md) |
 | 4a | Licence | How the paid modules are licensed with no call home: an offline signed file each module checks itself, what each module still does after a lapse or an ended evaluation, and what read-only allows. | [licence-file.md](licence-file.md) |
@@ -95,13 +95,13 @@ Known gaps, stated so the customer does not find them first.
   ([NETWORK_DIAGRAM.md](NETWORK_DIAGRAM.md), Gaps, item 2). The inference
   server is the customer's own, and switching off its outbound calls is the
   customer's job ([MODEL_PROVENANCE.md](MODEL_PROVENANCE.md)).
-- **Release signing keys are not yet generated.** Signing, the offline bundle
-  and the import tool are in place, but the cosign and minisign key pairs, and
-  the secrets the release workflow reads them from (in the private release
-  repository, never the public source repository), still need the one-off
-  key ceremony described in [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md). Until
-  then no release can be signed and no bundle has been produced. Public keys and fingerprints will be
-  sent out of band.
+- **No release has been signed yet.** Signing, the offline bundle and the
+  import tool are in place, and the release key exists (2026-11-07): a Cloud
+  KMS key that cannot be exported, which only the private release
+  repository's `release` environment can sign with
+  ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md), "The release key"). The first
+  release has not been run, so no bundle has been produced. The public key
+  and its fingerprint are sent out of band.
 - **The bundle holds igni's own images only.** Third-party images the
   deployment uses (`postgres` for the chart's backup job; `postgres`,
   `redis` and `caddy` in the compose files) are not in it. Fleet ships
@@ -114,13 +114,14 @@ Known gaps, stated so the customer does not find them first.
   deleted, so every security update stays available for ten years
   ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md), "How long releases are
   kept"). There is no second copy outside GitHub yet, and no bundle has
-  been kept until the key ceremony has happened.
-- **The licence signing key is not yet generated.** Each paid module checks
+  been kept until the first release.
+- **No commercial licence has been issued yet.** Each paid module checks
   an offline, Ed25519-signed licence file itself. A lapsed paid licence warns
   for 90 days and then goes read-only, never off; an ended evaluation is
   read-only for 30 days and then stops ([licence-file.md](licence-file.md)).
-  Ignite Ember's release key does not exist yet, so until its key ceremony
-  only a development copy accepts a licence. The check uses the deployment's
+  Ignite Ember's licence key (`ie-2026`, in Cloud KMS, created 2026-11-07)
+  is in the code, so a release built from it onwards accepts licences it
+  signs; earlier releases accept none. The check uses the deployment's
   own clock, and a Fleet node's own timed wakes are not yet refused in
   read-only.
 - **The EULA does not yet match the commercial terms** on what is proprietary
