@@ -59,6 +59,7 @@ import {
   TrashIcon,
 } from '@primer/octicons-react'
 import client from '../api/client'
+import type { AuditEventPage } from '../types'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import './CompliancePage.css'
 import { countOf } from '../utils/plural'
@@ -79,25 +80,6 @@ function parseTab(hash: string): TabKey {
 
 /* ── Audit trail ─────────────────────────────────────────────────── */
 
-interface AuditEvent {
-  id: string
-  occurred_at: string
-  actor_email: string | null
-  actor_user_id: string | null
-  method: string
-  route: string
-  target_type: string | null
-  target_id: string | null
-  status_code: number
-  outcome: string
-  client_host: string | null
-  detail: Record<string, unknown> | null
-}
-
-interface AuditEventPage {
-  events: AuditEvent[]
-  next_before: string | null
-}
 
 const OUTCOME_COLOUR: Record<string, 'success' | 'attention' | 'danger' | 'secondary'> = {
   success: 'success',

@@ -1,95 +1,40 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import {
-  Banner,
-  Heading,
-  PageHeader,
-  SegmentedControl,
-  SkeletonBox,
-  Stack,
-  Text,
-  CounterLabel,
-} from '@primer/react'
 import { useState } from 'react'
+import { Banner, PageHeader, Stack, Text } from '@primer/react'
 import { SkeletonText } from '@primer/react/experimental'
-import client from '../api/client'
-import { AreaChart } from '../components/charts/AreaChart'
-import type { UserMe, UsageDataPoint, TeamMemberList } from '../types'
-import './DashboardPage.css'
 
-interface UsageResponse {
-  data: UsageDataPoint[]
-  total_tokens: number
-  total_input_tokens: number
-  total_output_tokens: number
-  total_requests: number
-}
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
+import { AttentionPanel } from './dashboard/AttentionPanel'
+import { attentionItems } from './dashboard/attention'
+import { HeadlineStats } from './dashboard/HeadlineStats'
+import { AccessSection } from './dashboard/sections/AccessSection'
+import { AppsSection } from './dashboard/sections/AppsSection'
+import { CommandsSection } from './dashboard/sections/CommandsSection'
+import { ComplianceSection } from './dashboard/sections/ComplianceSection'
+import { GroupsSection } from './dashboard/sections/GroupsSection'
+import { InferenceSection } from './dashboard/sections/InferenceSection'
+import { TeamSection } from './dashboard/sections/TeamSection'
+import { VmSection } from './dashboard/sections/VmSection'
+import type { UsageScope } from './dashboard/types'
+import { UsageCharts } from './dashboard/UsageCharts'
+import { useDashboardData } from './dashboard/useDashboardData'
+import './dashboard/dashboard.css'
 
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return (
-    <Stack className="stat-card" padding="normal" gap="condensed">
-      <Text size="small" weight="normal" className="stat-card-label">
-        {label}
-      </Text>
-      {/* A figure, not a section — see StatCard. F137. */}
-      <Text className="stat-card-value">
-        {value}
-      </Text>
-      {sub && (
-        <Text size="small" className="stat-card-sub">{sub}</Text>
-      )}
-    </Stack>
-  )
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return n.toLocaleString()
-}
-
+/**
+ * The portal's home: igni at a glance.
+ *
+ * What needs attention first, then the numbers that summarise it, the
+ * month's usage, and a card for every area of the system with its few
+ * facts that matter and its latest things. A member sees the areas that
+ * are theirs; an admin the whole organisation (the sidebar's rules).
+ */
 export function DashboardPage() {
-  useDocumentTitle('Dashboard', 'Your igni dashboard — usage and team overview.')
-  const userQuery = useQuery({
-    queryKey: ['me'],
-    queryFn: () => client.get<UserMe>('/portal/me').then((r) => r.data),
-  })
+  useDocumentTitle('Dashboard', 'Your igni at a glance — what needs attention, usage, and every area of the system.')
+  const [tokenScope, setTokenScope] = useState<UsageScope>('personal')
+  const [requestScope, setRequestScope] = useState<UsageScope>('personal')
+  const data = useDashboardData(tokenScope, requestScope)
+  const { me, isAdmin } = data
 
-  // Two independent scope toggles — flipping the Tokens card shouldn't move the
-  // Requests card and vice versa. Non-admins are pinned to ``personal``.
-  const isAdmin = userQuery.data?.role === 'admin'
-  const [tokenScope, setTokenScope] = useState<'personal' | 'team'>('personal')
-  const [requestScope, setRequestScope] = useState<'personal' | 'team'>('personal')
-  const effectiveTokenScope = isAdmin ? tokenScope : 'personal'
-  const effectiveRequestScope = isAdmin ? requestScope : 'personal'
-
-  // ``keepPreviousData`` keeps the prior chart visible while a scope flip
-  // refetches, otherwise both cards momentarily collapse to their empty-state
-  // text and the page below jumps up.
-  const tokenUsageQuery = useQuery({
-    queryKey: ['usage', 30, effectiveTokenScope],
-    queryFn: () =>
-      client
-        .get<UsageResponse>('/portal/usage', { params: { days: 30, scope: effectiveTokenScope } })
-        .then((r) => r.data),
-    placeholderData: keepPreviousData,
-  })
-
-  const requestUsageQuery = useQuery({
-    queryKey: ['usage', 30, effectiveRequestScope],
-    queryFn: () =>
-      client
-        .get<UsageResponse>('/portal/usage', { params: { days: 30, scope: effectiveRequestScope } })
-        .then((r) => r.data),
-    placeholderData: keepPreviousData,
-  })
-
-  const teamQuery = useQuery({
-    queryKey: ['team-members'],
-    queryFn: () => client.get<TeamMemberList>('/portal/team').then((r) => r.data),
-  })
-
-  if (userQuery.isLoading || tokenUsageQuery.isLoading) {
+  if (me.isLoading) {
     return (
       <Stack gap="spacious">
         <PageHeader>
@@ -100,30 +45,31 @@ export function DashboardPage() {
             <SkeletonText size="bodyMedium" maxWidth={300} />
           </PageHeader.Description>
         </PageHeader>
-        <Stack direction="horizontal" gap="normal" wrap="wrap">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Stack key={i} className="stat-card" padding="normal" gap="condensed">
-              <SkeletonText size="bodySmall" maxWidth={80} />
-              <SkeletonText size="titleMedium" maxWidth={60} />
-            </Stack>
-          ))}
-        </Stack>
-        <Stack className="chart-card" padding="normal" gap="normal">
-          <SkeletonText size="titleSmall" maxWidth={120} />
-          <SkeletonBox height={300} />
-        </Stack>
       </Stack>
     )
   }
 
-  const hasError = userQuery.isError || tokenUsageQuery.isError || requestUsageQuery.isError
-
-  const user = userQuery.data
-  const tokenUsage = tokenUsageQuery.data
-  const requestUsage = requestUsageQuery.data
-  const team = teamQuery.data
-
-  const activeMembers = team?.members?.filter((m) => m.status === 'active').length ?? 0
+  const user = me.data
+  const attention = attentionItems({
+    team: data.team.data,
+    inference: data.inference.data,
+    vmProfiles: data.vmProfiles.data,
+    erasures: data.erasures.data,
+    audit: data.audit.data,
+    apiKeys: data.apiKeys.data,
+    vmCredentials: data.vmCredentials.data,
+    commands: data.commands.data,
+  })
+  // The panel waits for what it reads, so "nothing needs attention" is
+  // never said about data that has not arrived.
+  const attentionReady = [
+    data.apiKeys,
+    data.vmCredentials,
+    data.commands,
+    ...(isAdmin ? [data.team, data.inference, data.vmProfiles, data.erasures, data.audit] : []),
+  ].every((q) => !q.isLoading)
+  const usageFailed = me.isError || data.tokenUsage.isError || data.requestUsage.isError
+  const where = user?.org_display_name ? ` Here is ${user.org_display_name} at a glance.` : ''
 
   return (
     <Stack gap="spacious">
@@ -133,12 +79,12 @@ export function DashboardPage() {
         </PageHeader.TitleArea>
         <PageHeader.Description>
           <Text size="medium">
-            Welcome{user?.full_name ? `, ${user.full_name}` : ''}. Here is your 30-day overview.
+            Welcome{user?.full_name ? `, ${user.full_name}` : ''}.{where}
           </Text>
         </PageHeader.Description>
       </PageHeader>
 
-      {hasError && (
+      {usageFailed && (
         <Banner
           variant="warning"
           title="Some data could not be loaded"
@@ -146,114 +92,30 @@ export function DashboardPage() {
         />
       )}
 
-      {/* Key metrics */}
-      <Stack direction="horizontal" gap="normal" wrap="wrap">
-        <StatCard
-          label="Total Tokens"
-          value={formatTokens(tokenUsage?.total_tokens ?? 0)}
-          sub={`${formatTokens(tokenUsage?.total_input_tokens ?? 0)} in · ${formatTokens(tokenUsage?.total_output_tokens ?? 0)} out`}
-        />
-        <StatCard
-          label="Requests"
-          value={requestUsage?.total_requests ?? 0}
-        />
-        <StatCard
-          label="Team Members"
-          value={teamQuery.isLoading ? '…' : activeMembers}
-        />
-      </Stack>
+      <AttentionPanel items={attention} ready={attentionReady} />
 
-      {/* Token usage chart */}
-      <Stack className="chart-card" padding="normal" gap="normal">
-        <Stack direction="horizontal" align="center" justify="space-between" gap="condensed">
-          <Stack direction="horizontal" align="center" gap="condensed">
-            <Heading as="h2" variant="small">Token Usage</Heading>
-            <CounterLabel>30d</CounterLabel>
-          </Stack>
-          {isAdmin && (
-            <SegmentedControl aria-label="Token usage scope" size="small">
-              <SegmentedControl.Button
-                selected={tokenScope === 'personal'}
-                onClick={() => setTokenScope('personal')}
-              >
-                You
-              </SegmentedControl.Button>
-              <SegmentedControl.Button
-                selected={tokenScope === 'team'}
-                onClick={() => setTokenScope('team')}
-              >
-                Team
-              </SegmentedControl.Button>
-            </SegmentedControl>
-          )}
-        </Stack>
-        {tokenUsage?.data && tokenUsage.data.length > 0 ? (
-          <AreaChart
-            data={tokenUsage.data}
-            height={300}
-            dataKey="total_tokens"
-            series={[
-              {
-                label: 'Input',
-                color: '#0969da',
-                data: tokenUsage.data.map((d) => ({ ...d, total_tokens: d.input_tokens })),
-              },
-              {
-                label: 'Output',
-                color: '#1a7f37',
-                data: tokenUsage.data.map((d) => ({ ...d, total_tokens: d.output_tokens })),
-              },
-              // Total surfaces in the hover card only — it would otherwise
-              // dominate the y-axis and flatten the Input/Output lines.
-              { label: 'Total', color: '#8250df', data: tokenUsage.data, tooltipOnly: true },
-            ]}
-          />
-        ) : (
-          <Text size="medium" className="dashboard-subtitle">
-            No usage data yet. Start using igni to see your analytics here.
-          </Text>
-        )}
-      </Stack>
+      <HeadlineStats data={data} />
 
-      {/* Requests-per-day chart — same scope toggle as the Token Usage card */}
-      <Stack className="chart-card" padding="normal" gap="normal">
-        <Stack direction="horizontal" align="center" justify="space-between" gap="condensed">
-          <Stack direction="horizontal" align="center" gap="condensed">
-            <Heading as="h2" variant="small">Requests</Heading>
-            <CounterLabel>30d</CounterLabel>
-          </Stack>
-          {isAdmin && (
-            <SegmentedControl aria-label="Requests scope" size="small">
-              <SegmentedControl.Button
-                selected={requestScope === 'personal'}
-                onClick={() => setRequestScope('personal')}
-              >
-                You
-              </SegmentedControl.Button>
-              <SegmentedControl.Button
-                selected={requestScope === 'team'}
-                onClick={() => setRequestScope('team')}
-              >
-                Team
-              </SegmentedControl.Button>
-            </SegmentedControl>
-          )}
-        </Stack>
-        {requestUsage?.data && requestUsage.data.length > 0 ? (
-          <AreaChart
-            data={requestUsage.data}
-            height={240}
-            dataKey="request_count"
-            singleLabel="Requests"
-          />
-        ) : (
-          <Text size="medium" className="dashboard-subtitle">
-            No requests yet.
-          </Text>
-        )}
-      </Stack>
+      <UsageCharts
+        isAdmin={isAdmin}
+        tokens={data.tokenUsage.data}
+        requests={data.requestUsage.data}
+        tokenScope={tokenScope}
+        requestScope={requestScope}
+        onTokenScope={setTokenScope}
+        onRequestScope={setRequestScope}
+      />
 
+      <div className="dashboard-grid">
+        {isAdmin && <TeamSection team={data.team} />}
+        <GroupsSection groups={data.groups} />
+        {isAdmin && <InferenceSection inference={data.inference} />}
+        <CommandsSection commands={data.commands} />
+        <AccessSection apiKeys={data.apiKeys} vmCredentials={data.vmCredentials} />
+        {isAdmin && <VmSection vmProfiles={data.vmProfiles} />}
+        {isAdmin && <AppsSection apps={data.apps} />}
+        {isAdmin && <ComplianceSection audit={data.audit} erasures={data.erasures} />}
+      </div>
     </Stack>
   )
 }
-

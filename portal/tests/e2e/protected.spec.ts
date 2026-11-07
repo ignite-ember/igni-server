@@ -190,12 +190,9 @@ test.describe('DashboardPage (authenticated)', () => {
     await page.goto('/dashboard')
 
     await expect(page.getByText(/Welcome, Alice Chen/i)).toBeVisible()
-    await expect(page.getByText('Total Tokens')).toBeVisible()
+    await expect(page.getByText('Tokens · 30 days')).toBeVisible()
     await expect(page.getByText(/1\.5M/)).toBeVisible()
-    // Scoped to the stat card: "Requests" also appears as a section
-    // heading and a chart label, and an unscoped getByText is a strict-mode
-    // violation ("resolved to 2 elements") rather than a pass.
-    await expect(page.locator('.stat-card-label', { hasText: 'Requests' })).toBeVisible()
+    await expect(page.getByText('Requests · 30 days')).toBeVisible()
     await expect(page.getByText('42')).toBeVisible()
   })
 })

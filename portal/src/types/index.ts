@@ -809,3 +809,26 @@ export interface ErasureList {
   org_id: string
   erasures: Erasure[]
 }
+
+// ─── Audit trail ────────────────────────────────────────────────────
+
+/** One request igni server recorded: who did what, to what, and how it ended. */
+export interface AuditEvent {
+  id: string
+  occurred_at: string
+  actor_email: string | null
+  actor_user_id: string | null
+  method: string
+  route: string
+  target_type: string | null
+  target_id: string | null
+  status_code: number
+  outcome: string
+  client_host: string | null
+  detail: Record<string, unknown> | null
+}
+
+export interface AuditEventPage {
+  events: AuditEvent[]
+  next_before: string | null
+}

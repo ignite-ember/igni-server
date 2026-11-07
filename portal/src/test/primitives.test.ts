@@ -59,7 +59,6 @@ const CEILINGS: Record<string, number> = {
   'pages/GroupDetailPage.css': 1,
   'pages/SettingsPage.css': 1,
   'components/ContentEditor.css': 1,
-  'pages/DashboardPage.css': 1,
   'pages/NewGroupPage.css': 1,
   'pages/CompliancePage.css': 1,
   'auth/LoginPage.css': 2,
