@@ -150,7 +150,7 @@ def celery_question_is_settled() -> bool:
 def cli_api_url_default_is_gone() -> bool:
     """DP-5a. Answered when the CLI no longer defaults `api_url` to a
     vendor host."""
-    for candidate in ('src/ember_code/core/config/settings.py', 'src/ember_code/config.py'):
+    for candidate in ('src/igni_core/core/config/settings.py', 'src/ember_code/core/config/settings.py', 'src/ember_code/config.py'):
         path = _IGNI / candidate
         if path.exists():
             text = path.read_text()
