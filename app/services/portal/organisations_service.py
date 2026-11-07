@@ -16,6 +16,7 @@ from app.db.sql.models.organization import Organization
 from app.db.sql.org_domains import OrgDomainDB
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.services.cloud.producer_feed import ProducerFeed
 from app.services.identity.organisation_deletions import OrganisationDeletions
 from app.services.portal.company_domain import CompanyDomain
@@ -33,12 +34,14 @@ class OrganisationsService:
         orgs: OrganizationDB | None = None,
         domains: OrgDomainDB | None = None,
         team: TeamDB | None = None,
+        tenants: TenantRegistryDB | None = None,
         feed: ProducerFeed | None = None,
         nudge_deletions: Callable[[], None] = OrganisationDeletions.nudge,
     ) -> None:
         self._orgs = orgs or OrganizationDB()
         self._domains = domains or OrgDomainDB()
         self._team = team or TeamDB()
+        self._tenants = tenants or TenantRegistryDB()
         self._feed = feed or ProducerFeed()
         self._nudge_deletions = nudge_deletions
 
@@ -54,7 +57,7 @@ class OrganisationsService:
     ) -> CreateOrgResponse:
         """A new organisation owning *domains*; the creator becomes its admin.
 
-        `InvalidSlug`, `InvalidDomain`, `PublicMailDomain`, `DomainTaken`.
+        `InvalidSlug`, `SlugTaken`, `InvalidDomain`, `PublicMailDomain`, `DomainTaken`.
         """
         org = await self._orgs.create(
             display_name=display_name,
@@ -91,13 +94,20 @@ class OrganisationsService:
     async def update(
         self, org_id: str, *, display_name: str | None, slug: str | None, by: PortalAccount
     ) -> CreateOrgResponse:
-        """Rename the organisation or change its slug. `NotOrgAdmin`, `InvalidSlug`."""
+        """Rename the organisation or change its slug. `NotOrgAdmin`, `InvalidSlug`, `SlugTaken`, `OrgNotFound`."""
         await self._require_admin(org_id, by)
         checked = OrgSlug.checked(slug) if slug else None
-        return self._response(await self._orgs.update(org_id, display_name=display_name, slug=checked))
+        org = await self._orgs.update(org_id, display_name=display_name, slug=checked)
+        if org is None:
+            raise OrgNotFound()
+        return self._response(org)
 
     async def delete(self, org_id: str, *, by: PortalAccount) -> None:
-        """Delete the organisation once nobody but *by* is still in it. `NotOrgAdmin`, `OrgStillHasMembers`."""
+        """Delete the organisation once nobody but *by* is still in it. `NotOrgAdmin`, `OrgStillHasMembers`.
+
+        Its own database is kept, detached: nothing routes to it again,
+        and an operator can still read or drop it.
+        """
         await self._require_admin(org_id, by)
         members, _ = await self._team.list_members(org_id)
         others = [m for m in members if m.status in _STILL_IN and m.user_id != by.user_id]
@@ -107,6 +117,7 @@ class OrganisationsService:
         # is numbered here, like any other member's, not left for a later read.
         async with self._feed.removal():
             await self._orgs.delete(org_id)
+            await self._tenants.detach(org_id)
         # Tell the services now rather than at the next round.
         self._nudge_deletions()
 

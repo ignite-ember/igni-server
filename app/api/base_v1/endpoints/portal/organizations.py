@@ -19,6 +19,7 @@ from app.api.base_v1.schema.portal.organizations import (
 )
 from app.api.base_v1.schema.portal.user import OrgSummary, PortalAccount
 from app.db.sql.schemas.org_domain import DomainInUse, DomainNotHeld, DomainTaken
+from app.db.sql.schemas.organization import SlugTaken
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
 from app.services.portal.org_errors import (
@@ -55,7 +56,7 @@ def _bad_domain(exc: InvalidDomain | PublicMailDomain) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
 
 
-def _conflict(exc: DomainTaken | DomainInUse) -> HTTPException:
+def _conflict(exc: DomainTaken | DomainInUse | SlugTaken) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
@@ -97,7 +98,7 @@ async def create_organization(
         raise _invalid_slug(exc) from exc
     except (InvalidDomain, PublicMailDomain) as exc:
         raise _bad_domain(exc) from exc
-    except DomainTaken as exc:
+    except (SlugTaken, DomainTaken) as exc:
         raise _conflict(exc) from exc
 
 
@@ -168,6 +169,10 @@ async def update_organization(
         raise _not_admin(exc) from exc
     except InvalidSlug as exc:
         raise _invalid_slug(exc) from exc
+    except SlugTaken as exc:
+        raise _conflict(exc) from exc
+    except OrgNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.delete(
