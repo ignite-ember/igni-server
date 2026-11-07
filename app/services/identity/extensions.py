@@ -52,7 +52,7 @@ from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.service_extensions import ServiceExtensionDB
 from app.security import jose
 from app.services.identity.extension_assets import AssetRefused, BundleAssets, ExtensionAssets
-from app.services.identity.extension_grants import compare_grants, ExtensionGrants, GrantsComparison
+from app.services.identity.extension_grants import AddedGrant, compare_grants, ExtensionGrants, GrantsComparison
 from app.services.identity.impact import ExtensionImpact, IgniCommands, ImpactRefused
 from app.services.identity.jwk import JwkSet, PublicJwk
 
@@ -270,6 +270,19 @@ class Publication:
     #: Against the approved version; `None` when there was nothing to compare with.
     comparison: GrantsComparison | None = None
 
+    @property
+    def reason(self) -> str | None:
+        """Why it is held, in a line a service can log; `None` when it is not held."""
+        if not self.held:
+            return None
+        why = self.comparison.reason if self.comparison is not None else None
+        return f'held for a super admin: {why or "it asks for more than the approved version"}'
+
+    @property
+    def added(self) -> list[AddedGrant]:
+        """What a held version asks for that the approved one did not."""
+        return list(self.comparison.added) if self.held and self.comparison is not None else []
+
 
 def grants_of(extension: ServiceExtension | None) -> ExtensionGrants:
     """What a stored version asks for.
@@ -353,6 +366,12 @@ class ServiceExtensions:
         stored = await self._store.put(upload)
         await self.keep_only_declared(client_id)
         return Publication(extension=stored, held=stored.stage == HELD, comparison=comparison)
+
+    async def latest(self, client_id: str) -> Publication | None:
+        """The client's latest upload: the held one, if a version is waiting for a super admin, else the live one."""
+        held = await self._store.held_of(client_id)
+        found = held or await self._store.of(client_id)
+        return Publication(extension=found, held=held is not None) if found is not None else None
 
     async def keep_only_declared(self, client_id: str) -> None:
         """An asset neither the live nor the held version declares is not distributed again; the bytes go."""
@@ -439,3 +458,8 @@ class HeldUpdates:
         if discarded:
             await self._extensions.keep_only_declared(client_id)
         return discarded
+
+
+def service_extensions() -> ServiceExtensions:
+    """The FastAPI dependency; tests replace it through `app.dependency_overrides`."""
+    return ServiceExtensions()

@@ -2407,9 +2407,7 @@
             "type": "string"
           },
           "publisher_jwks": {
-            "additionalProperties": true,
-            "title": "Publisher Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/JwkSet"
           },
           "service_url": {
             "title": "Service Url",
@@ -4203,6 +4201,20 @@
           "kind"
         ],
         "title": "JobScope",
+        "type": "object"
+      },
+      "JwkSet": {
+        "description": "What `/.well-known/jwks.json` serves, and what a client registers.",
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/PublicJwk"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "title": "JwkSet",
         "type": "object"
       },
       "LegalHoldBody": {
@@ -7367,10 +7379,111 @@
         "title": "ProducerVolume",
         "type": "object"
       },
+      "PublicJwk": {
+        "additionalProperties": false,
+        "description": "One public key. RSA (`n`, `e`) or P-256 (`crv`, `x`, `y`).",
+        "properties": {
+          "alg": {
+            "anyOf": [
+              {
+                "enum": [
+                  "RS256",
+                  "ES256"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alg"
+          },
+          "crv": {
+            "anyOf": [
+              {
+                "const": "P-256",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crv"
+          },
+          "e": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "E"
+          },
+          "kid": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Kid",
+            "type": "string"
+          },
+          "kty": {
+            "enum": [
+              "RSA",
+              "EC"
+            ],
+            "title": "Kty",
+            "type": "string"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N"
+          },
+          "use": {
+            "const": "sig",
+            "default": "sig",
+            "title": "Use",
+            "type": "string"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          }
+        },
+        "required": [
+          "kty"
+        ],
+        "title": "PublicJwk",
+        "type": "object"
+      },
       "Published": {
         "properties": {
           "added": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/AddedGrant"
             },

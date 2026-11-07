@@ -286,3 +286,8 @@ class ExtensionAssets:
                 raise AssetRefused(f'the asset ended at {offset} bytes, before the {asset.size} it holds')
             yield chunk
             offset += len(chunk)
+
+
+def extension_assets() -> ExtensionAssets:
+    """The FastAPI dependency; tests replace it through `app.dependency_overrides`."""
+    return ExtensionAssets()
