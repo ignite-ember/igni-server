@@ -258,6 +258,12 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 "OR (created_by_kind = 'person' AND created_by_id = :u) OR revoked_by_id = :u",
                 u=user_id,
             ),
+            'api_keys': await self._org_rows(
+                org_id,
+                'SELECT user_id, name, created_at, expires_at, last_used_at, revoked_at, revoked_reason, '
+                'revoked_by_id FROM api_keys WHERE user_id = :u OR revoked_by_id = :u',
+                u=user_id,
+            ),
             # Volumes grown: their own VM's, and the ones they grew.
             'producer_volumes': await self._org_rows(
                 org_id,

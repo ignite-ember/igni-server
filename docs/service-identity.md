@@ -140,6 +140,7 @@ Each `jti` is accepted once. **Every token names one organisation.**
 | `refresh_token` | the same client | a new user token and refresh token — refused once the person is deleted, deactivated, removed from the organisation, or has had their sessions withdrawn, and once the client has revoked the sign-in (§3.1) |
 | `urn:igni:params:oauth:grant-type:vm-sign-in` | the person's **cloud igni**, with the session of their own sign-in through the gateway (§16) | a 15-minute session token and their VM's credential |
 | `urn:igni:params:oauth:grant-type:vm-credential` | a producer's **VM**, with its own VM credential (§16) | a 15-minute token for the producer and the rotated credential |
+| `urn:igni:params:oauth:grant-type:api-key` | a **program** a person gave their API key to (§22) | a 15-minute session as that person, pinned to the key's organisation |
 | `urn:ietf:params:oauth:grant-type:token-exchange` + `space=<space_id>` | an **app**, no client authentication | `subject_token` = the app's own token, `subject_token_type` = `urn:ietf:params:oauth:token-type:access_token` → a `space` token for one of its spaces (§17.2) |
 | `urn:ietf:params:oauth:grant-type:token-exchange` | the **igni host on a person's machine**, no client authentication | `subject_token` = the igni session, `subject_token_type` = `urn:ietf:params:oauth:token-type:access_token`, `audience` = **the service's URL**, optional `organisation` (required if the session is not pinned to one) → a user token for that URL |
 | `urn:ietf:params:oauth:grant-type:token-exchange` | an **app** or a **space** — igni in its VM, or the app itself — no client authentication | `subject_token` = the app's or the space's own igni token, `subject_token_type` as above, `audience` = **the service's URL**, optional `organisation` (only its own) → an `app` or `space` token for that URL (§9.2) |
@@ -2004,4 +2005,77 @@ once; refuse any token a revocation covers.
 long-poll `/v1/revocations?scope=served` (`wait=25`) with it, keep the watermarks by `(org, subject)` — and by subject for
 `org_id: null` — and refuse a token whose `iat_ms` is at or before its
 watermark, in addition to §4's checks.
+
+## 22. Personal API keys: a person's access, handed to a program
+
+A person who wants a program to act as them — a script, a CI job,
+`igni-client` driving their igni in Fleet — makes an **API key** on the
+portal and gives it to the program. There is no headless sign-in for a
+person otherwise: every other session starts in a browser.
+
+```
+igpak1.<org_id>.<key_id>.<secret>
+```
+
+Opaque to the program. The secret is 256 bits (`secrets.token_urlsafe(32)`);
+igni server keeps only its SHA-256 and compares in constant time. The key
+is shown once, in the answer that makes it, and never again.
+
+**Exchanging it**
+
+```
+POST {igni}/v1/oauth/token
+grant_type=urn:igni:params:oauth:grant-type:api-key
+api_key=igpak1.…
+→ 200 {"access_token", "token_type": "Bearer", "expires_in": 900}
+→ 400 {"error": "invalid_grant", "error_description": "this API key has expired"}
+```
+
+- **What it buys:** a **15-minute session** as the person (`token_use`
+  `session`, `kind` `person`), pinned to the key's organisation with `org`,
+  `org_name`, `group` and `inc` — the same claims as a VM's token (§16), so
+  every route that takes a person's session and Fleet's gateway (§11) take
+  it — plus `api_key: <key_id>`.
+- **Not renewable:** a program exchanges the key again when the session
+  runs out. Keys do not rotate.
+- **Expiry:** chosen when the key is made — 30, 90 or 365 days. There are no
+  keys that never expire.
+- **The person may still act:** at every exchange the key's making stands in
+  for a sign-in (`PersonInOrganisation.check`, with the key's `created_at`
+  as `iat`). Signing out everywhere, removal, deactivation, or leaving and
+  rejoining after the key was made refuses it, and revokes it.
+- **Revoked eagerly** too, wherever igni server signs a person out, removes
+  or deactivates them. Revoking stops new sessions at once; one already
+  bought lives out its 15 minutes, at the gateway as anywhere.
+- **Recorded:** every exchange, granted or refused, is an audit row, with
+  the person as actor and `api_key:<key_id>` as target.
+
+**What its session cannot do.** A key is the credential most likely to
+leak, so what it buys turns into nothing longer-lived. A session carrying
+`api_key` is refused (403, or `invalid_grant` at the token endpoint) when
+it tries to:
+
+| Call | Why |
+|---|---|
+| `GET` / `POST` / `DELETE /v1/portal/api-keys…` | a key does not make, list or revoke keys |
+| `POST /v1/cli/token` | a 30-day session |
+| `vm-sign-in` (§16) | a VM credential lives 90 days |
+| `POST /v1/portal/oauth/authorize` | a service's refresh token lives 30 days |
+
+Everything else the person may do, the key's session may — including what
+an org admin or a super admin may, when its person is one. That includes
+registering an app and rotating its keys, so a program can set an
+organisation up end to end; both are audited, and an admin can discard an
+app.
+
+**On the portal** (*API keys*)
+
+| Call | Who | Does |
+|---|---|---|
+| `POST /v1/portal/api-keys` `{name, expires_in_days}` | anybody in an organisation | 201 `{key_id, name, user_id, created_at, expires_at, last_used_at, expired, api_key}` — the only time `api_key` is shown |
+| `GET /v1/portal/api-keys` | anybody | `{"keys": [...]}`, never the key — keys not revoked, expired ones included: the organisation's for an org admin, your own otherwise |
+| `DELETE /v1/portal/api-keys/{key_id}` | its person, or an org admin | 204; revoked. Anybody else: 404 |
+
+`revoked_reason` is `revoked_by_person`, `revoked_by_admin` or
+`signed_out_or_removed`.
 

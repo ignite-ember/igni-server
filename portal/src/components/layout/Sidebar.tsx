@@ -20,6 +20,7 @@ import {
   AppsIcon,
   ContainerIcon,
   TerminalIcon,
+  KeyAsteriskIcon,
   KeyIcon,
 } from '@primer/octicons-react'
 
@@ -47,6 +48,8 @@ const orgItems = [
   { label: 'Commands in VMs', path: 'vm-commands', icon: TerminalIcon },
   // Your own VM's credential, or — for an admin — everyone's.
   { label: 'VM credentials', path: 'vm-credentials', icon: KeyIcon },
+  // Your access, handed to a program; an admin sees everybody's.
+  { label: 'API keys', path: 'api-keys', icon: KeyAsteriskIcon },
   // Former members' and discarded apps' VMs on their way to erasure.
   { label: 'Erasures', path: 'erasures', icon: TrashIcon, adminOnly: true },
   // Every endpoint behind this page is `require_admin`, so the entry is

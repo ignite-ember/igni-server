@@ -105,11 +105,14 @@ ACTIVITIES: tuple[Activity, ...] = (
             'answer a subject-access or erasure request about anybody.'
         ),
         subjects='Developers and administrators given access to the deployment.',
-        tables=('users', 'user_roles', 'org_memberships', 'org_invitations'),
+        tables=('users', 'user_roles', 'org_memberships', 'org_invitations', 'api_keys'),
         retention=(
             'For the life of the account. Deleting it removes the row and '
             'degrades provenance elsewhere to NULL rather than cascading '
-            '(F60, F85), and every session it issued stops working (F122).'
+            '(F60, F85), and every session it issued stops working (F122). '
+            'A personal API key stops at its expiry (30, 90 or 365 days) or when '
+            'revoked, and is kept, revoked or expired, for the life of the '
+            'organisation as the record of who could act as whom.'
         ),
     ),
     Activity(

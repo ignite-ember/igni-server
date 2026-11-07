@@ -19,6 +19,7 @@ from __future__ import annotations
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.services.cloud.vm_credentials import VmCredentials
+from app.services.identity.api_keys import ApiKeys
 
 ACTIVE = 'active'
 DEACTIVATED = 'deactivated'
@@ -60,3 +61,4 @@ class MemberStatus:
         await self._users.set_deactivated(user_id, deactivated=not active)
         if not active:
             await self._vm_credentials.revoke_person(user_id)
+            await ApiKeys().revoke_person(user_id)
