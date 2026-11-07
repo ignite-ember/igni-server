@@ -31,9 +31,11 @@ import re
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.api.base_v1.schema.scim import (
+    ActiveChangedAudit,
     ListResponse,
     PatchRequest,
     ScimUser,
+    ServiceProviderConfig,
 )
 from app.api.scim.errors import scim_error
 from app.middlewares.audit import set_audit_actor, set_audit_detail, set_audit_target
@@ -63,33 +65,11 @@ async def _recorded_in_their_organisation(request: Request, address: str) -> Non
 
 @router.get(
     '/ServiceProviderConfig',
+    response_model=ServiceProviderConfig,
     description='What this SCIM implementation supports. Providers read it first.',
 )
-async def service_provider_config() -> dict:
-    return {
-        'schemas': ['urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig'],
-        # No `documentationUri`. It is optional, and the one URL worth
-        # putting there is the vendor's — which is a host named in
-        # `app/` for a convenience link, on a product whose rule is
-        # that there are none. The operator reads how to configure
-        # this where they configure it: `dist.env` and the chart.
-        'patch': {'supported': True},
-        # Said plainly rather than left for a provider to discover by
-        # having a run fail.
-        'bulk': {'supported': False, 'maxOperations': 0, 'maxPayloadSize': 0},
-        'filter': {'supported': True, 'maxResults': 200},
-        'changePassword': {'supported': False},
-        'sort': {'supported': False},
-        'etag': {'supported': False},
-        'authenticationSchemes': [
-            {
-                'type': 'oauthbearertoken',
-                'name': 'OAuth Bearer Token',
-                'description': 'A token configured on both sides; see scim_token.',
-                'primary': True,
-            }
-        ],
-    }
+async def service_provider_config() -> ServiceProviderConfig:
+    return ServiceProviderConfig()
 
 
 @router.get('/Users', response_model=ListResponse, description='Find a user, by address.')
@@ -144,7 +124,7 @@ async def create_user(payload: ScimUser, request: Request) -> ScimUser:
 
     user = await service.provision(payload)
     set_audit_target(request, target_type='user', target_id=str(user.user_id))
-    set_audit_detail(request, {'active': payload.active})
+    set_audit_detail(request, ActiveChangedAudit(active=payload.active).model_dump())
     return service.to_scim(user)
 
 
@@ -173,7 +153,7 @@ async def patch_user(user_id: str, payload: PatchRequest, request: Request) -> S
     active = service.wants_deactivation(payload.Operations)
     if active is None:
         return service.to_scim(user)
-    set_audit_detail(request, {'active': active})
+    set_audit_detail(request, ActiveChangedAudit(active=active).model_dump())
     return service.to_scim(await service.set_active(user_id, active=active))
 
 
@@ -191,9 +171,9 @@ async def replace_user(user_id: str, payload: ScimUser, request: Request) -> Sci
         raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
     await _recorded_in_their_organisation(request, str(user.email))
 
-    if payload.active == (getattr(user, 'deactivated_at', None) is None):
+    if payload.active == (user.deactivated_at is None):
         return service.to_scim(user)
-    set_audit_detail(request, {'active': payload.active})
+    set_audit_detail(request, ActiveChangedAudit(active=payload.active).model_dump())
     return service.to_scim(await service.set_active(user_id, active=payload.active))
 
 
@@ -216,6 +196,6 @@ async def delete_user(user_id: str, request: Request) -> Response:
     if user is None:
         raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
     await _recorded_in_their_organisation(request, str(user.email))
-    set_audit_detail(request, {'active': False})
+    set_audit_detail(request, ActiveChangedAudit(active=False).model_dump())
     await service.set_active(user_id, active=False)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

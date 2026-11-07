@@ -32,6 +32,7 @@ USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User'
 LIST_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:ListResponse'
 ERROR_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:Error'
 PATCH_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:PatchOp'
+SERVICE_PROVIDER_CONFIG_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig'
 
 
 class Name(BaseModel):
@@ -129,3 +130,70 @@ class ScimError(BaseModel):
     #: a provider retrying a create for somebody who already exists
     #: needs to tell that from a malformed request.
     scimType: Literal['uniqueness', 'invalidValue', 'invalidFilter'] | None = None
+
+
+class Supported(BaseModel):
+    """RFC 7643 §5's ``{"supported": …}`` for a feature with no settings."""
+
+    supported: bool
+
+
+class BulkSupport(BaseModel):
+    supported: bool = False
+    maxOperations: int = 0
+    maxPayloadSize: int = 0
+
+
+class FilterSupport(BaseModel):
+    supported: bool = True
+    maxResults: int = 200
+
+
+class AuthenticationScheme(BaseModel):
+    type: str
+    name: str
+    description: str
+    primary: bool = False
+
+
+class ServiceProviderConfig(BaseModel):
+    """What this implementation supports (RFC 7643 §5). Providers read it first.
+
+    The defaults *are* this server's answer, so the route serves a bare
+    instance. Unsupported features are said plainly rather than left for
+    a provider to discover by having a run fail.
+
+    No ``documentationUri``. It is optional, and the one URL worth
+    putting there is the vendor's — which is a host named in ``app/``
+    for a convenience link, on a product whose rule is that there are
+    none. The operator reads how to configure this where they configure
+    it: ``dist.env`` and the chart.
+    """
+
+    schemas: list[str] = Field(default_factory=lambda: [SERVICE_PROVIDER_CONFIG_SCHEMA])
+    patch: Supported = Field(default_factory=lambda: Supported(supported=True))
+    bulk: BulkSupport = Field(default_factory=BulkSupport)
+    filter: FilterSupport = Field(default_factory=FilterSupport)
+    changePassword: Supported = Field(default_factory=lambda: Supported(supported=False))
+    sort: Supported = Field(default_factory=lambda: Supported(supported=False))
+    etag: Supported = Field(default_factory=lambda: Supported(supported=False))
+    authenticationSchemes: list[AuthenticationScheme] = Field(
+        default_factory=lambda: [
+            AuthenticationScheme(
+                type='oauthbearertoken',
+                name='OAuth Bearer Token',
+                description='A token configured on both sides; see scim_token.',
+                primary=True,
+            )
+        ]
+    )
+
+
+class ActiveChangedAudit(BaseModel):
+    """The audit detail a provider's change to somebody's ``active`` leaves.
+
+    Only the outcome — never the request body, which can carry
+    attributes this server does not store and must not retain.
+    """
+
+    active: bool
