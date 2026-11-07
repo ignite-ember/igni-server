@@ -97,6 +97,21 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 afterEach(() => server.resetHandlers())
 afterAll(() => server.close())
 
+// Cancel every pending live-region announcement when a test ends.
+//
+// A <live-region> stays on document.body after the test that announced
+// into it, with a timer that announces the next message after its delay.
+// On a slow runner that timer can fire after the file's jsdom is torn
+// down, where it calls `window.setTimeout` with no `window`: an uncaught
+// ReferenceError, reported against whichever file ran last, which fails
+// the run although every test passed. `clear()` is the element's own way
+// to drop its queue and its timer.
+function clearLiveRegions() {
+  document.querySelectorAll<LiveRegionElement>('live-region').forEach((region) => region.clear())
+}
+afterEach(clearLiveRegions)
+afterAll(clearLiveRegions)
+
 /**
  * Monaco, as a textarea.
  *
