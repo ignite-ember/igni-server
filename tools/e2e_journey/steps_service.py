@@ -57,7 +57,7 @@ def backend_installs_extension(j: Journey) -> Outcome | str:
     if not j.state.svc:
         return NO_SERVICE
     log = Path(j.o.out) / 'logs' / 'igni-backend.log'
-    cmd = [j.o.igni_python, '-m', 'ember_code.backend', '--ws-port', '0']
+    cmd = [j.o.igni_python, '-m', 'igni_core.backend', '--ws-port', '0']
     with open(log, 'w') as out:
         proc = subprocess.Popen(cmd, cwd=j.project, env=j.igni_env(), stdout=out, stderr=subprocess.STDOUT)
     j.note(f"$ (cd project && HOME=… {' '.join(cmd[1:])}) pid={proc.pid}, log {log}")
