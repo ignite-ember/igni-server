@@ -129,7 +129,7 @@ class TestCiRunsTheSuiteThatEnforcesEverythingElse:
         SSO runs end to end — the first run of it found every SSO login
         signing nobody in."""
         assert 'tools/e2e_journey/journey.sh run' in ci, 'CI no longer runs the free-base journey'
-        assert 'repository: ignite-ember/igni' in ci, 'the journey no longer checks out the igni CLI'
+        assert 'repository: ignite-ember/igni-core' in ci, 'the journey no longer checks out the igni CLI'
 
     def test_the_gates_are_not_allowed_to_fail_silently(self, ci):
         """`|| true` on a gate is a gate that reports rather than gates.

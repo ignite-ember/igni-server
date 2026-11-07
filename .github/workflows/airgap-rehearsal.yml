@@ -42,7 +42,7 @@ jobs:
       # defaults to ../igni). Public, so the job's own token reads it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ignite-ember/igni
+          repository: ignite-ember/igni-core
           ref: ${{ env.IGNI_CLI_REF }}
           path: igni
 
