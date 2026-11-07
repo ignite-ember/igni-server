@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 """Issue igni licence files. Ignite Ember's tool; customers have no use for it.
 
-    # once, on the issuing machine, outside any repository:
-    python tools/licence/issue_licence.py keygen --out ~/igni-licence/ie-2026.pem --key-id ie-2026
-
-    # a licence: one --module per paid module, NAME[=USERS][@EXPIRES]
-    IGNI_LICENCE_KEY_FILE=~/igni-licence/ie-2026.pem \\
+    # a licence, signed by the release key in Cloud KMS as whoever gcloud
+    # is logged in as: one --module per paid module, NAME[=USERS][@EXPIRES]
+    KEY=projects/ignite-ember-signing/locations/europe-west4/keyRings/igni-release
+    CLOUDSDK_ACTIVE_CONFIG_NAME=ignite-ember \\
+    IGNI_LICENCE_KMS_KEY=$KEY/cryptoKeys/licence-ie-2026/cryptoKeyVersions/1 \\
     python tools/licence/issue_licence.py issue --key-id ie-2026 \\
         --licence-id IE-2026-0042 --customer "Example Bank N.V." \\
         --expires 2027-10-29 --module codeindex=100 --module artifacts=50 \\
@@ -14,9 +14,16 @@
     # what a file says, and whether this release accepts it:
     python tools/licence/issue_licence.py inspect example-bank.licence.json
 
-The private key is read from `--key-file`, or the file named by
-`IGNI_LICENCE_KEY_FILE`, or the PEM in `IGNI_LICENCE_KEY`. It is never
-written into a git working tree: `keygen` refuses to.
+The release key lives in Cloud KMS and never leaves it: `--kms-key`, or
+`IGNI_LICENCE_KMS_KEY`, names its version, and `gcloud` signs with it as
+the account it is logged in as. Only that account may. Before the file is
+written it is verified against `RELEASE_KEYS`, so a key id and a key that
+do not match never reach a customer. Every signature is in the key
+project's audit log. igni__business-ops `ops/key-ceremony.md`.
+
+A key file is for tests and for a key made with `keygen`: `--key-file`,
+or the file named by `IGNI_LICENCE_KEY_FILE`, or the PEM in
+`IGNI_LICENCE_KEY`. `keygen` never writes into a git working tree.
 
 Rules the tool keeps so a customer never receives a licence that will
 not work: bands are 50, 100, 200, 500, 1,000 and then thousands (an
@@ -34,13 +41,17 @@ import argparse
 from datetime import date, datetime, time, timezone
 import os
 import pathlib
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 # Run as `python tools/licence/issue_licence.py` from the repository root.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from pydantic import ValidationError
 
 from app.services.licence import (
@@ -90,18 +101,83 @@ class Dates:
         return datetime.combine(day, time(0, 0), tzinfo=timezone.utc)
 
 
+class KmsSigningKey(Ed25519PrivateKey):
+    """The release key in Cloud KMS, signing through `gcloud`.
+
+    Only `sign` and `public_key` mean anything: the private half cannot be
+    read out of KMS, so there are no bytes to give. An Ed25519PrivateKey
+    so that LicenceSigner, which is the same in every module, takes it."""
+
+    _VERSION = re.compile(
+        r'projects/([^/]+)/locations/([^/]+)/keyRings/([^/]+)/cryptoKeys/([^/]+)/cryptoKeyVersions/(\d+)'
+    )
+
+    def __init__(self, version: str) -> None:
+        match = self._VERSION.fullmatch(version)
+        if match is None:
+            raise IssueRefused(f'{version!r} is not a KMS key version (projects/…/cryptoKeyVersions/N)')
+        if shutil.which('gcloud') is None:
+            raise IssueRefused('gcloud is not installed; it signs with the KMS key')
+        project, location, ring, key, self._version = match.groups()
+        # gcloud takes the parts, not the resource name.
+        self._key = [f'--project={project}', f'--location={location}', f'--keyring={ring}', f'--key={key}']
+
+    def _gcloud(self, *argv: str) -> None:
+        done = subprocess.run(['gcloud', 'kms', *argv, *self._key], capture_output=True, text=True, check=False)
+        if done.returncode != 0:
+            raise IssueRefused(f'gcloud kms {argv[0]} failed: {done.stderr.strip()}')
+
+    def sign(self, data: bytes | bytearray | memoryview) -> bytes:
+        with tempfile.TemporaryDirectory() as directory:
+            message, signature = pathlib.Path(directory, 'message'), pathlib.Path(directory, 'signature')
+            message.write_bytes(bytes(data))
+            self._gcloud(
+                'asymmetric-sign',
+                f'--version={self._version}',
+                f'--input-file={message}',
+                f'--signature-file={signature}',
+            )
+            return signature.read_bytes()
+
+    def public_key(self) -> Ed25519PublicKey:
+        with tempfile.TemporaryDirectory() as directory:
+            pem = pathlib.Path(directory, 'public.pem')
+            self._gcloud('keys', 'versions', 'get-public-key', self._version, f'--output-file={pem}')
+            key = serialization.load_pem_public_key(pem.read_bytes())
+        if not isinstance(key, Ed25519PublicKey):
+            raise IssueRefused('the KMS key is not an Ed25519 key')
+        return key
+
+    def private_bytes(self, *_args: object, **_kwargs: object) -> bytes:
+        raise IssueRefused('a KMS key cannot be exported')
+
+    def private_bytes_raw(self) -> bytes:
+        raise IssueRefused('a KMS key cannot be exported')
+
+    def __copy__(self) -> KmsSigningKey:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> KmsSigningKey:
+        return self
+
+
 class SigningKey:
     """Ignite Ember's private key, from wherever the issuing machine keeps it."""
 
     @staticmethod
-    def load(key_file: str | None) -> Ed25519PrivateKey:
+    def load(key_file: str | None, kms_key: str | None = None) -> Ed25519PrivateKey:
+        if kms_key := kms_key or os.environ.get('IGNI_LICENCE_KMS_KEY'):
+            return KmsSigningKey(kms_key)
         path = key_file or os.environ.get('IGNI_LICENCE_KEY_FILE')
         if path:
             pem = pathlib.Path(path).expanduser().read_bytes()
         elif os.environ.get('IGNI_LICENCE_KEY'):
             pem = os.environ['IGNI_LICENCE_KEY'].encode('utf-8')
         else:
-            raise IssueRefused('no signing key: pass --key-file, or set IGNI_LICENCE_KEY_FILE or IGNI_LICENCE_KEY')
+            raise IssueRefused(
+                'no signing key: pass --kms-key or --key-file, or set IGNI_LICENCE_KMS_KEY, '
+                'IGNI_LICENCE_KEY_FILE or IGNI_LICENCE_KEY'
+            )
         key = serialization.load_pem_private_key(pem, password=None)
         if not isinstance(key, Ed25519PrivateKey):
             raise IssueRefused('the signing key is not an Ed25519 key')
@@ -159,7 +235,20 @@ class LicenceIssuer:
             )
         except ValidationError as exc:
             raise IssueRefused(exc.errors()[0]['msg']) from exc
-        signed = LicenceSigner(SigningKey.load(args.key_file), key_id=args.key_id).sign(payload)
+        key = SigningKey.load(args.key_file, args.kms_key)
+        if isinstance(key, KmsSigningKey) and args.key_id not in RELEASE_KEYS:
+            raise IssueRefused(
+                f'--key-id {args.key_id} is not in RELEASE_KEYS; the KMS key signs release licences only'
+            )
+        signed = LicenceSigner(key, key_id=args.key_id).sign(payload)
+        if args.key_id in RELEASE_KEYS:
+            # What a customer's release will do with it, before it exists.
+            try:
+                LicenceVerifier(TrustedKeys.parse(dict(RELEASE_KEYS))).verify(signed)
+            except LicenceError as exc:
+                raise IssueRefused(
+                    f'the signed licence does not verify against RELEASE_KEYS[{args.key_id!r}]: {exc}'
+                ) from exc
         out = pathlib.Path(args.out)
         out.write_bytes(signed)
         print(f'{payload.licence_id} for {payload.customer} written to {out}')
@@ -190,7 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     keygen.add_argument('--key-id', required=True, help='the id licences signed with it will name, e.g. ie-2026')
 
     issue = commands.add_parser('issue', help='sign a licence file')
-    issue.add_argument('--key-file', help='the private key (or IGNI_LICENCE_KEY_FILE / IGNI_LICENCE_KEY)')
+    issue.add_argument('--kms-key', help='the KMS key version that signs (or IGNI_LICENCE_KMS_KEY)')
+    issue.add_argument('--key-file', help='a private key file instead (or IGNI_LICENCE_KEY_FILE / IGNI_LICENCE_KEY)')
     issue.add_argument('--key-id', required=True)
     issue.add_argument('--licence-id', required=True)
     issue.add_argument('--customer', required=True)

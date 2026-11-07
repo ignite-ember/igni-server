@@ -6,8 +6,11 @@ commit with release notes, and the images and offline bundle built, signed
 and sealed from it. Development is public, here; releases are built in
 private, by `ignite-ember/igni__release`. That repository holds no source:
 it calls [`.github/workflows/release.yml`](../.github/workflows/release.yml)
-from this repository, and holds the `prod` environment with the release
-keys. The bundle carries the paid module images, so it is never built in a
+from this repository, and holds the `release` environment: a GitHub
+environment that only `main` can deploy to, used as the gate for signing.
+The jobs that sign run in it, Google trusts only its OIDC token to use the
+release key in Cloud KMS, and it holds the four variables that name the key
+and the identity allowed to sign with it. The bundle carries the paid module images, so it is never built in a
 run of this public repository, whose CI artefacts anyone signed in to
 GitHub can download (S27). This is the checklist;
 [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md) is what the release workflow does
@@ -15,7 +18,7 @@ with the commit and how a customer verifies the result.
 
 ## Before
 
-- The release keys exist and are in the `prod` GitHub environment of
+- The release keys exist and are in the `release` GitHub environment of
   `igni__release` ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md), the last
   section). The release refuses to push an unsigned image, so without them
   nothing is released.
@@ -62,8 +65,8 @@ with the commit and how a customer verifies the result.
    `igni__release` only, so bump the version for each release.
 6. **Check what the release made.** Fetch the kept bundle (`oras pull
    ghcr.io/ignite-ember/igni-bundle:<version>`) and verify it as a
-   customer would, with the public keys you hold and not copies from the
-   run: `igni-import --bundle … --public-key igni-release.pub
+   customer would, with the public key you hold and not a copy from the
+   run: `igni-import --bundle … --public-key cosign.pub
    --expect-version <version> --verify-only`, and `cosign verify` on both
    images. The commit in the bundle's MANIFEST (`# commit:`) is the one
    the tag points at.

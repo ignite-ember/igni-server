@@ -384,7 +384,7 @@ public repository's CI artefacts can be downloaded by anyone. It builds
 two images, `ghcr.io/ignite-ember/igni-api` and
 `ghcr.io/ignite-ember/igni-portal`, pushes them to GitHub Container
 Registry, signs them with cosign, attaches a CycloneDX SBOM, and seals the
-minisign-signed offline bundle. It deploys nothing.
+offline bundle, signed with the same cosign key. It deploys nothing.
 [RELEASING.md](docs/RELEASING.md) is how a release is cut, and
 [OFFLINE_UPDATES.md](docs/OFFLINE_UPDATES.md) explains how to verify an
 image or a bundle.

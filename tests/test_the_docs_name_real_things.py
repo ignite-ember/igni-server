@@ -270,16 +270,14 @@ def test_every_setting_in_a_table_is_real(doc):
         'LOG_LEVEL',
         'DATABASE_URL',
         'PGPASSWORD',
-        # Release-signing secrets and variables, read by the release
+        # Release-signing variables, read by the release
         # (.github/workflows/release.yml) and `tools/release/igni-bundle`,
         # never by a deployment. OFFLINE_UPDATES.md tabulates them for
         # whoever sets up igni__release's GitHub environment.
-        'COSIGN_PRIVATE_KEY',
-        'COSIGN_PASSWORD',
+        'COSIGN_KMS_KEY',
         'COSIGN_PUBLIC_KEY',
-        'MINISIGN_SECRET_KEY',
-        'MINISIGN_PASSWORD',
-        'MINISIGN_PUBLIC_KEY',
+        'GCP_WORKLOAD_IDENTITY_PROVIDER',
+        'GCP_SIGNER_SERVICE_ACCOUNT',
         # tools/airgap-rehearsal.sh's own knobs, tabulated in
         # AIR_GAP_REHEARSAL.md for whoever runs the rehearsal.
         'IGNI_AIRGAP_NAME',

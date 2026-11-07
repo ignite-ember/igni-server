@@ -288,7 +288,7 @@ module is served on its own hostname, never under igni's.
 
 | # | Source | Destination | Protocol / port | Purpose | Required |
 |---|---|---|---|---|---|
-| U1 | Customer operator | Customer container registry | Customer's transfer method, then the registry protocol from the import host (`skopeo`) | One signed tarball per release (images, Helm chart, SBOMs), verified offline by `igni-import` with the customer's copy of the minisign public key, then pushed by digest; desktop installers separately. See [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md). The chart and compose files have no default registry and refuse to start without an explicit image and tag | Required for install and update |
+| U1 | Customer operator | Customer container registry | Customer's transfer method, then the registry protocol from the import host (`skopeo`) | One signed tarball per release (images, Helm chart, SBOMs), verified offline by `igni-import` with the customer's copy of the cosign public key, the same one that verifies the images, then pushed by digest; desktop installers separately. See [OFFLINE_UPDATES.md](OFFLINE_UPDATES.md). The chart and compose files have no default registry and refuse to start without an explicit image and tag | Required for install and update |
 | U2 | Customer cluster or hosts | Customer container registry | Registry protocol, configurable | Image pull | Required |
 | U3 | CodeIndex, Artifacts | igni API `PUT /v1/clients/{id}/extension` | HTTPS | Upload the extension bundle and its assets, signed (JWS) with the service's registered key | Required for each module |
 | U4 | Local backend | igni API `/v1/extensions` | HTTPS | Download approved extensions and the assets for its platform | Required for each module |
@@ -397,12 +397,13 @@ Points that could not be verified from the repositories, or where the
 code differs from the description given to us.
 
 1. **Signed update bundle: built, keys not yet issued.** CD signs each
-   igni image with cosign (key pair, no transparency log) and attaches its
-   CycloneDX SBOM as a signed attestation; on `main` it builds one
-   tarball per release with a minisign-signed MANIFEST, and `igni-import`
+   igni image with cosign (a Cloud KMS key, reached through GitHub OIDC,
+   no transparency log) and attaches its CycloneDX SBOM as a signed
+   attestation; on `main` it builds one tarball per release with a MANIFEST
+   signed with the same key, and `igni-import`
    verifies and imports it offline ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md),
-   `tools/release/`). The release key pairs have not been generated yet, so
-   no signed bundle exists until that is done. The bundle carries igni's
+   `tools/release/`). The key exists; no release has been signed with it
+   yet, so no signed bundle exists until the first one is. The bundle carries igni's
    images only, not the third-party `postgres`, `redis` and `caddy` images
    the chart and compose files use. Also signed: desktop updates (Tauri,
    minisign key) and extension bundles (JWS with the service's key).

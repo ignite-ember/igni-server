@@ -39,26 +39,31 @@
 #     DIR/sboms/NAME-<file>, and `NAME<TAB>VERSION<TAB>sha256:<SHA256SUMS
 #     digest>` is recorded in DIR/artefacts.tsv.
 #
-#   igni-bundle seal --staging DIR --version V --key MINISIGN_SECRET_KEY \
-#       --out OUTDIR [--commit SHA] [--public-key MINISIGN_PUBLIC_KEY]
+#   igni-bundle seal --staging DIR --version V --key KEY \
+#       --out OUTDIR [--commit SHA] [--public-key COSIGN_PUBLIC_KEY]
 #
-#     Offline. Checks images.tsv and artefacts.tsv against what is staged,
-#     adds igni-import, writes MANIFEST (sha256 of every file and
-#     the version), signs it with minisign, and writes
-#     OUTDIR/<basename of DIR>.tar plus a .sha256 beside it. The password
-#     for the secret key, if it has one, is read from MINISIGN_PASSWORD.
-#     With --public-key, the fresh signature is verified before the tarball
-#     is written, so a mismatched key pair fails here and not at a customer.
+#     Checks images.tsv and artefacts.tsv against what is staged, adds
+#     igni-import, writes MANIFEST (sha256 of every file, the format and
+#     the version), signs it with cosign into MANIFEST.sig, and writes
+#     OUTDIR/<basename of DIR>.tar plus a .sha256 beside it. KEY is any key
+#     reference cosign takes: in CD the release key in Cloud KMS
+#     (gcpkms://…, which needs the network for that one call), in tests a
+#     cosign.key file whose password is read from COSIGN_PASSWORD. With
+#     --public-key, the fresh signature is verified before the tarball is
+#     written, so a mismatched key fails here and not at a customer.
 #
-# Why minisign for the MANIFEST, when images are signed with cosign: it is
-# offline by construction (no transparency log to switch off, no flags
-# whose defaults change between releases), a single small binary packaged
-# by Debian, Ubuntu, Alpine, Fedora and EPEL, and the format the desktop
-# app's updater already uses. The signed "trusted comment" carries the
-# version, so a signed MANIFEST cannot be passed off as another release.
+# The MANIFEST is signed with the same cosign key as the images, so a
+# customer holds one public key and needs one tool, which igni-import
+# already needed for the images. It used to be minisign, chosen for being
+# offline by construction; cosign is made offline here explicitly: the
+# signature is a plain one (--new-bundle-format=false), nothing goes to a
+# transparency log (--tlog-upload=false), and no signing config is fetched
+# (--use-signing-config=false). Every one of those is spelled out because
+# cosign 3 changed their defaults. The version is a line of the signed
+# MANIFEST, so a signed MANIFEST cannot be passed off as another release.
 set -euo pipefail
 
-readonly FORMAT=1
+readonly FORMAT=2
 here="$(cd "$(dirname "$0")" && pwd)"
 
 die() {
@@ -68,6 +73,25 @@ die() {
 
 need() {
     command -v "$1" > /dev/null 2>&1 || die "'$1' is required and was not found on PATH"
+}
+
+# A plain signature over BLOB, written to SIG, with nothing sent anywhere
+# but KEY's own backend. cosign 2 and 3 disagree on the flags for that:
+# cosign 3 fetches a signing config, and refuses --tlog-upload=false,
+# unless given --use-signing-config=false, which cosign 2 does not know.
+# So the flag is added when this cosign has it rather than by version.
+# cosign 3 hides --use-signing-config from its help but lists
+# --signing-config, which came with it; and the help is read whole rather
+# than piped into `grep -q`, whose early exit pipefail reports as failure.
+cosign_sign_blob() {
+    local key="$1" blob="$2" sig="$3" output help
+    local flags=(--yes --key "$key" --tlog-upload=false --new-bundle-format=false)
+    help="$(cosign sign-blob --help 2>&1 || true)"
+    if [[ "$help" == *--signing-config* || "$help" == *--use-signing-config* ]]; then
+        flags+=(--use-signing-config=false)
+    fi
+    output="$(cosign sign-blob "${flags[@]}" --output-signature "$sig" "$blob" 2>&1)" \
+        || { printf '%s\n' "$output" >&2; return 1; }
 }
 
 sha256_of() {
@@ -227,10 +251,10 @@ seal() {
         || die 'seal needs --staging, --version, --key and --out'
     [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "'$version' is not a version"
     [ -d "$staging" ] || die "no staging directory at $staging"
-    [ -f "$key" ] || die "no signing key at $key"
+    [[ "$key" == *://* ]] || [ -f "$key" ] || die "no signing key at $key"
     [ -f "$staging/images.tsv" ] || die 'the staging directory has no images.tsv'
     [ -s "$staging/images.tsv" ] || die 'images.tsv is empty: a bundle with no images is not a release'
-    need minisign
+    need cosign
 
     staging="$(cd "$staging" && pwd)"
     local bundle_name
@@ -264,7 +288,7 @@ seal() {
     if [ -n "$(find "$staging" ! -type f ! -type d -print -quit)" ]; then
         die 'the staging directory holds links or special files; a bundle holds only files'
     fi
-    rm -f "$staging/MANIFEST" "$staging/MANIFEST.minisig"
+    rm -f "$staging/MANIFEST" "$staging/MANIFEST.sig"
     install -m 0755 "$here/igni-import" "$staging/igni-import"
 
     local manifest="$staging/MANIFEST" path
@@ -276,17 +300,16 @@ seal() {
         while IFS= read -r path; do
             [[ "$path" =~ ^[A-Za-z0-9._+/-]+$ ]] || die "file name '$path' is outside the set a MANIFEST may name"
             printf '%s  %s\n' "$(sha256_of "$staging/$path")" "$path"
-        done < <(cd "$staging" && find . -type f ! -path ./MANIFEST ! -path ./MANIFEST.minisig | sed 's#^\./##' | LC_ALL=C sort)
+        done < <(cd "$staging" && find . -type f ! -path ./MANIFEST ! -path ./MANIFEST.sig | sed 's#^\./##' | LC_ALL=C sort)
     } > "$manifest"
 
-    printf '%s\n' "${MINISIGN_PASSWORD-}" \
-        | minisign -S -s "$key" -m "$manifest" -x "$staging/MANIFEST.minisig" \
-            -t "igni-bundle format=$FORMAT version=$version" > /dev/null \
-        || die 'minisign could not sign the MANIFEST'
+    cosign_sign_blob "$key" "$manifest" "$staging/MANIFEST.sig" \
+        || die 'cosign could not sign the MANIFEST'
 
     if [ -n "$public_key" ]; then
-        minisign -V -q -p "$public_key" -m "$manifest" -x "$staging/MANIFEST.minisig" \
-            || die 'the new signature does not verify with --public-key; the key pair does not match'
+        cosign verify-blob --key "$public_key" --insecure-ignore-tlog=true \
+            --signature "$staging/MANIFEST.sig" "$manifest" > /dev/null 2>&1 \
+            || die 'the new signature does not verify with --public-key; the keys do not match'
     fi
 
     mkdir -p "$out"

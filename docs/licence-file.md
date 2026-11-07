@@ -87,10 +87,11 @@ Public keys are in `app/services/licence/keys.py` (and its copies) and
 `igni__cloudvm/crates/licence/src/keys.rs`, under a key id. Only the public
 half is ever in a repository.
 
-* **Release keys.** Empty until Ignite Ember runs the key ceremony
-  (`issue_licence.py keygen`, below) and pastes the public half into every
-  copy. Until then, no deployment outside development accepts a licence,
-  and every paid module stays off.
+* **Release keys.** `ie-2026`, created 2026-11-07. Its private half is in
+  Cloud KMS and never leaves it; `issue_licence.py issue --kms-key` signs
+  through KMS as Ignite Ember's issuing account, and checks the licence
+  against `RELEASE_KEYS` before writing it. A release from before the key
+  was added accepts no licence outside development.
 * **The test key** (`igni-test-1`) has its private half in each repository's
   test fixtures, so anybody can sign with it. It is trusted only in
   development: `APP_ENV=dev` for igni server and CodeIndex,
@@ -225,23 +226,31 @@ CodeIndex and Artifacts keep one row per person in their shared plane
 
 ## Issuing
 
-`tools/licence/issue_licence.py` is Ignite Ember's tool. It runs on the
-issuing machine, which holds the private key in a file or in the
-environment (`IGNI_LICENCE_KEY_FILE` or `IGNI_LICENCE_KEY`), never in a
-repository. `keygen` refuses to write inside a git working tree.
+`tools/licence/issue_licence.py` is Ignite Ember's tool. It signs with
+the release key in Cloud KMS (`--kms-key`, or `IGNI_LICENCE_KMS_KEY`),
+through `gcloud`, as the account `gcloud` is logged in as; only Ignite
+Ember's issuing account may sign with that key, and every signature is in
+the key project's audit log. The private key never reaches the machine.
 
 ```bash
-python tools/licence/issue_licence.py keygen --out ~/igni-licence/ie-2026.pem --key-id ie-2026
-IGNI_LICENCE_KEY_FILE=~/igni-licence/ie-2026.pem python tools/licence/issue_licence.py issue \
+KEY=projects/ignite-ember-signing/locations/europe-west4/keyRings/igni-release
+CLOUDSDK_ACTIVE_CONFIG_NAME=ignite-ember \
+IGNI_LICENCE_KMS_KEY=$KEY/cryptoKeys/licence-ie-2026/cryptoKeyVersions/1 \
+python tools/licence/issue_licence.py issue \
   --key-id ie-2026 --licence-id IE-2026-0042 --customer "Example Bank N.V." \
   --expires 2027-10-29 --module codeindex=100 --module artifacts=50@2026-10-29 \
   --module factory --module autopilot=50 --out example-bank.licence.json
 python tools/licence/issue_licence.py inspect example-bank.licence.json
 ```
 
+`--key-file` (or `IGNI_LICENCE_KEY_FILE` / `IGNI_LICENCE_KEY`) signs with a
+key file instead: the test key, or one made with `keygen`, which refuses to
+write inside a git working tree.
+
 It refuses a licence that would not work: a number that is not a band, a
-banded module with no band, a band on the factory, or Autopilot without the
-factory.
+banded module with no band, a band on the factory, Autopilot without the
+factory, the KMS key under a key id that is not in `RELEASE_KEYS`, or a
+signed licence that does not verify against `RELEASE_KEYS`.
 
 ## Known limits
 
