@@ -14,9 +14,9 @@ tools/airgap-rehearsal.sh --keep   # leave the cluster and the gap's registry up
 
 Run it from a checkout of igni-server, with the igni CLI checked out beside
 it (`../igni`, `uv sync` run) if you want the CLI steps. Needs docker,
-kind, kubectl, helm, skopeo, minisign, jq and python3. cosign and syft
-are optional: with both, the images are signed and their SBOMs attested,
-and `igni-import --cosign-key` checks both. It takes about 15 minutes on
+kind, kubectl, helm, skopeo, cosign, jq and python3. syft is optional:
+with it, the images are signed and their SBOMs attested, and
+`igni-import --cosign-key` checks both. It takes about 15 minutes on
 a laptop. Peak memory is about 3 GB in Docker: one kind node, Postgres,
 Redis, the API, the portal and a stub model.
 
@@ -31,8 +31,8 @@ install needs (`postgres:17.6-alpine`, `redis:7.4-alpine`). All four go into a
 throwaway staging registry, where each is signed with a **TEST** cosign
 key and given a CycloneDX SBOM attestation (syft). Then
 `tools/release/igni-bundle export-image` exports each one, `helm package`
-adds the chart, and `igni-bundle seal` signs the bundle with a **TEST**
-minisign key. These are the same steps the release's `offline-bundle` job
+adds the chart, and `igni-bundle seal` signs the bundle with the same
+**TEST** cosign key. These are the same steps the release's `offline-bundle` job
 runs, with two differences: the keys, and the two third-party images that
 the release does not carry (see "What it found").
 
@@ -102,14 +102,13 @@ other than the gap's registry.
 
 ## TEST keys
 
-There are no release keys yet (OFFLINE_UPDATES.md, "Key generation is a
-person's job"). The rehearsal generates `TEST-igni-release.{key,pub}`
-(minisign, no password) and `TEST-cosign.{key,pub}` (cosign, password
-`TEST-only-not-a-release-key`) under `$IGNI_AIRGAP_WORK/keys` on every
-run, and deletes them with the cluster. They sign nothing that leaves the
-machine. Never give the script a real key. Once the key ceremony has
-happened, the rehearsal should keep using test keys. Only CD signs
-releases.
+The release key is in Cloud KMS and only igni__release's CD can sign with
+it (OFFLINE_UPDATES.md, "The release key"). The rehearsal generates `TEST-cosign.{key,pub}` (cosign,
+password `TEST-only-not-a-release-key`) under `$IGNI_AIRGAP_WORK/keys` on
+every run, and deletes it with the cluster. It signs the images and the
+bundle, as the release key does, and nothing it signs leaves the
+machine. It cannot be given the release key, and should not be: only CD
+signs releases.
 
 ## Settings
 

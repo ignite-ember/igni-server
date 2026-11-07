@@ -10,11 +10,10 @@ name: Air-gap rehearsal
 # home, an image the bundle does not carry) arrives with a dependency
 # or a chart change, not with most pull requests.
 #
-# The bundle is sealed with a TEST minisign key generated during the
-# run. cosign and syft are not installed here, so the images go into the
-# bundle unsigned and igni-import checks the bundle signature and every
-# hash, but not the image signatures. Run it on a laptop with both
-# installed for the cosign half.
+# The bundle is sealed with a TEST cosign key generated during the run.
+# syft is not installed here, so the images go into the bundle unsigned
+# and igni-import checks the bundle signature and every hash, but not the
+# image signatures. Run it on a laptop with syft installed for that half.
 
 on:
   schedule:
@@ -57,7 +56,12 @@ jobs:
         with:
           version: v3.16.2
 
-      - name: Install kind, skopeo and minisign
+      # The cosign release CD signs with; it signs and verifies the bundle.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.1
+
+      - name: Install kind and skopeo
         run: |
           set -euo pipefail
           VERSION=v0.33.0
@@ -65,7 +69,7 @@ jobs:
             "https://github.com/kubernetes-sigs/kind/releases/download/${VERSION}/kind-linux-amd64"
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo minisign
+          sudo apt-get install -y --no-install-recommends skopeo
           kind version
 
       - name: Rehearse

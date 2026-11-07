@@ -1,7 +1,8 @@
 """An offline release bundle is imported only if every byte is the one signed.
 
 `tools/release/igni-bundle seal` writes a MANIFEST (the sha256 of every
-file, and the version), signs it with minisign, and tars the lot.
+file, the format and the version), signs it with cosign, with the same
+release key as the images, and tars the lot.
 `tools/release/igni-import` is what an air-gapped customer runs: it checks
 the signature with a public key they hold, checks every hash, and only then
 pushes images to their registry. docs/OFFLINE_UPDATES.md is the customer's
@@ -12,11 +13,13 @@ decoration: a changed file, a file added, a file removed, the wrong key, a
 signed MANIFEST relabelled as another version, an archive that tries to
 write outside its directory, and a registry that stores something other
 than what was signed. Each refusal is asserted to have pushed nothing.
+In production the key is in Cloud KMS; here it is a cosign key pair made
+for the module, which signs the same way, offline.
 
 Runs with no network and no registry. `skopeo` is replaced by a stub that
 records its arguments and reports, as the real one does with
 `--preserve-digests`, the sha256 of the manifest it was given. The real
-tools — `minisign`, `tar`, `sha256sum` — are the real ones.
+tools — `cosign`, `tar`, `sha256sum` — are the real ones.
 """
 
 from __future__ import annotations
@@ -74,15 +77,18 @@ if [ -n "$digestfile" ]; then
 fi
 """
 
-if shutil.which('minisign') is None:
-    # A skip reads as a pass, so CI — which installs minisign for this —
+if shutil.which('cosign') is None:
+    # A skip reads as a pass, so CI — which installs cosign for this —
     # fails instead.
     if os.environ.get('CI'):
-        raise RuntimeError('minisign is not installed; the offline-bundle tests cannot run')
-    pytest.skip('minisign is not installed', allow_module_level=True)
+        raise RuntimeError('cosign is not installed; the offline-bundle tests cannot run')
+    pytest.skip('cosign is not installed', allow_module_level=True)
 
 
 class KeyPair(BaseModel):
+    """A cosign key pair: `cosign.pub` and `cosign.key`, the file form of
+    the release key that lives in Cloud KMS."""
+
     public: pathlib.Path
     secret: pathlib.Path
 
@@ -99,20 +105,55 @@ class Sealed(BaseModel):
     digests: dict[str, str]
 
 
-def _keypair(directory: pathlib.Path, *, name: str, password: str | None = None) -> KeyPair:
-    """Without a password unless asked: each use of a protected key costs a
-    deliberately slow key derivation, which across this module was most of
-    its two minutes. One test below covers the password path."""
-    pair = KeyPair(public=directory / f'{name}.pub', secret=directory / f'{name}.key')
-    argv = ['minisign', '-G', '-p', str(pair.public), '-s', str(pair.secret)]
+def _keypair(directory: pathlib.Path, *, name: str, password: str = '') -> KeyPair:
+    """With an empty password unless asked: cosign always encrypts the
+    secret key, and the module's environment carries COSIGN_PASSWORD=''
+    to open it. One test below covers a real password."""
+    home = directory / name
+    home.mkdir()
     subprocess.run(
-        argv if password else [*argv, '-W'],
-        input=f'{password}\n{password}\n' if password else '',
-        text=True,
+        ['cosign', 'generate-key-pair'],
+        cwd=home,
+        env={**os.environ, 'COSIGN_PASSWORD': password},
+        stdin=subprocess.DEVNULL,
         check=True,
         capture_output=True,
     )
-    return pair
+    return KeyPair(public=home / 'cosign.pub', secret=home / 'cosign.key')
+
+
+def _cosign_v3() -> bool:
+    """cosign 3 writes a bundle unless told not to, and refuses
+    `--output-signature` without these flags. CI pins v2.4.1, which has
+    neither; a developer's Homebrew cosign is 3."""
+    version = subprocess.run(['cosign', 'version'], capture_output=True, text=True, check=False).stdout
+    major = re.search(r'GitVersion:\s+v(\d+)', version)
+    return major is not None and int(major.group(1)) >= 3
+
+
+def _sign_blob(secret: pathlib.Path, blob: pathlib.Path, signature: pathlib.Path) -> None:
+    """As the release signs: key-based, nothing uploaded to a log. Used by
+    the tests that play somebody holding a key, the impostor's or the
+    release's, outside igni-bundle."""
+    legacy = ['--new-bundle-format=false', '--use-signing-config=false'] if _cosign_v3() else []
+    subprocess.run(
+        [
+            'cosign',
+            'sign-blob',
+            '--yes',
+            '--key',
+            str(secret),
+            '--tlog-upload=false',
+            *legacy,
+            '--output-signature',
+            str(signature),
+            str(blob),
+        ],
+        env={**os.environ, 'COSIGN_PASSWORD': ''},
+        stdin=subprocess.DEVNULL,
+        check=True,
+        capture_output=True,
+    )
 
 
 @pytest.fixture(scope='module')
@@ -140,7 +181,8 @@ def _image(staging: pathlib.Path, *, name: str, with_signatures: bool) -> str:
 
 
 def _run(argv: list[str], *, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, env=env, text=True, capture_output=True, check=False)
+    # No stdin: cosign reads a missing password from it rather than fail.
+    return subprocess.run(argv, env=env, text=True, capture_output=True, check=False, stdin=subprocess.DEVNULL)
 
 
 def _import(sealed: Sealed, *extra: str, tarball: pathlib.Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -193,6 +235,8 @@ def sealed(tmp_path: pathlib.Path, keys: tuple[KeyPair, KeyPair]) -> Sealed:
         'PATH': f'{stub_bin}{os.pathsep}{os.environ["PATH"]}',
         'IGNI_TEST_SKOPEO_LOG': str(tmp_path / 'skopeo.log'),
         'TMPDIR': str(tmp_path),
+        # The module's keys have an empty password; the release's is in KMS.
+        'COSIGN_PASSWORD': '',
     }
 
     result = _run(
@@ -278,34 +322,42 @@ class TestAGoodBundle:
 
     def test_the_manifest_can_be_checked_by_hand(self, sealed: Sealed):
         """The documented manual check, for a customer who wants to verify
-        with nothing of ours: `minisign -V` and then `sha256sum -c`."""
+        with nothing of ours: `cosign verify-blob` and then `sha256sum -c`.
+        The version is a line of what was signed, not a comment beside it."""
         manifest = (sealed.staging / 'MANIFEST').read_text().splitlines()
         header = [line for line in manifest if line.startswith('#')]
         body = [line for line in manifest if not line.startswith('#')]
 
+        assert header[0] == '# igni-bundle-manifest: 2'
         assert f'# version: {_VERSION}' in header
         assert body and all(re.fullmatch(r'[0-9a-f]{64}  \S+', line) for line in body), body
         for line in body:
             digest, path = line.split('  ')
             assert hashlib.sha256((sealed.staging / path).read_bytes()).hexdigest() == digest, path
 
-        verified = subprocess.run(
+        verified = _run(
             [
-                'minisign',
-                '-V',
-                '-p',
+                'cosign',
+                'verify-blob',
+                '--key',
                 str(sealed.key.public),
-                '-m',
+                '--insecure-ignore-tlog=true',
+                '--signature',
+                str(sealed.staging / 'MANIFEST.sig'),
                 str(sealed.staging / 'MANIFEST'),
-                '-x',
-                str(sealed.staging / 'MANIFEST.minisig'),
             ],
+            env=sealed.env,
+        )
+        assert verified.returncode == 0, verified.stderr
+        checked = subprocess.run(
+            ['sha256sum', '-c', '-'] if shutil.which('sha256sum') else ['shasum', '-a', '256', '-c', '-'],
+            input='\n'.join(body) + '\n',
+            cwd=sealed.staging,
             text=True,
             capture_output=True,
             check=False,
         )
-        assert verified.returncode == 0, verified.stderr
-        assert f'Trusted comment: igni-bundle format=1 version={_VERSION}' in verified.stdout
+        assert checked.returncode == 0, checked.stdout + checked.stderr
 
 
 class TestTheTarball:
@@ -320,9 +372,10 @@ class TestTheTarball:
         assert all(n == f'igni-bundle-{_VERSION}' or n.startswith(f'igni-bundle-{_VERSION}/') for n in names), names
         assert not [n for n in names if pathlib.PurePosixPath(n).name.startswith('._')]
 
-    def test_a_password_protected_key_signs_with_minisign_password(self, sealed: Sealed, tmp_path: pathlib.Path):
-        """How the release signs: the secret key is encrypted and its password is a
-        second secret, read from the environment rather than a terminal."""
+    def test_a_password_protected_key_signs_with_cosign_password(self, sealed: Sealed, tmp_path: pathlib.Path):
+        """A key file's password is read from COSIGN_PASSWORD rather than a
+        terminal, as cosign itself reads it. The release's key is in KMS and
+        has none; this is the path a rehearsal or a test key takes."""
         protected = _keypair(tmp_path, name='protected', password=_PASSWORD)
         argv = [
             str(_BUNDLE),
@@ -339,8 +392,8 @@ class TestTheTarball:
             str(tmp_path / 'protected'),
         ]
 
-        without = _run(argv, env=sealed.env)
-        signed = _run(argv, env={**sealed.env, 'MINISIGN_PASSWORD': _PASSWORD})
+        without = _run(argv, env={k: v for k, v in sealed.env.items() if k != 'COSIGN_PASSWORD'})
+        signed = _run(argv, env={**sealed.env, 'COSIGN_PASSWORD': _PASSWORD})
 
         assert without.returncode == 1
         assert 'could not sign the MANIFEST' in without.stderr
@@ -404,12 +457,12 @@ class TestATamperedBundleIsRefused:
 
     def test_the_signature_removed(self, sealed: Sealed, tmp_path: pathlib.Path):
         def edit(top: pathlib.Path) -> None:
-            (top / 'MANIFEST.minisig').unlink()
+            (top / 'MANIFEST.sig').unlink()
 
         result = _import(sealed, '--verify-only', tarball=_rewrite(sealed.tarball, tmp_path, edit=edit))
 
         assert result.returncode == 1
-        assert result.stderr.strip() == 'igni-import: REFUSED: no MANIFEST.minisig in the bundle'
+        assert result.stderr.strip() == 'igni-import: REFUSED: no MANIFEST.sig in the bundle'
 
     def test_keep_does_not_leave_a_refused_bundle_behind(self, sealed: Sealed, tmp_path: pathlib.Path):
         """A directory of unverified files named like a verified one is how
@@ -452,23 +505,7 @@ class TestTheWrongKeyOrVersionIsRefused:
         """The impostor re-signs a correct MANIFEST with their own key."""
 
         def edit(top: pathlib.Path) -> None:
-            (top / 'MANIFEST.minisig').unlink()
-            subprocess.run(
-                [
-                    'minisign',
-                    '-S',
-                    '-s',
-                    str(sealed.other_key.secret),
-                    '-m',
-                    str(top / 'MANIFEST'),
-                    '-t',
-                    f'igni-bundle format=1 version={_VERSION}',
-                ],
-                input='',
-                text=True,
-                check=True,
-                capture_output=True,
-            )
+            _sign_blob(sealed.other_key.secret, top / 'MANIFEST', top / 'MANIFEST.sig')
 
         result = _import(sealed, '--registry', _REGISTRY, tarball=_rewrite(sealed.tarball, tmp_path, edit=edit))
 
@@ -485,37 +522,60 @@ class TestTheWrongKeyOrVersionIsRefused:
         )
         assert _pushes(sealed) == []
 
-    def test_a_signed_version_that_disagrees_with_the_manifest(self, sealed: Sealed, tmp_path: pathlib.Path):
-        """The version is inside the signature, not only in the MANIFEST
-        header: a MANIFEST signed as one release cannot be presented as
-        another by anybody without the key — and nor can the release key
-        be used to sign a mislabelled one by accident."""
+    def test_a_version_changed_after_signing(self, sealed: Sealed, tmp_path: pathlib.Path):
+        """The version is a line of the signed MANIFEST, not a label beside
+        it: a bundle signed as one release cannot be relabelled as another
+        by anybody without the key. (It used to be minisign's trusted
+        comment, which needed its own check that it agreed with the
+        MANIFEST; with the version inside what is signed there is nothing
+        to disagree.)"""
 
         def edit(top: pathlib.Path) -> None:
             manifest = top / 'MANIFEST'
             manifest.write_text(manifest.read_text().replace(f'# version: {_VERSION}', '# version: 9.9.9'))
-            (top / 'MANIFEST.minisig').unlink()
-            subprocess.run(
-                [
-                    'minisign',
-                    '-S',
-                    '-s',
-                    str(sealed.key.secret),
-                    '-m',
-                    str(manifest),
-                    '-t',
-                    f'igni-bundle format=1 version={_VERSION}',
-                ],
-                input='',
-                text=True,
-                check=True,
-                capture_output=True,
-            )
 
-        result = _import(sealed, '--verify-only', tarball=_rewrite(sealed.tarball, tmp_path, edit=edit))
+        result = _import(
+            sealed, '--verify-only', '--expect-version', '9.9.9', tarball=_rewrite(sealed.tarball, tmp_path, edit=edit)
+        )
 
         assert result.returncode == 1
-        assert 'does not match the MANIFEST (version 9.9.9)' in result.stderr
+        assert result.stderr.strip() == (
+            'igni-import: REFUSED: the MANIFEST signature does not verify with the supplied public key'
+        )
+
+    def test_another_release_renamed_as_this_one(self, sealed: Sealed, tmp_path: pathlib.Path):
+        """A genuine, correctly signed bundle of another version, under this
+        one's file and directory name: the signature is good, so it is the
+        signed version line and --expect-version that refuse it."""
+        older = _run(
+            [
+                str(_BUNDLE),
+                'seal',
+                '--staging',
+                str(sealed.staging),
+                '--version',
+                '0.5.0',
+                '--key',
+                str(sealed.key.secret),
+                '--out',
+                str(tmp_path / 'older'),
+            ],
+            env=sealed.env,
+        )
+        assert older.returncode == 0, older.stderr
+        renamed = tmp_path / f'igni-bundle-{_VERSION}.tar'
+        shutil.copy(older.stdout.strip(), renamed)
+
+        verified = _import(sealed, '--verify-only', tarball=renamed)
+        expected = _import(sealed, '--registry', _REGISTRY, '--expect-version', _VERSION, tarball=renamed)
+
+        assert verified.returncode == 0, verified.stderr
+        assert 'Verified igni 0.5.0 ' in verified.stdout
+        assert expected.returncode == 1
+        assert expected.stderr.strip() == (
+            f'igni-import: REFUSED: this bundle is version 0.5.0, not the expected {_VERSION}'
+        )
+        assert _pushes(sealed) == []
 
 
 class TestAHostileArchiveWritesNothingOutside:
@@ -596,7 +656,7 @@ class TestSealRefuses:
         )
 
         assert result.returncode == 1
-        assert 'the key pair does not match' in result.stderr
+        assert 'the keys do not match' in result.stderr
         assert not (tmp_path / 'again').exists()
 
     def test_a_link_in_the_staging_directory(self, sealed: Sealed, tmp_path: pathlib.Path):
@@ -721,7 +781,8 @@ def containers_release_names() -> list[str]:
 class TestTheReleaseSignsWhatItShips:
     """The workflow half. Air-gapped customers verify with a public key and
     no network, so signing must be key-based and must not depend on a
-    transparency log they cannot reach."""
+    transparency log they cannot reach. The key is in Cloud KMS, reached
+    with the job's OIDC token: release.yml holds no signing secret."""
 
     def _release(self) -> dict:
         return yaml.safe_load(_RELEASE.read_text())
@@ -746,7 +807,7 @@ class TestTheReleaseSignsWhatItShips:
         assert 'offline-bundle' in pushing, 'the third-party mirror is no longer seen as a push'
         for name, job in pushing.items():
             script = self._runs(job)
-            assert re.search(r'cosign sign .*--key env://COSIGN_PRIVATE_KEY', script), f'{name} does not sign'
+            assert re.search(r'cosign sign .*--key "\$\{COSIGN_KMS_KEY\}"', script), f'{name} does not sign'
             assert re.search(r'cosign attest .*--type cyclonedx', script), f'{name} attests no SBOM'
             assert '--tlog-upload=false' in script, f'{name} uploads to a public transparency log'
 
@@ -762,10 +823,14 @@ class TestTheReleaseSignsWhatItShips:
         job = release['jobs']['offline-bundle']
         script = self._runs(job)
 
-        assert job.get('environment') == 'prod', 'the bundle is not sealed with the release keys'
+        assert job.get('environment') == 'prod', 'the bundle is not sealed with the release key'
         assert 'resolve' in job.get('needs', []), 'the bundle does not wait for the ref to be resolved to main'
         assert 'tools/release/igni-bundle seal' in script
-        assert '--public-key' in script, 'the bundle job does not check its own signature'
+        seal = script[script.index('tools/release/igni-bundle seal') :].replace('\\\n', ' ')
+        assert re.match(r'tools/release/igni-bundle seal [^\n]*--key "\$\{COSIGN_KMS_KEY\}"', seal), seal
+        assert re.match(r'tools/release/igni-bundle seal [^\n]*--public-key "\$\{RUNNER_TEMP\}/cosign\.pub"', seal), (
+            'the bundle job does not check its own signature against the public key'
+        )
         assert '--commit "${{ needs.resolve.outputs.sha }}"' in script, 'the MANIFEST does not name the commit built'
         uploads = [s for s in job['steps'] if str(s.get('uses', '')).startswith('actions/upload-artifact')]
         assert uploads and 'igni-bundle-' in str(uploads[0]['with']['path'])
@@ -799,7 +864,7 @@ class TestTheReleaseSignsWhatItShips:
         release = self._release()
         text = _RELEASE.read_text()
 
-        assert 'github.sha' not in text and 'GITHUB_SHA' not in text, 'the caller\'s commit is named'
+        assert 'github.sha' not in text and 'GITHUB_SHA' not in text, "the caller's commit is named"
         assert 'GITHUB_REPOSITORY' not in text and 'github.repository }}' not in text
         for name, job in release['jobs'].items():
             checkouts = [s for s in job.get('steps') or [] if str(s.get('uses', '')).startswith('actions/checkout@')]
@@ -895,14 +960,66 @@ class TestTheReleaseSignsWhatItShips:
             for line in containers_release_names():
                 assert f'ghcr.io/ignite-ember/{line}' not in text, f'{workflow.name} names {line}'
 
-    def test_the_documented_secret_names_are_the_ones_used(self):
+    def _signing_jobs(self) -> dict[str, dict]:
+        return {
+            name: job
+            for name, job in self._release()['jobs'].items()
+            if re.search(r'cosign (?:sign|attest)\b|igni-bundle seal', self._runs(job))
+        }
+
+    def test_every_signing_job_reaches_the_kms_key_through_oidc(self):
+        """Google lets a token use the key only when GitHub issued it to
+        igni__release's `prod` environment, so a signing job must run in
+        that environment and must be allowed to ask for the token."""
+        jobs = self._signing_jobs()
+
+        assert {'build-backend', 'build-portal', 'offline-bundle'} <= set(jobs), sorted(jobs)
+        for name, job in jobs.items():
+            assert job.get('environment') == 'prod', f'{name} signs outside the prod environment'
+            assert (job.get('permissions') or {}).get('id-token') == 'write', f'{name} cannot get an OIDC token'
+            auth = [s for s in job['steps'] if str(s.get('uses', '')).startswith('google-github-actions/auth@')]
+            assert len(auth) == 1, f'{name} does not authenticate to Google'
+            assert auth[0]['with']['workload_identity_provider'] == '${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}', name
+            assert auth[0]['with']['service_account'] == '${{ vars.GCP_SIGNER_SERVICE_ACCOUNT }}', name
+            keys = {
+                str(step['env']['COSIGN_KMS_KEY'])
+                for step in job['steps']
+                if 'COSIGN_KMS_KEY' in (step.get('env') or {})
+            }
+            assert keys == {'${{ vars.COSIGN_KMS_KEY }}'}, (name, keys)
+
+    def test_only_signing_jobs_can_get_an_oidc_token(self):
+        release = self._release()
+        signing = set(self._signing_jobs())
+
+        assert (release.get('permissions') or {}).get('id-token') is None, 'every job can get an OIDC token'
+        for name, job in release['jobs'].items():
+            if name not in signing:
+                assert (job.get('permissions') or {}).get('id-token') is None, name
+
+    def test_there_is_no_signing_secret(self):
+        """The key cannot leave KMS, so there is nothing to keep in a
+        secret; a secret named for signing would mean a key had been
+        exported, or a second key made."""
+        text = _RELEASE.read_text()
+
+        assert set(re.findall(r'secrets\.([A-Za-z_]+)', text)) <= {'GITHUB_TOKEN'}, sorted(
+            set(re.findall(r'secrets\.([A-Za-z_]+)', text))
+        )
+        for gone in ('COSIGN_PRIVATE_KEY', 'COSIGN_PASSWORD', 'env://'):
+            assert gone not in text, gone
+        assert 'minisign' not in text.lower()
+
+    def test_the_documented_variable_names_are_the_ones_used(self):
         text = _RELEASE.read_text()
         doc = (_ROOT / 'docs/OFFLINE_UPDATES.md').read_text()
 
-        for name in ('COSIGN_PRIVATE_KEY', 'COSIGN_PASSWORD', 'MINISIGN_SECRET_KEY', 'MINISIGN_PASSWORD'):
-            assert f'secrets.{name}' in text, name
-            assert name in doc, f'{name} is used by release.yml but not documented'
-        for name in ('COSIGN_PUBLIC_KEY', 'MINISIGN_PUBLIC_KEY'):
+        for name in (
+            'COSIGN_KMS_KEY',
+            'COSIGN_PUBLIC_KEY',
+            'GCP_WORKLOAD_IDENTITY_PROVIDER',
+            'GCP_SIGNER_SERVICE_ACCOUNT',
+        ):
             assert f'vars.{name}' in text, name
             assert name in doc, f'{name} is used by release.yml but not documented'
 
@@ -914,73 +1031,9 @@ class TestTheReleaseSignsWhatItShips:
 # (scripts/release/{build,sign}.sh in Fleet's repository). `igni-bundle
 # add-artefact` carries one into the bundle only if it is signed with the
 # release key; `igni-import` holds it to its SHA256SUMS and, with
-# --cosign-key, to that signature. cosign is the real one, with keys made
-# here; it signs offline, as the release does.
-
-if shutil.which('cosign') is None and os.environ.get('CI'):
-    raise RuntimeError('cosign is not installed; the signed-artefact tests cannot run')
-
-_needs_cosign = pytest.mark.skipif(shutil.which('cosign') is None, reason='cosign is not installed')
-
-
-class CosignKeys(BaseModel):
-    public: pathlib.Path
-    secret: pathlib.Path
-    other_public: pathlib.Path
-    other_secret: pathlib.Path
-
-
-def _cosign_pair(directory: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
-    directory.mkdir()
-    subprocess.run(
-        ['cosign', 'generate-key-pair'],
-        cwd=directory,
-        env={**os.environ, 'COSIGN_PASSWORD': _PASSWORD},
-        check=True,
-        capture_output=True,
-    )
-    return directory / 'cosign.pub', directory / 'cosign.key'
-
-
-@pytest.fixture(scope='module')
-def cosign_keys(tmp_path_factory: pytest.TempPathFactory) -> CosignKeys:
-    if shutil.which('cosign') is None:
-        pytest.skip('cosign is not installed')
-    base = tmp_path_factory.mktemp('cosign')
-    public, secret = _cosign_pair(base / 'release')
-    other_public, other_secret = _cosign_pair(base / 'impostor')
-    return CosignKeys(public=public, secret=secret, other_public=other_public, other_secret=other_secret)
-
-
-def _cosign_v3() -> bool:
-    """cosign 3 writes a bundle unless told not to, and refuses
-    `--output-signature` without these flags. release.yml pins v2.4.1, which has
-    neither; a developer's Homebrew cosign is 3."""
-    version = subprocess.run(['cosign', 'version'], capture_output=True, text=True, check=False).stdout
-    major = re.search(r'GitVersion:\s+v(\d+)', version)
-    return major is not None and int(major.group(1)) >= 3
-
-
-def _sign_blob(secret: pathlib.Path, blob: pathlib.Path) -> None:
-    """As Fleet's sign.sh: key-based, nothing uploaded to a log."""
-    legacy = ['--new-bundle-format=false', '--use-signing-config=false'] if _cosign_v3() else []
-    subprocess.run(
-        [
-            'cosign',
-            'sign-blob',
-            '--yes',
-            '--key',
-            str(secret),
-            '--tlog-upload=false',
-            *legacy,
-            '--output-signature',
-            str(blob.parent / 'SHA256SUMS.sig'),
-            str(blob),
-        ],
-        env={**os.environ, 'COSIGN_PASSWORD': _PASSWORD},
-        check=True,
-        capture_output=True,
-    )
+# --cosign-key, to that signature. Fleet signs with the same release key
+# as the bundle, so these use the module's `keys`, and a customer passes
+# the same cosign.pub as --public-key and --cosign-key.
 
 
 def _write_sums(release: pathlib.Path) -> None:
@@ -1000,7 +1053,7 @@ def _fleet_release(directory: pathlib.Path, *, sign_with: pathlib.Path | None) -
     (release / 'VERSION').write_text('0.1.0\n')
     _write_sums(release)
     if sign_with is not None:
-        _sign_blob(sign_with, release / 'SHA256SUMS')
+        _sign_blob(sign_with, release / 'SHA256SUMS', release / 'SHA256SUMS.sig')
     return release
 
 
@@ -1051,10 +1104,10 @@ def _seal(
 
 
 @pytest.fixture
-def with_fleet(sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path) -> Sealed:
+def with_fleet(sealed: Sealed, tmp_path: pathlib.Path) -> Sealed:
     """The `sealed` bundle again, with Fleet's signed release added."""
-    release = _fleet_release(tmp_path, sign_with=cosign_keys.secret)
-    added = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+    release = _fleet_release(tmp_path, sign_with=sealed.key.secret)
+    added = _add_artefact(sealed.staging, release, sealed.key.public, sealed.env)
     assert added.returncode == 0, added.stderr
 
     result = _seal(sealed.staging, sealed.key, tmp_path / 'with-fleet', sealed.env)
@@ -1062,7 +1115,6 @@ def with_fleet(sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path) 
     return sealed.model_copy(update={'tarball': pathlib.Path(result.stdout.strip())})
 
 
-@_needs_cosign
 class TestASignedArtefactIsCarried:
     def test_it_is_in_the_bundle_under_the_manifest(self, with_fleet: Sealed):
         staging = with_fleet.staging
@@ -1077,11 +1129,9 @@ class TestASignedArtefactIsCarried:
         # Beside every other SBOM, where a customer looks for them.
         assert (staging / 'sboms' / 'igni-fleet-igni-gateway.cdx.json').is_file()
 
-    def test_import_verifies_its_signature_and_keeps_it(
-        self, with_fleet: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path
-    ):
+    def test_import_verifies_its_signature_and_keeps_it(self, with_fleet: Sealed, tmp_path: pathlib.Path):
         kept = tmp_path / 'kept'
-        result = _import(with_fleet, '--verify-only', '--cosign-key', str(cosign_keys.public), '--keep', str(kept))
+        result = _import(with_fleet, '--verify-only', '--cosign-key', str(with_fleet.key.public), '--keep', str(kept))
 
         assert result.returncode == 0, result.stderr
         assert 'igni-fleet 0.1.0 (9 files, SHA256SUMS matches, cosign-verified)' in result.stdout
@@ -1107,7 +1157,7 @@ class TestASignedArtefactIsCarried:
         assert _pushes(with_fleet) == []
 
     def test_a_tampered_artefact_with_its_sums_rewritten_is_refused(self, with_fleet: Sealed, tmp_path: pathlib.Path):
-        """SHA256SUMS and the MANIFEST both made to agree: the minisign
+        """SHA256SUMS and the MANIFEST both made to agree: the MANIFEST
         signature is what is left to catch it."""
 
         def edit(top: pathlib.Path) -> None:
@@ -1121,65 +1171,62 @@ class TestASignedArtefactIsCarried:
         assert 'hash mismatch: artefacts/igni-fleet/' in result.stderr
 
 
-@_needs_cosign
 class TestOnlyASignedArtefactIsCarried:
-    def test_unsigned(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
+    def test_unsigned(self, sealed: Sealed, tmp_path: pathlib.Path):
         """sign.sh leaves UNSIGNED beside a release it could not sign."""
         release = _fleet_release(tmp_path, sign_with=None)
         (release / 'UNSIGNED').write_text('COSIGN_PRIVATE_KEY is not set')
 
-        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+        result = _add_artefact(sealed.staging, release, sealed.key.public, sealed.env)
 
         assert result.returncode == 1
         assert 'has no SHA256SUMS.sig: it is not signed' in result.stderr
         assert not (sealed.staging / 'artefacts').exists()
 
-    def test_signed_with_another_key(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
-        release = _fleet_release(tmp_path, sign_with=cosign_keys.other_secret)
+    def test_signed_with_another_key(self, sealed: Sealed, tmp_path: pathlib.Path):
+        release = _fleet_release(tmp_path, sign_with=sealed.other_key.secret)
 
-        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+        result = _add_artefact(sealed.staging, release, sealed.key.public, sealed.env)
 
         assert result.returncode == 1
         assert 'does not verify with the release key' in result.stderr
         assert not (sealed.staging / 'artefacts.tsv').exists()
 
-    def test_a_file_changed_after_signing(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
-        release = _fleet_release(tmp_path, sign_with=cosign_keys.secret)
+    def test_a_file_changed_after_signing(self, sealed: Sealed, tmp_path: pathlib.Path):
+        release = _fleet_release(tmp_path, sign_with=sealed.key.secret)
         (release / 'igni-gateway').write_bytes(b'changed')
 
-        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+        result = _add_artefact(sealed.staging, release, sealed.key.public, sealed.env)
 
         assert result.returncode == 1
         assert 'igni-fleet: hash mismatch: igni-gateway' in result.stderr
 
-    def test_a_file_not_in_its_sums(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
-        release = _fleet_release(tmp_path, sign_with=cosign_keys.secret)
+    def test_a_file_not_in_its_sums(self, sealed: Sealed, tmp_path: pathlib.Path):
+        release = _fleet_release(tmp_path, sign_with=sealed.key.secret)
         (release / 'extra').write_text('unsigned')
 
-        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+        result = _add_artefact(sealed.staging, release, sealed.key.public, sealed.env)
 
         assert result.returncode == 1
         assert 'extra is not listed in SHA256SUMS' in result.stderr
 
-    def test_no_sbom(self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path):
+    def test_no_sbom(self, sealed: Sealed, tmp_path: pathlib.Path):
         release = _fleet_release(tmp_path, sign_with=None)
         for sbom in release.glob('*.cdx.json'):
             sbom.unlink()
         _write_sums(release)
-        _sign_blob(cosign_keys.secret, release / 'SHA256SUMS')
+        _sign_blob(sealed.key.secret, release / 'SHA256SUMS', release / 'SHA256SUMS.sig')
 
-        result = _add_artefact(sealed.staging, release, cosign_keys.public, sealed.env)
+        result = _add_artefact(sealed.staging, release, sealed.key.public, sealed.env)
 
         assert result.returncode == 1
         assert 'has no CycloneDX SBOM' in result.stderr
 
-    def test_a_bad_signature_that_reached_a_bundle_is_refused_on_import(
-        self, sealed: Sealed, cosign_keys: CosignKeys, tmp_path: pathlib.Path
-    ):
+    def test_a_bad_signature_that_reached_a_bundle_is_refused_on_import(self, sealed: Sealed, tmp_path: pathlib.Path):
         """Staged by hand, around add-artefact, and sealed with the real
-        minisign key: the MANIFEST is good, so --cosign-key is the check
+        release key: the MANIFEST is good, so --cosign-key is the check
         that catches it."""
-        release = _fleet_release(tmp_path, sign_with=cosign_keys.other_secret)
+        release = _fleet_release(tmp_path, sign_with=sealed.other_key.secret)
         target = sealed.staging / 'artefacts' / 'igni-fleet'
         shutil.copytree(release, target)
         digest = hashlib.sha256((target / 'SHA256SUMS').read_bytes()).hexdigest()
@@ -1189,7 +1236,7 @@ class TestOnlyASignedArtefactIsCarried:
         tarball = pathlib.Path(sealed_again.stdout.strip())
 
         without_key = _import(sealed, '--verify-only', tarball=tarball)
-        with_key = _import(sealed, '--verify-only', '--cosign-key', str(cosign_keys.public), tarball=tarball)
+        with_key = _import(sealed, '--verify-only', '--cosign-key', str(sealed.key.public), tarball=tarball)
 
         assert without_key.returncode == 0, without_key.stderr
         assert with_key.returncode == 1
@@ -1259,9 +1306,9 @@ class TestTheThirdPartyImagesAreCarried:
         # A map (repository, tag), or the full reference it was before.
         tag = str(backup['tag']) if isinstance(backup, dict) else backup.rsplit(':', 1)[1]
 
-        assert ['postgres', tag] in [
-            [name, row_tag] for name, _, row_tag in _third_party()
-        ], f'the chart runs postgres:{tag} for backups and the bundle does not carry it'
+        assert ['postgres', tag] in [[name, row_tag] for name, _, row_tag in _third_party()], (
+            f'the chart runs postgres:{tag} for backups and the bundle does not carry it'
+        )
 
     def _script(self) -> str:
         job = yaml.safe_load(_RELEASE.read_text())['jobs']['offline-bundle']
@@ -1273,7 +1320,7 @@ class TestTheThirdPartyImagesAreCarried:
 
         assert 'skopeo copy --all --preserve-digests "docker://${upstream}"' in mirror
         assert 'is not ${digest}' in mirror, 'a GHCR copy under another digest is not refused'
-        assert re.search(r'cosign sign --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false "\$\{ref\}"', mirror)
+        assert re.search(r'cosign sign --yes --key "\$\{COSIGN_KMS_KEY\}" --tlog-upload=false "\$\{ref\}"', mirror)
         assert re.search(r'cosign attest .*--tlog-upload=false --type cyclonedx', mirror)
 
     def test_each_is_exported_with_the_release_key_before_the_seal(self):

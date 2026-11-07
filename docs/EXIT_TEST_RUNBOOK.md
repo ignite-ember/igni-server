@@ -727,12 +727,13 @@ install still asks github.com.
 with its dataset, evaluation set and checksums. The catalogue's ownership
 term is a contract term until that exists.
 
-**G10. Server images are signed in CD, but no signing key exists yet.**
-CD signs every igni image with cosign and the release bundle with minisign
-([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md)), but the key ceremony has not
-happened, so no signed image or bundle has been produced. Until it has, a
-customer cannot verify a mirrored image against an Ignite Ember signature. A
-customer that builds from source (B2) does not depend on it.
+**G10. Server images are signed in CD, but none has been released yet.**
+CD signs every igni image and the release bundle with cosign and one
+release key ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md)). The key exists
+(2026-11-07), but no release has been run with it, so no signed image or
+bundle has been produced. Until one has, a customer cannot verify a
+mirrored image against an Ignite Ember signature. A customer that builds
+from source (B2) does not depend on it.
 
 **G11. Fleet's exit is not rehearsed.** Fleet (`igni__cloudvm`) is on the
 price list and enforces the same licence states at its gateway, but it

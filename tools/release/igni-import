@@ -4,12 +4,12 @@
 # own registry. Runs entirely offline: nothing here contacts Ignite Ember
 # or the internet.
 #
-#   igni-import --bundle igni-bundle-0.6.0.tar --public-key igni-release.pub \
+#   igni-import --bundle igni-bundle-0.6.0.tar --public-key cosign.pub \
 #               --registry registry.example.internal/igni [options]
 #
 # Options:
 #   --bundle FILE          the release tarball
-#   --public-key FILE      igni's minisign release key, obtained out of band.
+#   --public-key FILE      igni's cosign release key, obtained out of band.
 #                          Never the copy inside a bundle: a key that travels
 #                          with the thing it vouches for vouches for nothing.
 #   --registry URL         your registry and path prefix, e.g. reg.corp:5000/igni
@@ -30,7 +30,7 @@
 #      `..`, links and device files are refused: an archive must not be
 #      able to write outside the directory it is unpacked into.
 #   2. The MANIFEST signature is checked with the key you supplied. The
-#      signed trusted comment carries the version, so a correctly signed
+#      version is a line of the signed MANIFEST, so a correctly signed
 #      MANIFEST cannot be relabelled as another release.
 #   3. Every file is hashed and compared with the MANIFEST. A file that is
 #      missing, altered or *not listed* is a refusal: an extra file is how
@@ -46,7 +46,7 @@
 # which check refused.
 set -euo pipefail
 
-readonly FORMAT=1
+readonly FORMAT=2
 
 die() {
     printf 'igni-import: REFUSED: %s\n' "$*" >&2
@@ -106,10 +106,9 @@ fi
 case "$dest_tls_verify" in '' | true | false) ;; *) die '--dest-tls-verify takes true or false' ;; esac
 
 need tar
-need minisign
+need cosign
 if [ "$verify_only" -eq 0 ]; then
     need skopeo
-    [ -z "$cosign_key" ] || need cosign
 fi
 
 # ── 1. Unpack safely ────────────────────────────────────────────────────
@@ -163,13 +162,15 @@ if [ -n "$(find "$root" ! -type f ! -type d -print -quit)" ]; then
 fi
 
 manifest="$root/MANIFEST"
-signature="$root/MANIFEST.minisig"
+signature="$root/MANIFEST.sig"
 [ -f "$manifest" ] || die 'no MANIFEST in the bundle'
-[ -f "$signature" ] || die 'no MANIFEST.minisig in the bundle'
+[ -f "$signature" ] || die 'no MANIFEST.sig in the bundle'
 
 # ── 2. The signature ────────────────────────────────────────────────────
 
-trusted_comment="$(minisign -V -Q -p "$public_key" -m "$manifest" -x "$signature" 2> /dev/null)" \
+# Offline: a key, a plain signature, and no transparency log to ask.
+cosign verify-blob --key "$public_key" --insecure-ignore-tlog=true \
+    --signature "$signature" "$manifest" > /dev/null 2>&1 \
     || die 'the MANIFEST signature does not verify with the supplied public key'
 
 manifest_format=''
@@ -198,8 +199,6 @@ done < "$manifest"
 
 [ "$manifest_format" = "$FORMAT" ] || die "MANIFEST format '$manifest_format' is not $FORMAT; use the igni-import that shipped with this release"
 [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+_-]*$ ]] || die "MANIFEST version '$version' is not a version"
-[ "$trusted_comment" = "igni-bundle format=$FORMAT version=$version" ] \
-    || die "the signed version ('$trusted_comment') does not match the MANIFEST (version $version)"
 if [ -n "$expect_version" ] && [ "$expect_version" != "$version" ]; then
     die "this bundle is version $version, not the expected $expect_version"
 fi
@@ -209,7 +208,7 @@ fi
 
 listed="$(printf '%s\n' "${manifest_paths[@]}" | LC_ALL=C sort)"
 [ "$(printf '%s\n' "$listed" | uniq -d)" = '' ] || die 'the MANIFEST lists a file twice'
-present="$(cd "$root" && find . -type f ! -path ./MANIFEST ! -path ./MANIFEST.minisig | sed 's#^\./##' | LC_ALL=C sort)"
+present="$(cd "$root" && find . -type f ! -path ./MANIFEST ! -path ./MANIFEST.sig | sed 's#^\./##' | LC_ALL=C sort)"
 
 unlisted="$(LC_ALL=C comm -13 <(printf '%s\n' "$listed") <(printf '%s\n' "$present"))"
 [ -z "$unlisted" ] || die "files in the bundle that the MANIFEST does not list: $(echo "$unlisted" | tr '\n' ' ')"

@@ -93,6 +93,6 @@ A fix reaches the customer as a release: a signed offline bundle the
 customer verifies and imports itself, on its own schedule
 ([OFFLINE_UPDATES.md](OFFLINE_UPDATES.md)). Ignite Ember cannot push a fix
 into a deployment. A security fix is announced as an advisory
-([VULNERABILITY_MANAGEMENT.md](VULNERABILITY_MANAGEMENT.md)). The release
-keys do not exist yet, so no signed bundle has been produced
+([VULNERABILITY_MANAGEMENT.md](VULNERABILITY_MANAGEMENT.md)). No release
+has been signed yet, so no signed bundle has been produced
 ([SECURITY_PACK.md](SECURITY_PACK.md), Gaps).

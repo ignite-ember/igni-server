@@ -7,10 +7,9 @@ Nothing in this process contacts Ignite Ember or the internet.
 
 **Status.** The bundle format, the release workflow's signing steps and `igni-import` are
 built and tested (`tests/test_an_offline_bundle_is_verified_before_import.py`).
-The release keys are not: the key ceremony at the end of this document has
-not happened, so no release can be signed yet and no bundle has been produced. Until it
-has, Ignite Ember cannot give you the public keys this document asks you to
-hold.
+The release key exists (2026-11-07, "The release key" below), but no
+release has been signed with it yet, so no bundle has been produced.
+Ignite Ember gives you its public key, out of band, with the first one.
 
 ## Where images and bundles come from
 
@@ -39,8 +38,8 @@ bundle.
 
 ```
 igni-bundle-0.6.0/
-  MANIFEST            version, commit, and the sha256 of every other file
-  MANIFEST.minisig    minisign signature over MANIFEST; the version is in its signed comment
+  MANIFEST            format, version, commit, and the sha256 of every other file
+  MANIFEST.sig        cosign signature over MANIFEST, with the release key
   igni-import         the import tool, covered by the MANIFEST like everything else
   images.tsv          name, tag and digest of each image
   images/<name>/image/   the image, in skopeo's dir layout, byte for byte as signed
@@ -72,40 +71,48 @@ SHA256SUMS. `artefacts.tsv` and `artefacts/` are absent from a bundle that
 carries none. Artefacts are not pushed anywhere: `--keep` leaves them in the
 kept directory, to install as the module's own documentation says.
 
-Two keys sign a release, and you need the public half of each:
+One key signs a release, and you need its public half, `cosign.pub`:
 
-| Key | Signs | Verified by |
-|---|---|---|
-| minisign release key (`igni-release.pub`) | The bundle's MANIFEST, so every file in it | `igni-import`, or `minisign` by hand |
-| cosign release key (`igni-cosign.pub`) | Each image, and its SBOM attestation | `cosign verify` against your registry, or an admission controller |
+| Signed with the release key | Verified by |
+|---|---|
+| The bundle's MANIFEST, so every file in it | `igni-import`, or `cosign verify-blob` by hand |
+| Each image, and its SBOM attestation | `cosign verify` against your registry, or an admission controller |
+| Each artefact's SHA256SUMS | `igni-import --cosign-key`, or `cosign verify-blob` by hand |
 
-Obtain both public keys from Ignite Ember once, through a channel other than
+The version is a line of the MANIFEST, so it is covered by the signature:
+a bundle signed as one release cannot be relabelled as another.
+
+Obtain the public key from Ignite Ember once, through a channel other than
 the bundle (for example with the contract, or read aloud and compared by
 fingerprint). Never trust a key that arrives inside the bundle it is meant to
 check.
 
 ## Verify and import
 
-You need `tar`, `minisign` and `skopeo` on the import host. All three are in
-the Debian, Ubuntu, RHEL (EPEL for minisign) and Alpine package repositories.
-`cosign` is optional.
+You need `tar`, `cosign` and `skopeo` on the import host. `tar` and `skopeo`
+are in the Debian, Ubuntu, RHEL and Alpine package repositories. `cosign` is
+a single binary: take it from Sigstore's releases
+(`github.com/sigstore/cosign`) and check it against the release's checksums,
+on a connected machine, before carrying it in. It is the one tool that
+checks both the bundle and the images, and nothing here makes it contact
+the network.
 
 ```sh
 # Verify only: signature, every hash, nothing pushed
-./igni-import --bundle igni-bundle-0.6.0.tar --public-key igni-release.pub \
+./igni-import --bundle igni-bundle-0.6.0.tar --public-key cosign.pub \
               --expect-version 0.6.0 --verify-only --keep ./igni-0.6.0
 
 # Import into your registry (log in first: `skopeo login registry.example.internal`)
-./igni-import --bundle igni-bundle-0.6.0.tar --public-key igni-release.pub \
+./igni-import --bundle igni-bundle-0.6.0.tar --public-key cosign.pub \
               --registry registry.example.internal/igni --expect-version 0.6.0 \
-              --cosign-key igni-cosign.pub --keep ./igni-0.6.0
+              --cosign-key cosign.pub --keep ./igni-0.6.0
 ```
 
 `igni-import` refuses, and pushes nothing that failed, if:
 
 - the archive holds an absolute path, a `..`, a link or a device file;
 - the MANIFEST signature does not verify with the key you gave;
-- the signed version differs from the MANIFEST's, or from `--expect-version`;
+- the version in the signed MANIFEST differs from `--expect-version`;
 - any file is missing, altered, or present but not listed in the MANIFEST;
 - an artefact's files do not match its own SHA256SUMS, or its directory holds
   a file SHA256SUMS does not list;
@@ -146,14 +153,16 @@ For a security team that would rather not run our script:
 
 ```sh
 tar -xf igni-bundle-0.6.0.tar && cd igni-bundle-0.6.0
-minisign -V -p igni-release.pub -m MANIFEST     # prints the signed version
+cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true \
+  --signature MANIFEST.sig MANIFEST             # the signature
+head -n 4 MANIFEST                              # format, version, commit, date
 grep -v '^#' MANIFEST | sha256sum -c -          # every file
 find . -type f ! -name 'MANIFEST*' | sed 's#^\./##' | sort \
   | diff - <(grep -v '^#' MANIFEST | cut -c67- | sort)   # nothing unlisted
 
 # Each artefact, against the cosign release key
 cd artefacts/igni-fleet
-cosign verify-blob --key igni-cosign.pub --insecure-ignore-tlog=true \
+cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true \
   --signature SHA256SUMS.sig SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
@@ -165,15 +174,15 @@ attestations remain valid in your registry. With no transparency log to
 consult:
 
 ```sh
-cosign verify --key igni-cosign.pub --insecure-ignore-tlog=true \
+cosign verify --key cosign.pub --insecure-ignore-tlog=true \
   registry.example.internal/igni/igni-api@sha256:…
-cosign verify-attestation --key igni-cosign.pub --insecure-ignore-tlog=true \
+cosign verify-attestation --key cosign.pub --insecure-ignore-tlog=true \
   --type cyclonedx registry.example.internal/igni/igni-api@sha256:…
 ```
 
-`--insecure-ignore-tlog` is correct here: igni's images are signed with a
-key pair and deliberately not recorded in the public Rekor log, so there is
-no log entry to check. The same key works in an admission controller
+`--insecure-ignore-tlog` is correct here, and for the bundle: igni's images
+and MANIFEST are signed with a key and deliberately not recorded in the
+public Rekor log, so there is no log entry to check. The same key works in an admission controller
 (Sigstore policy-controller, Kyverno) to refuse unsigned igni images.
 
 ## How long releases are kept
@@ -220,8 +229,8 @@ and every other job needs it. `resolve` also refuses a ref that is not on
 `main` of this repository, or whose CD run on `main` (the tests) did not
 pass, and every job checks out the commit it resolved. This repository's
 own `cd.yml` runs the tests on each push to `main` and builds nothing.
-`igni__release` holds no source: one caller workflow, the `prod`
-environment and the keys. The module packages on GHCR stay private,
+`igni__release` holds no source: one caller workflow and the `prod`
+environment, which is the only thing allowed to sign with the release key. The module packages on GHCR stay private,
 readable by `igni__release`'s workflows only (package settings, "Manage
 Actions access"); `igni-api`, `igni-portal` and `igni-bundle` grant it
 write access the same way.
@@ -229,12 +238,13 @@ write access the same way.
 Each image job pushes its image to
 `ghcr.io/ignite-ember/<name>` with `GITHUB_TOKEN`, signs it by digest and
 attests its SBOM; `offline-bundle` copies every image from there by
-digest, verifies it against the cosign public key, exports it with
+digest, verifies it against the release public key, exports it with
 `tools/release/igni-bundle export-image`, pulls each release pinned in
 `containers/release/artefacts.tsv` from GHCR (an OCI artefact, with `oras`)
 and stages it with `igni-bundle add-artefact`, which refuses it unless its
 cosign signature verifies with the release key and every file matches its
-SHA256SUMS, adds the Helm chart and SBOMs, signs with `igni-bundle seal`, checks the result with `igni-import
+SHA256SUMS, adds the Helm chart and SBOMs, signs the MANIFEST with the
+release key in `igni-bundle seal`, checks the result with `igni-import
 --verify-only`, pushes `igni-bundle-<version>.tar` and its `.sha256` to
 `ghcr.io/ignite-ember/igni-bundle:<version>` with `oras` unless that
 version is already kept (above), and uploads both as a CI artefact
@@ -266,38 +276,44 @@ release tags (the commit for igni-api and igni-portal, the pinned version
 for the modules). The naming is a convention; the guarantee is the key.
 `GITHUB_TOKEN` from any branch can write any tag of a package, and GHCR
 has no immutable tags, so what stops a non-release image reaching a
-customer is that the release cosign key lives in the `prod` environments
-only, whose deployment branch policy allows `main` only (for igni server,
-`igni__release`'s `main`, which runs the release from a commit on this
-repository's `main`), and the bundle job refuses any image that key did
-not sign. The modules' `dev` and `stage` sign with a separate,
-non-release cosign key pair under the same secret names.
+customer is that only `igni__release`'s `prod` environment can sign with
+the release key, its deployment branch policy allows `main` only (which
+runs the release from a commit on this repository's `main`), and the
+bundle job refuses any image that key did not sign. The module
+repositories sign their own images in their own CD; the bundle takes a
+module image only if it carries this key's signature.
 
-Secrets and variables, set on the `prod` GitHub environment of
-`igni__release` (never on this public repository, whose workflows use
-no environment), and the cosign ones also on the `prod` environments of
-`igni__artifacts` and `igni__code-index`. Every push is signed, so the
-`dev` and `stage` environments of those two need the cosign names too,
-holding the non-release pair:
+### The release key
+
+The release key is a Cloud KMS key in Ignite Ember's Google Cloud project:
+ECDSA P-256, held in an HSM, and not exportable. Nobody has a copy of the
+private key, so there is none to leak, to keep in two places, or to hand
+over when somebody leaves. CD signs through it with GitHub's OIDC token
+(Workload Identity Federation): the jobs that sign get `id-token: write`,
+and Google accepts the token only when GitHub issued it to a job in
+`igni__release`'s `prod` environment. There is no signing secret in
+GitHub. cosign names the key as `gcpkms://projects/…/cryptoKeyVersions/N`,
+and the same key signs the images, their SBOM attestations and the
+bundle's MANIFEST, so a customer holds one public key and needs one tool.
+
+Variables, set on the `prod` GitHub environment of `igni__release` (never
+on this public repository, whose workflows use no environment). None is a
+secret: each names something, and only the environment's OIDC token can
+use it.
 
 | Name | Kind | Content |
 |---|---|---|
-| `COSIGN_PRIVATE_KEY` | secret | `cosign.key`, encrypted PEM |
-| `COSIGN_PASSWORD` | secret | its password |
-| `COSIGN_PUBLIC_KEY` | variable | `cosign.pub` |
-| `MINISIGN_SECRET_KEY` | secret | the minisign secret key file, password-protected |
-| `MINISIGN_PASSWORD` | secret | its password |
-| `MINISIGN_PUBLIC_KEY` | variable | the minisign `.pub` file, both lines |
+| `COSIGN_KMS_KEY` | variable | the key, as cosign names it: `gcpkms://projects/…/cryptoKeyVersions/N` |
+| `COSIGN_PUBLIC_KEY` | variable | `cosign.pub`, the public key customers hold |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | variable | the workload identity provider that trusts `igni__release`'s tokens |
+| `GCP_SIGNER_SERVICE_ACCOUNT` | variable | the service account allowed to sign with the key, and nothing else |
 
-Why minisign for the MANIFEST: it is offline by construction, a small
-single binary in every major distribution, the format the desktop updater
-already uses, and its signed trusted comment binds the version to the
-signature. Cosign stays for images because that is what registries and
-admission controllers understand.
+Why cosign for the MANIFEST as well as the images: one key and one tool
+for the customer, and a key that never leaves the HSM. cosign is made
+offline explicitly: a plain signature, nothing sent to a transparency log,
+and `igni-import` verifies with a key file and no network.
 
-**Key generation is a person's job, done once, offline:** `cosign
-generate-key-pair` and `minisign -G` on an offline machine, private keys
-stored in two places under the company's key-custody policy, public keys
-and their fingerprints published to customers out of band. Rotation is the
-same ceremony, with the new public key sent before the first release signed
-by it.
+`cosign.pub` is exported from KMS (`cosign public-key --key
+gcpkms://…`) and published to customers, with its fingerprint, out of
+band. Rotation is a new key version: its public key is sent to customers
+before the first release signed by it.

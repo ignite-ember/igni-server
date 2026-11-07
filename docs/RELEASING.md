@@ -62,8 +62,8 @@ with the commit and how a customer verifies the result.
    `igni__release` only, so bump the version for each release.
 6. **Check what the release made.** Fetch the kept bundle (`oras pull
    ghcr.io/ignite-ember/igni-bundle:<version>`) and verify it as a
-   customer would, with the public keys you hold and not copies from the
-   run: `igni-import --bundle … --public-key igni-release.pub
+   customer would, with the public key you hold and not a copy from the
+   run: `igni-import --bundle … --public-key cosign.pub
    --expect-version <version> --verify-only`, and `cosign verify` on both
    images. The commit in the bundle's MANIFEST (`# commit:`) is the one
    the tag points at.
