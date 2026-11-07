@@ -213,7 +213,7 @@ jobs:
       # Signed by digest, never by tag: a tag can be moved after signing.
       # COSIGN_PRIVATE_KEY and COSIGN_PASSWORD are secrets of the
       # environment; COSIGN_PUBLIC_KEY a variable. docs/OFFLINE_UPDATES.md.
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v2.4.1
 
@@ -334,7 +334,7 @@ jobs:
           docker push "${IMAGE}" --all-tags
 
       # Signed and attested as the backend is; see the comment there.
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v2.4.1
 
@@ -465,7 +465,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v2.4.1
 
