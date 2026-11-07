@@ -44,7 +44,7 @@ class GroupPackService:
         if not summary:
             return None
 
-        group = await self._groups.get_group(summary.org_id, summary.id)
+        group = await self._groups.get_group(summary.org_id, group_id=summary.id)
         if not group:
             return None
 

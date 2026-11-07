@@ -9,7 +9,7 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.sql import SQLAlchemySessionManager
-from app.db.sql.groups import GroupsDB
+from app.db.sql.group_person_erasure import GroupPersonErasureDB
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.organization import Organization
 from app.db.sql.models.user import User
@@ -41,6 +41,9 @@ class LastSuperAdmin(Exception):
 
 class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
     """Database operations for local user credentials."""
+
+    def __init__(self, *, group_erasure: GroupPersonErasureDB | None = None) -> None:
+        self._group_erasure = group_erasure or GroupPersonErasureDB()
 
     async def create(
         self,
@@ -482,6 +485,6 @@ class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             await TenantRegistryDB().detach(org_id)
         for org_id in leave_org_ids:
             try:
-                await GroupsDB().forget_person(org_id, user_id)
+                await self._group_erasure.forget_person(org_id, user_id=user_id)
             except Exception:  # noqa: BLE001 — the account is deleted; this is cleanup
                 logger.exception('Could not clear a deleted account from organisation %s', org_id)

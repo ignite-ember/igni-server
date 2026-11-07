@@ -128,14 +128,14 @@ class GroupsService:
             await self._access.refuse_taken_name(org_id=org_id, name=body.name, except_id=group_id)
         await self._served.refuse_unserved(body.default_model)
 
-        group = await self._groups.update_group(org_id, group_id, patch=body.to_patch())
+        group = await self._groups.update_group(org_id, group_id=group_id, patch=body.to_patch())
         return OrgGroupResponse.of(group)
 
     async def delete_group(self, *, org_id: str, group_id: str, by_user_id: str) -> None:
         """Delete a group. Its people go back to the Default group, in the same transaction."""
         await self._access.writable(org_id=org_id, group_id=group_id)
         await self._default_group.ensure_for_org(org_id, created_by_user_id=by_user_id)
-        await self._groups.delete_group(org_id, group_id)
+        await self._groups.delete_group(org_id, group_id=group_id)
 
     async def _detail(self, *, org_id: str, group: OrgGroup) -> OrgGroupDetail:
         members = await self._members.list_members(org_id, group.id)

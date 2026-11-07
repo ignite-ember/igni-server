@@ -21,7 +21,7 @@ class GroupAccess:
         a group id alone never reaches a group, so an admin of one org
         cannot read or edit another's by knowing the id.
         """
-        group = await self._groups.get_group(org_id, group_id)
+        group = await self._groups.get_group(org_id, group_id=group_id)
         if not group:
             raise GroupNotFound()
         return group
@@ -45,6 +45,6 @@ class GroupAccess:
         name. The store's unique constraint answers the same way for the
         race this check-then-act cannot see.
         """
-        existing = await self._groups.get_group_by_name(org_id, name)
+        existing = await self._groups.get_group_by_name(org_id, name=name)
         if existing and existing.id != except_id:
             raise GroupNameTaken(name)

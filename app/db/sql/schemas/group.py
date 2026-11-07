@@ -9,7 +9,9 @@ by name. The portal turns them back into responses in
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Self
+import uuid
 
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.exc import IntegrityError
@@ -62,6 +64,24 @@ class GroupSettings(BaseModel):
     #: Serialised `GroupTheme`; None is "no branding".
     theme: str | None = None
 
+    def new_group(
+        self, *, org_id: str, by_user_id: str | None, is_default: bool, vm_profile_id: str | None, at: datetime
+    ) -> OrgGroup:
+        """The row for a group made with these settings, created and last updated *at*."""
+        return OrgGroup(
+            id=str(uuid.uuid4()),
+            org_id=org_id,
+            name=self.name,
+            description=self.description,
+            default_model=self.default_model,
+            theme=self.theme,
+            vm_profile_id=vm_profile_id,
+            is_default=is_default,
+            created_by_user_id=by_user_id,
+            created_at=at,
+            updated_at=at,
+        )
+
 
 class GroupPatch(BaseModel):
     """A partial edit to a group. Absent means unchanged.
@@ -85,6 +105,23 @@ class GroupPatch(BaseModel):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f'{field} can be changed but not cleared')
         return self
+
+    def apply_to(self, row: OrgGroup, *, at: datetime) -> None:
+        """Write the fields this patch supplies onto *row*, and mark it updated *at*.
+
+        `name` and `description` are applied when not None (they can never
+        be cleared); `default_model` and `theme` whenever supplied, so an
+        explicit None clears them.
+        """
+        if self.name is not None:
+            row.name = self.name
+        if self.description is not None:
+            row.description = self.description
+        if 'default_model' in self.model_fields_set:
+            row.default_model = self.default_model
+        if 'theme' in self.model_fields_set:
+            row.theme = self.theme
+        row.updated_at = at
 
 
 class EntryCreate(BaseModel):

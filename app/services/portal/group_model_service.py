@@ -41,7 +41,7 @@ class GroupModelService:
             summary = await self._summaries.get_active_user_group_summary(user_id)
             if not summary:
                 return None
-            group = await self._groups.get_group(summary.org_id, summary.id)
+            group = await self._groups.get_group(summary.org_id, group_id=summary.id)
         except _LOOKUP_FAILED as exc:
             logger.warning('Could not resolve a group model for %s: %s', user_id, exc)
             return None

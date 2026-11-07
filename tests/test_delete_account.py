@@ -99,7 +99,7 @@ class TestTheOrgKeepsItsWork:
     """The reason provenance is cleared rather than the rows deleted.
 
     Groups are in the organisation's own database and `users` in the
-    shared plane, so no foreign key joins them; `GroupsDB.forget_person`
+    shared plane, so no foreign key joins them; `GroupPersonErasureDB.forget_person`
     does what `SET NULL` used to.
     """
 

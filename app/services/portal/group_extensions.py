@@ -62,7 +62,7 @@ class GroupExtensions:
         self._extensions = extensions or ServiceExtensionDB()
 
     async def _group_in_org(self, org_id: str, group_id: str) -> None:
-        if await self._groups.get_group(org_id, group_id) is None:
+        if await self._groups.get_group(org_id, group_id=group_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Group not found')
 
     async def of_group(self, org_id: str, group_id: str) -> GroupExtensionList:

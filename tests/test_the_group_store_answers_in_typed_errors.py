@@ -11,7 +11,7 @@ pin those, and `GroupRefusals` is what keeps them so.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -45,7 +45,6 @@ from app.db.sql.schemas.group import (
 )
 from app.db.sql.tenancy import TenantSessions
 from app.services.portal.group_refusals import GroupRefusals
-from app.utils.singleton import SingletonMeta
 from tests.conftest import create_org, create_user
 
 _AGENT = EntryCreate(
@@ -124,9 +123,9 @@ class TestWhatIsNotThere:
         await _group(org_id, 'Default', is_default=True)
 
         with pytest.raises(GroupNotFound):
-            await GroupsDB().update_group(org_id, 'nope', patch=GroupPatch())
+            await GroupsDB().update_group(org_id, group_id='nope', patch=GroupPatch())
         with pytest.raises(GroupNotFound):
-            await GroupsDB().delete_group(org_id, 'nope')
+            await GroupsDB().delete_group(org_id, group_id='nope')
 
     async def test_a_missing_member(self, org_id):
         await _group(org_id, 'Default', is_default=True)
@@ -158,8 +157,8 @@ class TestTheDefaultGroup:
         legal = await _group(org_id, 'Legal')
 
         with pytest.raises(NoDefaultGroup):
-            await GroupsDB().delete_group(org_id, legal.id)
-        assert await GroupsDB().get_group(org_id, legal.id) is not None
+            await GroupsDB().delete_group(org_id, group_id=legal.id)
+        assert await GroupsDB().get_group(org_id, group_id=legal.id) is not None
 
 
 class _FailsAfterEntries(GroupExtensionsDB):
@@ -170,12 +169,9 @@ class _FailsAfterEntries(GroupExtensionsDB):
 
 
 class TestACopyIsAllOrNothing:
-    async def test_a_failure_after_the_entries_leaves_nothing_behind(self, org_id, monkeypatch):
+    async def test_a_failure_after_the_entries_leaves_nothing_behind(self, org_id):
         source = await _group(org_id, 'Legal')
         await GroupEntriesDB().create_entry(org_id, group_id=source.id, entry=_AGENT, by_user_id='admin-1')
-        # A GroupsDB of its own: the singleton cache would hand back the shared one.
-        others = {cls: instance for cls, instance in SingletonMeta._instances.items() if cls is not GroupsDB}
-        monkeypatch.setattr(SingletonMeta, '_instances', others)
         groups = GroupsDB(extensions=_FailsAfterEntries())
 
         with pytest.raises(GroupNameTaken):
@@ -185,6 +181,88 @@ class TestACopyIsAllOrNothing:
 
         assert await _count(org_id, OrgGroup) == 1
         assert await _count(org_id, OrgGroupEntry) == 1
+
+
+class TestWhatIsInjectedIsUsed:
+    """`GroupsDB` holds its collaborators, so it is not a singleton: a fake given to one is not lost."""
+
+    def test_a_groups_db_with_a_fake_is_its_own_object(self):
+        assert GroupsDB(extensions=_FailsAfterEntries()) is not GroupsDB()
+
+    async def test_a_new_group_is_stamped_by_the_clock_it_was_given(self, org_id):
+        at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+
+        group = await GroupsDB(clock=lambda: at).create_group(
+            org_id, settings=GroupSettings(name='Legal'), by_user_id='admin-1'
+        )
+
+        assert (group.created_at, group.updated_at) == (at, at)
+
+
+class TestTheRowsTheSchemasWrite:
+    """The mapping from settings and patches to a row, without a database."""
+
+    _AT = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    _LATER = datetime(2026, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
+
+    def _row(self) -> OrgGroup:
+        return GroupSettings(name='Legal', description='Contracts', default_model='m1', theme='{"a":1}').new_group(
+            org_id='org-1', by_user_id='admin-1', is_default=True, vm_profile_id='vm-1', at=self._AT
+        )
+
+    def test_a_new_group_carries_exactly_its_settings(self):
+        row = self._row()
+
+        assert row.id
+        assert (
+            row.org_id,
+            row.name,
+            row.description,
+            row.default_model,
+            row.theme,
+            row.vm_profile_id,
+            row.is_default,
+            row.created_by_user_id,
+            row.created_at,
+            row.updated_at,
+        ) == ('org-1', 'Legal', 'Contracts', 'm1', '{"a":1}', 'vm-1', True, 'admin-1', self._AT, self._AT)
+
+    def test_each_new_group_has_its_own_id(self):
+        assert self._row().id != self._row().id
+
+    def test_an_absent_field_is_left_alone(self):
+        row = self._row()
+
+        GroupPatch(name='Litigation').apply_to(row, at=self._LATER)
+
+        assert (row.name, row.description, row.default_model, row.theme) == (
+            'Litigation',
+            'Contracts',
+            'm1',
+            '{"a":1}',
+        )
+        assert (row.created_at, row.updated_at) == (self._AT, self._LATER)
+
+    def test_an_explicit_none_clears_the_model_and_theme(self):
+        row = self._row()
+
+        GroupPatch(default_model=None, theme=None).apply_to(row, at=self._LATER)
+
+        assert (row.name, row.description, row.default_model, row.theme) == ('Legal', 'Contracts', None, None)
+        assert row.updated_at == self._LATER
+
+    def test_an_empty_patch_only_moves_updated_at(self):
+        row = self._row()
+
+        GroupPatch().apply_to(row, at=self._LATER)
+
+        assert (row.name, row.description, row.default_model, row.theme, row.updated_at) == (
+            'Legal',
+            'Contracts',
+            'm1',
+            '{"a":1}',
+            self._LATER,
+        )
 
 
 class TestPartialEdits:
@@ -224,7 +302,7 @@ class TestPartialEdits:
             by_user_id='admin-1',
         )
 
-        cleared = await GroupsDB().update_group(org_id, group.id, patch=GroupPatch(default_model=None))
+        cleared = await GroupsDB().update_group(org_id, group_id=group.id, patch=GroupPatch(default_model=None))
 
         assert (cleared.name, cleared.description, cleared.default_model) == ('Legal', 'Contracts', None)
 

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from app.db.sql.group_person_erasure import GroupPersonErasureDB
 from app.db.sql.group_summaries import GroupSummariesDB
-from app.db.sql.groups import GroupsDB
 from app.db.sql.models.org_group_extension import OrgGroupExtension
 from app.db.sql.tenancy import TenantSessions
 from app.services.auth.jwt_service import JWTService
@@ -292,7 +292,7 @@ class TestForgettingAnAdmin:
         helper = auth_header(make_token(user_id, org_id=org.org_id))
         await client.put(f'/portal/groups/{legal}/extensions/{EXTENSION}', json={'enabled': True}, headers=helper)
 
-        await GroupsDB().forget_person(org.org_id, user_id)
+        await GroupPersonErasureDB().forget_person(org.org_id, user_id=user_id)
 
         async with TenantSessions().session_scope(org.org_id) as session:
             row = await session.get(OrgGroupExtension, await _row_id(org.org_id, legal))

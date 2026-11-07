@@ -46,7 +46,7 @@ class EntitledPerson:
 
     async def group_id(self) -> str:
         org_id = await self._org_id()
-        found = await GroupsDB().get_group_by_name(org_id, GROUP_NAME)
+        found = await GroupsDB().get_group_by_name(org_id, name=GROUP_NAME)
         if found is not None:
             return str(found.id)
         group = OrgGroup(org_id=org_id, name=GROUP_NAME)

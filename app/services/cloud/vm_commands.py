@@ -180,10 +180,11 @@ class Records:
 class VmCommands:
     """What people and apps ask for; what the node agent pulls and reports."""
 
-    def __init__(self, *, tenants: TenantRegistryDB | None = None) -> None:
+    def __init__(self, *, tenants: TenantRegistryDB | None = None, groups: GroupsDB | None = None) -> None:
         self._db = VmCommandsDB()
         self._authority = VmCommandAuthority()
         self._tenants = tenants or TenantRegistryDB()
+        self._groups = groups or GroupsDB()
 
     # ── Asking ──────────────────────────────────────────────────────
 
@@ -207,7 +208,7 @@ class VmCommands:
 
     async def _check_scope(self, org_id: str, scope: JobScope) -> None:
         if scope.kind == 'group':
-            if not scope.id or await GroupsDB().get_group(org_id, scope.id) is None:
+            if not scope.id or await self._groups.get_group(org_id, group_id=scope.id) is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Group not found')
         elif scope.kind == 'profile':
             if not scope.id or await VmProfilesDB().get(org_id, scope.id) is None:
