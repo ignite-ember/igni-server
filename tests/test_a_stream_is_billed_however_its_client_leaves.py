@@ -55,7 +55,7 @@ class _Pool:
 
     released: list[str] = field(default_factory=list)
 
-    async def acquire(self, user_id, kind, *, model=None, exclude_backend_id=None):
+    async def acquire(self, user_id, *, model=None, exclude_backend_id=None):
         return _Lease()
 
     async def release(self, lease):
@@ -119,7 +119,7 @@ def server(monkeypatch):
     monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
     monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
     monkeypatch.setattr(chat_module.GroupsService, 'model_for_user', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_chat_pool=lambda: pool))
+    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_pool=lambda: pool))
     monkeypatch.setattr(chat_module, '_usage_db', usage)
     monkeypatch.setattr(chat_module, '_stream_upstream', node.stream)
 

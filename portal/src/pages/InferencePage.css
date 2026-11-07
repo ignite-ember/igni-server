@@ -65,7 +65,7 @@
     10rem                /* name  */
     5.5rem               /* queue */
     9rem                 /* load  */
-    minmax(0, 1fr);      /* pools */
+    minmax(0, 1fr);      /* models */
   align-items: center;
   gap: var(--stack-gap-condensed);
   padding: var(--base-size-8) var(--stack-padding-normal);
@@ -111,10 +111,12 @@
 }
 
 /* Pushed to the right edge, but as a fixed block with its text starting
-   at the left of it — so the pools begin at the same x on every row
+   at the left of it — so the models begin at the same x on every row
    instead of ending at the same x, which is what makes a column
    readable down the page. */
-.inference-node-pools {
+.inference-node-models {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   width: 11rem;
   margin-left: auto;

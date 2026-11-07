@@ -24,7 +24,6 @@ from app.services.ai.schemas import (
     InferenceBackend,
     ModelNotAvailableError,
     NoBackendAvailableError,
-    NoBackendConfiguredError,
     RegisteredNode,
 )
 
@@ -141,13 +140,12 @@ def _repoint(pool, tmp_path, backends) -> None:
     pool._provider = InferenceBackendProvider(path=str(path), registry=FakeRegistry())
 
 
-def _backend(backend_id: str, *, model='igni-1.0-27b', max_concurrent=2, pools=('chat',)) -> InferenceBackend:
+def _backend(backend_id: str, *, model='igni-1.0-27b', max_concurrent=2) -> InferenceBackend:
     return InferenceBackend(
         id=backend_id,
         base_url=f'http://{backend_id}.internal:8000/v1',
         model=model,
         max_concurrent=max_concurrent,
-        pools=list(pools),
     )
 
 
@@ -157,7 +155,7 @@ def pool_and_redis(tmp_path):
         path = tmp_path / f'backends-{len(backends)}-{id(backends)}.json'
         path.write_text(json.dumps([b.model_dump() for b in backends]))
         provider = InferenceBackendProvider(path=str(path), registry=FakeRegistry())
-        pool = InferenceBackendPool('chat', provider=provider, **kwargs)
+        pool = InferenceBackendPool(provider=provider, **kwargs)
         redis = FakeRedis()
 
         async def _stub_redis():
@@ -170,16 +168,16 @@ def pool_and_redis(tmp_path):
 
 
 class TestConfiguration:
-    async def test_no_backend_for_the_pool_is_a_config_error_not_a_load_error(self, pool_and_redis):
+    async def test_no_backend_is_a_config_error_not_a_load_error(self, pool_and_redis):
         """Retrying cannot conjure a node, so the two must not share a class."""
-        pool, _ = pool_and_redis([_backend('gpu-01', pools=('codeindex',))])
-        with pytest.raises(NoBackendConfiguredError):
-            await pool.acquire('alice', 'chat')
+        pool, _ = pool_and_redis([])
+        with pytest.raises(BackendConfigError, match='No inference backends'):
+            await pool.acquire('alice')
 
     async def test_an_unknown_model_lists_what_is_available(self, pool_and_redis):
         pool, _ = pool_and_redis([_backend('gpu-01', model='igni-1.0-27b')])
         with pytest.raises(ModelNotAvailableError) as exc:
-            await pool.acquire('alice', 'chat', model='gpt-4o')
+            await pool.acquire('alice', model='gpt-4o')
         assert 'igni-1.0-27b' in str(exc.value)
 
     def test_a_backend_needs_an_absolute_url(self):
@@ -224,31 +222,31 @@ class TestStickyRouting:
     async def test_the_same_user_returns_to_the_same_node(self, pool_and_redis):
         """The KV cache on that node is why this matters."""
         pool, _ = pool_and_redis([_backend('gpu-01'), _backend('gpu-02')])
-        first = await pool.acquire('alice', 'chat')
+        first = await pool.acquire('alice')
         await pool.release(first)
-        second = await pool.acquire('alice', 'chat')
+        second = await pool.acquire('alice')
         assert second.backend_id == first.backend_id
 
     async def test_a_different_model_gets_a_fresh_assignment(self, pool_and_redis):
         """The pinned node holds a different model's weights and is no help."""
         pool, _ = pool_and_redis([_backend('gpu-01', model='small'), _backend('gpu-02', model='large')])
-        small = await pool.acquire('alice', 'chat', model='small')
-        large = await pool.acquire('alice', 'chat', model='large')
+        small = await pool.acquire('alice', model='small')
+        large = await pool.acquire('alice', model='large')
         assert small.backend_id != large.backend_id
 
     async def test_a_saturated_pinned_node_falls_through(self, pool_and_redis):
         """A warm cache is worth a lot, but not worth queueing on a full GPU."""
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=1), _backend('gpu-02', max_concurrent=1)])
-        pinned = await pool.acquire('alice', 'chat')
+        pinned = await pool.acquire('alice')
         # Hold it, then ask again as the same user.
-        second = await pool.acquire('alice', 'chat')
+        second = await pool.acquire('alice')
         assert second.backend_id != pinned.backend_id
 
     async def test_repointing_a_node_flushes_its_pins(self, pool_and_redis, tmp_path):
         """Same id, different machine: the pin now promises a warm cache
         that is not there."""
         pool, redis = pool_and_redis([_backend('gpu-01'), _backend('gpu-02')])
-        lease = await pool.acquire('alice', 'chat')
+        lease = await pool.acquire('alice')
         pinned = [k for k, v in redis._strings.items() if ':sticky:' in k and v == lease.backend_id]
         assert pinned
 
@@ -256,7 +254,7 @@ class TestStickyRouting:
         other = next(b for b in (_backend('gpu-01'), _backend('gpu-02')) if b.id != lease.backend_id)
         _repoint(pool, tmp_path, [moved, other])
 
-        await pool.acquire('bob', 'chat')
+        await pool.acquire('bob')
         assert not [k for k in redis._strings if k in pinned]
 
     async def test_adding_a_node_keeps_every_pin(self, pool_and_redis, tmp_path):
@@ -268,12 +266,12 @@ class TestStickyRouting:
         enough to be adding hardware.
         """
         pool, redis = pool_and_redis([_backend('gpu-01')])
-        await pool.acquire('alice', 'chat')
+        await pool.acquire('alice')
         before = dict((k, v) for k, v in redis._strings.items() if ':sticky:' in k)
         assert before
 
         _repoint(pool, tmp_path, [_backend('gpu-01'), _backend('gpu-02'), _backend('gpu-03')])
-        await pool.acquire('bob', 'chat')
+        await pool.acquire('bob')
         assert all(redis._strings.get(k) == v for k, v in before.items())
 
     async def test_a_departed_node_needs_no_flush(self, pool_and_redis, tmp_path):
@@ -281,11 +279,11 @@ class TestStickyRouting:
         to least-loaded on its own — so a scale-down costs nobody else
         their cache."""
         pool, _ = pool_and_redis([_backend('gpu-01'), _backend('gpu-02')])
-        lease = await pool.acquire('alice', 'chat')
+        lease = await pool.acquire('alice')
         survivor = 'gpu-02' if lease.backend_id == 'gpu-01' else 'gpu-01'
 
         _repoint(pool, tmp_path, [_backend(survivor)])
-        again = await pool.acquire('alice', 'chat')
+        again = await pool.acquire('alice')
         assert again.backend_id == survivor
 
 
@@ -295,43 +293,43 @@ class TestCapacity:
         released them all is idle, and must be treated as idle."""
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=1)])
         for _ in range(50):
-            lease = await pool.acquire('alice', 'chat')
+            lease = await pool.acquire('alice')
             await pool.release(lease)
         # Still acquirable — nothing is in flight.
-        assert await pool.acquire('alice', 'chat')
+        assert await pool.acquire('alice')
 
     async def test_a_full_cluster_raises_a_retryable_error(self, pool_and_redis):
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=1)])
-        await pool.acquire('alice', 'chat')
+        await pool.acquire('alice')
         with pytest.raises(NoBackendAvailableError):
-            await pool.acquire('bob', 'chat')
+            await pool.acquire('bob')
 
     async def test_releasing_frees_the_slot(self, pool_and_redis):
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=1)])
-        held = await pool.acquire('alice', 'chat')
+        held = await pool.acquire('alice')
         await pool.release(held)
-        assert await pool.acquire('bob', 'chat')
+        assert await pool.acquire('bob')
 
     async def test_release_is_idempotent(self, pool_and_redis):
         """A double release must not free somebody else's slot."""
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=2)])
-        first = await pool.acquire('alice', 'chat')
-        second = await pool.acquire('bob', 'chat')
+        first = await pool.acquire('alice')
+        second = await pool.acquire('bob')
         await pool.release(first)
         await pool.release(first)
         # bob's lease still holds its slot, so only one is free.
-        await pool.acquire('carol', 'chat')
+        await pool.acquire('carol')
         with pytest.raises(NoBackendAvailableError):
-            await pool.acquire('dave', 'chat')
+            await pool.acquire('dave')
         await pool.release(second)
 
     async def test_an_abandoned_lease_expires(self, pool_and_redis):
         """A SIGKILLed worker must not permanently inflate a node's load."""
         pool, redis = pool_and_redis([_backend('gpu-01', max_concurrent=1)], lease_timeout=0)
-        await pool.acquire('alice', 'chat')
+        await pool.acquire('alice')
         # With a zero timeout every lease is already stale, so the next
         # acquire prunes it rather than reporting the node full.
-        assert await pool.acquire('bob', 'chat')
+        assert await pool.acquire('bob')
 
 
 class TestLeastLoaded:
@@ -340,51 +338,51 @@ class TestLeastLoaded:
         with 32, and a mixed cluster must see that."""
         pool, _ = pool_and_redis([_backend('small', max_concurrent=2), _backend('large', max_concurrent=10)])
         # One on each: small is now 50% loaded, large 10%.
-        await pool.acquire('alice', 'chat')
-        await pool.acquire('bob', 'chat')
+        await pool.acquire('alice')
+        await pool.acquire('bob')
         # A third user should land on whichever has more headroom.
-        third = await pool.acquire('carol', 'chat')
+        third = await pool.acquire('carol')
         assert third.backend_id == 'large'
 
 
 class TestRetryPath:
     async def test_excluding_a_node_avoids_it(self, pool_and_redis):
         pool, _ = pool_and_redis([_backend('gpu-01'), _backend('gpu-02')])
-        first = await pool.acquire('alice', 'chat')
-        retry = await pool.acquire('alice', 'chat', exclude_backend_id=first.backend_id)
+        first = await pool.acquire('alice')
+        retry = await pool.acquire('alice', exclude_backend_id=first.backend_id)
         assert retry.backend_id != first.backend_id
 
     async def test_a_single_node_deployment_retries_the_same_node(self, pool_and_redis):
         """Trying the only node again beats failing outright."""
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=4)])
-        first = await pool.acquire('alice', 'chat')
-        retry = await pool.acquire('alice', 'chat', exclude_backend_id=first.backend_id)
+        first = await pool.acquire('alice')
+        retry = await pool.acquire('alice', exclude_backend_id=first.backend_id)
         assert retry.backend_id == 'gpu-01'
 
     async def test_a_retry_does_not_repin_the_user(self, pool_and_redis):
         """The excluded node just failed; the pin should survive for when
         it comes back rather than being moved by one bad request."""
         pool, redis = pool_and_redis([_backend('gpu-01'), _backend('gpu-02')])
-        first = await pool.acquire('alice', 'chat')
-        pinned_before = await redis.get(pool._sticky_key(pool='chat', user_id='alice', model=None))
-        await pool.acquire('alice', 'chat', exclude_backend_id=first.backend_id)
-        assert await redis.get(pool._sticky_key(pool='chat', user_id='alice', model=None)) == pinned_before
+        first = await pool.acquire('alice')
+        pinned_before = await redis.get(pool._sticky_key(user_id='alice', model=None))
+        await pool.acquire('alice', exclude_backend_id=first.backend_id)
+        assert await redis.get(pool._sticky_key(user_id='alice', model=None)) == pinned_before
 
 
 class TestLeaseContextManager:
     async def test_the_slot_is_returned_on_the_way_out(self, pool_and_redis):
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=1)])
-        async with pool.lease('alice', 'chat'):
+        async with pool.lease('alice'):
             pass
-        assert await pool.acquire('bob', 'chat')
+        assert await pool.acquire('bob')
 
     async def test_the_slot_is_returned_even_when_the_body_raises(self, pool_and_redis):
         """A failing upstream call must not leak the node's slot."""
         pool, _ = pool_and_redis([_backend('gpu-01', max_concurrent=1)])
         with pytest.raises(RuntimeError):
-            async with pool.lease('alice', 'chat'):
+            async with pool.lease('alice'):
                 raise RuntimeError('upstream exploded')
-        assert await pool.acquire('bob', 'chat')
+        assert await pool.acquire('bob')
 
 
 class TestModelAdvertising:
@@ -396,11 +394,7 @@ class TestModelAdvertising:
                 _backend('gpu-03', model='igni-1.0-8b'),
             ]
         )
-        pairs = await pool.list_available_models('chat')
+        pairs = await pool.list_available_models()
         # Three nodes, three URLs, but only two models.
         assert len({model for model, _ in pairs}) == 2
         assert len(pairs) == 3
-
-    async def test_a_pool_with_no_backends_advertises_nothing(self, pool_and_redis):
-        pool, _ = pool_and_redis([_backend('gpu-01', pools=('codeindex',))])
-        assert await pool.list_available_models('chat') == []

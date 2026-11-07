@@ -37,11 +37,11 @@ import pytest
 
 from app.api.base_v1.endpoints.client import chat as chat_module
 from app.config import settings
+from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.schemas import (
     BackendLease,
     ModelNotAvailableError,
     NoBackendAvailableError,
-    NoBackendConfiguredError,
 )
 from tests.conftest import auth_header, create_org, create_user, make_token
 
@@ -263,7 +263,7 @@ def _pool(acquire_side_effect):
 
 def _with_pool(pool):
     return patch(
-        'app.services.ai.pool_manager.PoolManager.get_chat_pool',
+        'app.services.ai.pool_manager.PoolManager.get_pool',
         new=lambda _self: pool,
     )
 
@@ -328,8 +328,8 @@ class TestEveryRefusalIsReadable:
         ('failure', 'code', 'kind'),
         [
             (ModelNotAvailableError(model='nope', available=['m']), 404, 'invalid_request_error'),
-            (NoBackendConfiguredError('chat'), 503, 'server_error'),
-            (NoBackendAvailableError('chat'), 429, 'rate_limit_error'),
+            (BackendConfigError('No inference backends are available.'), 503, 'server_error'),
+            (NoBackendAvailableError(), 429, 'rate_limit_error'),
         ],
     )
     async def test_the_acquire_failures(self, authed, failure, code, kind, monkeypatch):
@@ -350,7 +350,7 @@ class TestEveryRefusalIsReadable:
         client, headers = authed
         monkeypatch.setattr(settings, 'chat_queue_max_wait_seconds', 1)
 
-        with _with_pool(_pool(NoBackendAvailableError('chat'))):
+        with _with_pool(_pool(NoBackendAvailableError())):
             response = await client.post(_CHAT, json=_body(), headers=headers)
 
         assert response.status_code == 429

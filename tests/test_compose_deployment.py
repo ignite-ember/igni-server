@@ -515,13 +515,8 @@ class TestTheLogTimestampIsReal:
         """The assertion that would have caught the original: emit a real
         record and read the output, rather than inspect the config.
 
-        Through the logger rather than the formatter, and that detail is
-        load-bearing. Calling `formatter.format(record)` skips the
-        handler, and the handler is where the filter runs — so the direct
-        version failed with `Formatting field not found in record:
-        'task_prefix'`, which is a fact about the test rather than about
-        the format. Going through `logging` exercises the same path a
-        real log line takes.
+        Through the logger rather than the formatter, so it exercises the
+        same path a real log line takes.
         """
         import logging
         import re

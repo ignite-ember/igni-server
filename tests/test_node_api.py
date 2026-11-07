@@ -30,7 +30,6 @@ REGISTRATION = {
     'base_url': 'http://gpu-burst-01.internal:8000/v1',
     'model': 'igni-1.0-27b',
     'max_concurrent': 64,
-    'pools': ['chat'],
 }
 
 
@@ -115,7 +114,6 @@ def static_backends(tmp_path):
                     'base_url': 'http://gpu-fixed-01.internal:8000/v1',
                     'model': 'igni-1.0-27b',
                     'max_concurrent': 32,
-                    'pools': ['chat', 'codeindex'],
                 }
             ]
         )
@@ -207,10 +205,6 @@ class TestRegistering:
         resp = await client.post('/nodes', json={**REGISTRATION, 'max_concurrent': 0}, headers=HEADERS)
         assert resp.status_code == 422
 
-    async def test_an_unknown_pool_is_refused(self, client, registration_enabled):
-        resp = await client.post('/nodes', json={**REGISTRATION, 'pools': ['embeddings']}, headers=HEADERS)
-        assert resp.status_code == 422
-
 
 class TestHeartbeatAndStop:
     async def test_a_heartbeat_keeps_a_node_alive(self, client, registration_enabled):
@@ -252,32 +246,26 @@ class TestPortalView:
                 id='gpu-burst-01',
                 base_url='http://gpu-burst-01.internal:8000/v1',
                 model='igni-1.0-27b',
-                pools=['chat'],
             )
         )
         resp = await client.get('/portal/inference', headers=admin_headers)
         assert resp.status_code == 200
 
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
-        by_id = {node['id']: node for node in chat['nodes']}
+        by_id = {node['id']: node for node in resp.json()['nodes']}
         assert by_id['gpu-fixed-01']['source'] == 'static'
         assert by_id['gpu-burst-01']['source'] == 'registered'
 
     async def test_a_registered_node_reports_when_it_last_checked_in(self, client, admin_headers, registry):
         """ "Registered, last heartbeat 40s ago" is the difference between
         a node an operator trusts and one they go and look at."""
-        await registry().register(
-            InferenceBackend(id='gpu-burst-01', base_url='http://b:8000/v1', model='m', pools=['chat'])
-        )
+        await registry().register(InferenceBackend(id='gpu-burst-01', base_url='http://b:8000/v1', model='m'))
         resp = await client.get('/portal/inference', headers=admin_headers)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
-        node = next(n for n in chat['nodes'] if n['id'] == 'gpu-burst-01')
+        node = next(n for n in resp.json()['nodes'] if n['id'] == 'gpu-burst-01')
         assert node['last_seen_seconds_ago'] is not None
 
     async def test_a_static_node_has_no_heartbeat_to_be_late_on(self, client, admin_headers):
         resp = await client.get('/portal/inference', headers=admin_headers)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
-        node = next(n for n in chat['nodes'] if n['id'] == 'gpu-fixed-01')
+        node = next(n for n in resp.json()['nodes'] if n['id'] == 'gpu-fixed-01')
         assert node['last_seen_seconds_ago'] is None
 
     async def test_it_never_exposes_an_api_key(self, client, admin_headers, registry):
@@ -290,7 +278,6 @@ class TestPortalView:
                 base_url='http://b:8000/v1',
                 model='m',
                 api_key='super-secret',
-                pools=['chat'],
             )
         )
         resp = await client.get('/portal/inference', headers=admin_headers)
@@ -300,15 +287,10 @@ class TestPortalView:
     async def test_it_reports_capacity_and_utilization(self, client, admin_headers):
         """The numbers that answer "do we need another GPU"."""
         resp = await client.get('/portal/inference', headers=admin_headers)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
-        assert chat['total_capacity'] == 32
-        assert chat['utilization'] == 0.0
-
-    async def test_a_node_serving_both_pools_appears_in_both(self, client, admin_headers):
-        payload = (await client.get('/portal/inference', headers=admin_headers)).json()
-        pools = {p['pool']: [n['id'] for n in p['nodes']] for p in payload['pools']}
-        assert 'gpu-fixed-01' in pools['chat']
-        assert 'gpu-fixed-01' in pools['codeindex']
+        status = resp.json()
+        assert status['total_capacity'] == 32
+        assert status['utilization'] == 0.0
+        assert [n['id'] for n in status['nodes']] == ['gpu-fixed-01']
 
     async def test_it_says_whether_registration_is_available(self, client, admin_headers):
         """ "Nothing has registered" and "this deployment does not accept

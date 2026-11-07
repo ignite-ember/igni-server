@@ -63,7 +63,7 @@ flowchart LR
     end
 
     subgraph GPU["Inference"]
-      VLLM["vLLM nodes<br/>chat and codeindex pools"]
+      VLLM["vLLM nodes"]
     end
 
     subgraph MODS["Paid modules (optional)"]
@@ -113,7 +113,7 @@ flowchart LR
     EXT -- "HTTPS, service host" --> ART
     EXT -- "signed changeset URL" --> CIDATA
     API -- "HTTP(S) OpenAI API" --> VLLM
-    CI -- "codeindex pool" --> VLLM
+    CI -- "its own node list" --> VLLM
     CI -- "JWKS, tokens, registration,<br/>service items and files" --> API
     ART -- "JWKS, tokens, registration,<br/>service items and files" --> API
     API -- "erasure, export" --> CI

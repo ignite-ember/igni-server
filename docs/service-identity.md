@@ -52,9 +52,9 @@ How to set it up:
 
 | Where | What |
 |---|---|
-| Helm (`charts/igni`) | `artifacts.enabled=true`, `artifacts.host=artifacts.example.com`, `artifacts.serviceName=<its Service>`. The chart renders a second Ingress for that host — with `ingress.tls.enabled`, a certificate of its own in `artifacts.tls.secretName` — and a ConfigMap `<release>-artifacts-env` carrying `PUBLIC_BASE_URL=https://artifacts.example.com` and `IGNI_SERVER_BASE_URL` (the API Service, in-cluster) for the service's Deployment to `envFrom`. It refuses to render without the host, or with igni's. |
+| Kubernetes | The service's own chart or manifests, not igni's: an Ingress for its hostname (with a certificate of its own — igni's names igni's host), and its Deployment given `PUBLIC_BASE_URL=https://<its host>` and igni's address. `charts/igni` deploys and publishes no service. |
 | Your own proxy | A site of its own for the service's hostname, proxying everything to it. Nothing under igni's site routes to it. |
-| Local compose | `http://artifacts.localhost:8100`: `*.localhost` is loopback on the laptop, and a network alias makes the same name reach the container from inside the stack, so igni can call the service at the URL it registered. |
+| Local compose | A name of its own, such as `http://<service>.localhost:<port>`: `*.localhost` is loopback on the laptop, and a network alias makes the same name reach the container from inside the stack, so igni can call the service at the URL it registered. The service's own repository runs it; igni's gateway routes nothing to it. |
 
 The service's `PUBLIC_BASE_URL` is that URL exactly, and it must be one
 igni's API can reach as well as people's machines: igni calls it for

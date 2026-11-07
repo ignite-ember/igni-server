@@ -390,7 +390,7 @@ PERSONAL_DATA_COLUMNS: dict[str, str] = {
     # ``actor_user_id`` and ``actor_email`` are who did the thing. On
     # a notification addressed to *them* it names a third party, and
     # it is still included — the same reasoning as
-    # ``asked_by_user_id`` above. "Sam commented on your document" is
+    # ``asked_by_user_id`` above. "Sam added you to a group" is
     # a fact about the subject, and an export that redacted Sam would
     # answer "somebody commented" and leave them unable to check
     # whether that was true. What is not included is the reverse
@@ -491,13 +491,6 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'vm_commands.job_id',
         'vm_jobs.id',
         'person_mcp_approvals.id',
-        # Which folder a row sits in. A surrogate reference to another
-        # row, the same shape as ``artifact_comments.parent_id`` — the
-        # arrangement it encodes is the person's, and it is answered
-        # by exporting their folders alongside their documents rather
-        # than by calling an opaque id their personal data.
-        # And the other half of where a folder sits: under a document
-        # rather than a folder. Same shape, same reasoning.
         # A notification's own id, and the registered service that
         # posted it. Each names a *record* or a piece of software — the
         # people involved are named by ``user_id`` and the actor
@@ -507,15 +500,6 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         # What happened, named by the service so it cannot be told
         # twice — it identifies an event, not a person.
         'notifications.event_key',
-        # A draft's own identity and the document it belongs to.
-        # Surrogate references, like every other id here.
-        # The encoded document. Not a reference to a person and not
-        # exportable to one — see the note beside
-        # ``updated_by_user_id`` above.
-        # Which document was asked about. A surrogate reference, the
-        # same shape as every other id here: the question it encodes
-        # is answered by exporting the request beside the documents,
-        # not by calling an opaque id personal data.
         'inference_nodes.id',
         'audit_events.id',
         'chat_usage.id',
@@ -553,21 +537,9 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'org_group_entries.source_ref',
         'org_group_entries.source_subdir',
         'org_group_entries.model',
-        # Identifiers, not content. ``slug`` is the random public path,
-        # ``artifact_id`` names a document in a store on the person's own
-        # machine that this server never sees, ``kind`` is a free-form
-        # label and ``version`` is a counter. The document itself — its
-        # title, body and audience — is classified as theirs above.
-        # Counters and offsets. ``version``/``n``/``base_n`` are
-        # positions in a chain, ``resolved_in_n`` names the version
-        # that applied a comment, and the quote offsets are a
-        # highlighting hint — none of them says anything about a
-        # person. ``artifact_id`` names a document in a store on the
-        # person's own machine that this server never sees.
         'inference_nodes.base_url',
         'inference_nodes.models',
         'inference_nodes.max_concurrent',
-        'inference_nodes.pools',
         'inference_nodes.multimodal',
         'inference_nodes.enabled',
         'inference_nodes.updated_at',
@@ -778,10 +750,7 @@ def describe_processing() -> dict[str, Any]:
             'Provided by the person when they signed up or accepted an invitation, '
             'or by an administrator who invited them.'
         ),
-        'rights': (
-            'Rectification and erasure are available. Documents can be redacted for '
-            'a named person via POST /v1/portal/erasure (GDPR Art. 17).'
-        ),
+        'rights': ('Rectification and erasure are available; erasure via POST /v1/portal/erasure (GDPR Art. 17).'),
     }
 
 

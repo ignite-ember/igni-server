@@ -157,9 +157,9 @@ class TestTheStreamingPath:
         await agen.__anext__()  # one chunk, then walk away
         await agen.aclose()
 
-        assert pool.released == [
-            'lease-1'
-        ], f'lease not returned after the client went away: {pool.released}. It would sit on the node for 900s.'
+        assert pool.released == ['lease-1'], (
+            f'lease not returned after the client went away: {pool.released}. It would sit on the node for 900s.'
+        )
 
     async def test_an_upstream_failure_releases(self, upstream):
         """Exhausting the retries yields an error chunk and finishes; the

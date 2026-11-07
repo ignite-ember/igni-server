@@ -63,11 +63,11 @@ def _esc(value: object) -> str:
     live in them. It has to happen where caller data enters, which is
     here, named, at the top of each template.
 
-    This matters most for `commit_message`: it is written by anybody
-    who can push to the repository and lands in an email sent to
-    somebody else. A commit titled `fix: <b>urgent</b>` rendered as
-    bold text in other people's inboxes, and one containing an
-    unbalanced `<` broke the layout from that point down.
+    This matters most for names and organisation titles: they are
+    written by whoever signs up and land in an email sent to somebody
+    else. A name like `<b>urgent</b>` would render as bold text in
+    other people's inboxes, and an unbalanced `<` would break the
+    layout from that point down.
 
     `html.escape` with `quote=True`, because several of these values
     are interpolated inside attribute positions in `_wrap`.
@@ -485,22 +485,13 @@ def get_welcome_email_template(*, email: str, name: str | None = None) -> EmailC
             f"""                            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 24px;">
                                 <tr>
                                     <td style="background-color: {_BG_MUTED}; border: 1px solid {_BORDER}; border-radius: 12px; padding: 16px 24px; font-family: {_MONO_STACK}; font-size: 14px; color: {_FG_DEFAULT};">
-                                        <span style="color: {_FG_MUTED};">$</span> pip install ignite-ember
+                                        <span style="color: {_FG_MUTED};">$</span> pip install igni-core
                                     </td>
                                 </tr>
                             </table>""",
-            _p(
-                "We're rolling out features fast \u2014 CodeIndex, GitHub integration, and the full cloud portal are coming soon.",
-                margin='0 0 16px',
-            ),
             _p("If you have any questions, don't hesitate to reach out to our support team.", margin='0', muted=True),
         ]
     )
 
     html_body = _wrap('Welcome to igni', 'ignite-ember.sh', content, email)
     return EmailContent(subject=subject, html_body=html_body)
-
-
-# ---------------------------------------------------------------------------
-# 6. Commit processing started
-# ---------------------------------------------------------------------------

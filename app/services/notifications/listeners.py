@@ -1,17 +1,15 @@
-"""Wake a listener when something happens on their documents.
+"""Wake a listener when their notifications move.
 
 This is a **nudge, not a delivery mechanism**, and the distinction is
-the whole design. The stream never carries a comment's contents. It
-carries "there is something newer than X for you", and the client
-answers by running the sync pull it already has.
+the whole design. The stream never carries a notification's contents.
+It carries "there is something newer than X for you", and the client
+answers by running the pull it already has.
 
 That is what makes a dropped connection harmless. Correctness lives
-in the cursor: the pull is ordered on ``updated_at``, the projection
-is a MERGE on the comment id, and a row naming a version the client
-has not fetched is skipped without consuming the cursor. A laptop
-that sleeps through fifty notifications wakes up, pulls once, and is
-exactly as correct as one that received every single one. The stream
-only decides *how soon*, never *whether*.
+in the cursor, not in the stream: a laptop that sleeps through fifty
+nudges wakes up, pulls once, and is exactly as correct as one that
+received every single one. The stream only decides *how soon*, never
+*whether*.
 
 So this module can afford to be lossy, and is. Waiters are held in
 memory on one process, a notify that reaches nobody is dropped, and
@@ -49,7 +47,7 @@ KEEPALIVE_INTERVAL: int = 8
 STREAM_MAX_SECONDS: int = 900
 
 
-class CommentNotifier(metaclass=SingletonMeta):
+class Listeners(metaclass=SingletonMeta):
     """In-process fan-out, one queue per listening connection.
 
     One instance, because the writer and the stream have to be looking
@@ -57,12 +55,10 @@ class CommentNotifier(metaclass=SingletonMeta):
     would put a notification parameter on methods with no other reason
     to know a stream exists.
 
-    `SingletonMeta` rather than the `NOTIFIER = CommentNotifier()` this
-    used to end with. Same single instance, reached the same way every
-    other shared object in this codebase is reached, and no module
-    global holding a mutable map. Callers that want to supply their own
-    — `NotificationStream` and `CommentNudge` both take one — are
-    unaffected; they were already the injectable half of this.
+    `SingletonMeta`: the single instance is reached the same way every
+    other shared object in this codebase is reached, with no module
+    global holding a mutable map. `NotificationStream` and `Nudger`
+    both take one, so a test can supply its own.
     """
 
     def __init__(self) -> None:
@@ -98,15 +94,15 @@ class CommentNotifier(metaclass=SingletonMeta):
             try:
                 queue.put_nowait(cursor)
             except asyncio.QueueFull:
-                logger.debug('comment notify dropped for %s: listener is behind', user_id)
+                logger.debug('notify dropped for %s: listener is behind', user_id)
             except Exception:  # noqa: BLE001 — see the docstring
                 # The catch-all is the contract, not laziness: this runs
                 # inside a write that matters more than the nudge, and
                 # `put_nowait` raising anything other than QueueFull is a
                 # defect in this module that still must not roll back
-                # somebody's comment. It is logged at warning with the
+                # the write that triggered it. It is logged at warning with the
                 # traceback, so it is not hidden either.
-                logger.warning('comment notify failed for %s', user_id, exc_info=True)
+                logger.warning('notify failed for %s', user_id, exc_info=True)
 
     def listener_count(self, user_id: str) -> int:
         return len(self._waiters.get(user_id, ()))
@@ -115,8 +111,8 @@ class CommentNotifier(metaclass=SingletonMeta):
         """Drop every waiter.
 
         One process-wide instance means one `_waiters` map shared by
-        every test that touches it. The tests used to build their own
-        `CommentNotifier()` to stay isolated, which worked and quietly
-        meant they were not exercising the object the application uses.
+        every test that touches it, so a test resets it rather than
+        building its own and not exercising the object the application
+        uses.
         """
         self._waiters.clear()

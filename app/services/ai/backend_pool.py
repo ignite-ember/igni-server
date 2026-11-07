@@ -51,10 +51,8 @@ from app.services.ai.schemas import (
     InferenceBackend,
     ModelNotAvailableError,
     NoBackendAvailableError,
-    NoBackendConfiguredError,
     NodeHealth,
     NodeMetrics,
-    PoolType,
     RegisteredNode,
 )
 
@@ -72,13 +70,11 @@ class InferenceBackendPool:
 
     def __init__(
         self,
-        pool_name: str,
         *,
         provider: InferenceBackendProvider | None = None,
         drains: NodeDrainRegistry | None = None,
         lease_timeout: int = DEFAULT_LEASE_TIMEOUT_SECONDS,
     ) -> None:
-        self.pool_name = pool_name
         self.lease_timeout = lease_timeout
         self._provider = provider or InferenceBackendProvider()
         self._drains = drains or NodeDrainRegistry()
@@ -88,9 +84,9 @@ class InferenceBackendPool:
         # ``asyncio.run``, and is still reachable from the tests and from
         # any script that calls ``asyncio.run``.
         self._redis_by_loop: dict[int, aioredis.Redis] = {}
-        self._inflight_prefix = redis_key('backends', pool_name, 'inflight') + ':'
-        self._sticky_prefix = redis_key('backends', pool_name, 'sticky') + ':'
-        self._routing_key = redis_key('backends', pool_name, 'routing')
+        self._inflight_prefix = redis_key('backends', 'inflight') + ':'
+        self._sticky_prefix = redis_key('backends', 'sticky') + ':'
+        self._routing_key = redis_key('backends', 'routing')
 
     # ── Lifecycle ────────────────────────────────────────────────────
 
@@ -117,7 +113,6 @@ class InferenceBackendPool:
     async def lease(
         self,
         user_id: str,
-        pool: PoolType,
         *,
         model: str | None = None,
         exclude_backend_id: str | None = None,
@@ -131,7 +126,7 @@ class InferenceBackendPool:
         up after each one would mean the gauge is wrong for as long as
         the lease timeout, which is exactly when scheduling matters.
         """
-        held = await self.acquire(user_id, pool, model=model, exclude_backend_id=exclude_backend_id)
+        held = await self.acquire(user_id, model=model, exclude_backend_id=exclude_backend_id)
         try:
             yield held
         finally:
@@ -140,12 +135,11 @@ class InferenceBackendPool:
     async def acquire(
         self,
         user_id: str,
-        pool: PoolType,
         *,
         model: str | None = None,
         exclude_backend_id: str | None = None,
     ) -> BackendLease:
-        """Claim the least-loaded backend serving ``pool``.
+        """Claim the least-loaded backend.
 
         Prefer :meth:`lease`. Use this directly only when the release
         point is genuinely elsewhere — a streaming response released when
@@ -164,15 +158,13 @@ class InferenceBackendPool:
         # touched — a request holding a lease finishes on its node, which
         # is what makes this usable before maintenance.
         drained = await self._drains.drained_ids()
-        serving = [backend for backend in backends if pool in backend.pools]
-        candidates = [backend for backend in serving if backend.id not in drained]
+        # ``load`` has already refused an empty list (``BackendConfigError``),
+        # so no candidates means every node was drained: distinguished from
+        # "nothing is configured" because the fix is entirely different —
+        # somebody turned these off and can turn them back on.
+        candidates = [backend for backend in backends if backend.id not in drained]
         if not candidates:
-            if serving:
-                # Distinguished from "nothing is configured", because the
-                # fix is entirely different: somebody turned these off and
-                # can turn them back on.
-                raise AllBackendsDrainedError(pool, [backend.id for backend in serving])
-            raise NoBackendConfiguredError(pool)
+            raise AllBackendsDrainedError([backend.id for backend in backends])
 
         if model is not None:
             # Membership, not equality: a LoRA node serves its base model
@@ -190,16 +182,16 @@ class InferenceBackendPool:
             # the same node again than by failing outright.
             candidates = remaining or candidates
         else:
-            sticky = await self._sticky_pick(redis_client, candidates, pool=pool, user_id=user_id, model=model)
+            sticky = await self._sticky_pick(redis_client, candidates, user_id=user_id, model=model)
             if sticky is not None:
                 return await self._claim(redis_client, sticky, model=model)
 
         chosen = await self._least_loaded(redis_client, candidates)
         if chosen is None:
-            raise NoBackendAvailableError(pool)
+            raise NoBackendAvailableError()
 
         if exclude_backend_id is None:
-            await redis_client.set(self._sticky_key(pool=pool, user_id=user_id, model=model), chosen.id, ex=_STICKY_TTL)
+            await redis_client.set(self._sticky_key(user_id=user_id, model=model), chosen.id, ex=_STICKY_TTL)
         return await self._claim(redis_client, chosen, model=model)
 
     async def release(self, lease: BackendLease) -> None:
@@ -207,8 +199,8 @@ class InferenceBackendPool:
         redis_client = await self._get_redis()
         await redis_client.zrem(f'{self._inflight_prefix}{lease.backend_id}', lease.lease_id)
 
-    async def list_available_models(self, pool: PoolType) -> list[tuple[str, str]]:
-        """Distinct ``(model, base_url)`` pairs serving ``pool``.
+    async def list_available_models(self) -> list[tuple[str, str]]:
+        """Distinct ``(model, base_url)`` pairs.
 
         The CLI asks so it can advertise which model identifiers this
         deployment accepts.
@@ -219,7 +211,7 @@ class InferenceBackendPool:
         drained = await self._drains.drained_ids()
         pairs: dict[tuple[str, str], None] = {}
         for backend in backends:
-            if pool in backend.pools and backend.id not in drained:
+            if backend.id not in drained:
                 # Every id the node answers to, so an adapter is
                 # advertised as its own selectable model.
                 for name in backend.models:
@@ -234,12 +226,11 @@ class InferenceBackendPool:
         health: dict[str, NodeHealth],
         metrics: dict[str, NodeMetrics] | None = None,
     ) -> list[BackendStatus]:
-        """Every backend serving this pool, with its load and its health.
+        """Every backend, with its load and its health.
 
         The portal's node view. Everything cross-cutting is passed in
-        rather than read here, so one page render does one registry read,
-        one source lookup and one round of probes for both pools instead
-        of repeating all three per pool.
+        rather than read here, so the caller decides how often to read the
+        registry, look up sources and probe.
         """
         redis_client = await self._get_redis()
         backends = await self._provider.load()
@@ -248,8 +239,6 @@ class InferenceBackendPool:
 
         statuses = []
         for backend in backends:
-            if self.pool_name not in backend.pools:
-                continue
             node = registered.get(backend.id)
             in_flight = await self._in_flight(redis_client, backend)
             last_seen_ago = (now - node.last_seen) if node is not None else None
@@ -260,7 +249,6 @@ class InferenceBackendPool:
                     id=backend.id,
                     base_url=backend.base_url,
                     models=list(backend.models),
-                    pools=list(backend.pools),
                     multimodal=backend.multimodal,
                     # A node in the registry is registered even if it is
                     # also named elsewhere; the source map holds the two
@@ -284,34 +272,25 @@ class InferenceBackendPool:
         return statuses
 
     async def log_pool_summary(self) -> None:
-        """Log the configured capacity per pool. Called at startup."""
+        """Log the configured nodes and their capacity. Called at startup."""
         try:
             backends = await self._provider.load()
         except Exception as exc:  # noqa: BLE001 — startup logging must not break boot
             logger.warning('Could not load inference backends: %s', exc)
             return
-
-        by_pool: dict[str, tuple[int, int]] = {}
-        for backend in backends:
-            for pool in backend.pools:
-                nodes, capacity = by_pool.get(pool, (0, 0))
-                by_pool[pool] = (nodes + 1, capacity + backend.max_concurrent)
-
-        if not by_pool:
-            logger.warning('No inference backends are configured for any pool')
+        if not backends:
+            logger.warning('No inference backends are configured')
             return
-        summary = ', '.join(
-            f'{pool}: {nodes} node(s), {capacity} concurrent' for pool, (nodes, capacity) in sorted(by_pool.items())
-        )
-        logger.info('Inference backends — %s', summary)
+        capacity = sum(backend.max_concurrent for backend in backends)
+        logger.info('Inference backends — %d node(s), %d concurrent', len(backends), capacity)
 
     # ── Internals ────────────────────────────────────────────────────
 
-    def _sticky_key(self, *, pool: PoolType, user_id: str, model: str | None) -> str:
+    def _sticky_key(self, *, user_id: str, model: str | None) -> str:
         # The model is part of the key so switching model yields a fresh
         # assignment: the old node's cache holds a different model's
         # weights and is no help.
-        suffix = f'{pool}:{user_id}' if model is None else f'{pool}:{model}:{user_id}'
+        suffix = user_id if model is None else f'{model}:{user_id}'
         return f'{self._sticky_prefix}{suffix}'
 
     async def _sticky_pick(
@@ -319,12 +298,11 @@ class InferenceBackendPool:
         redis_client: aioredis.Redis,
         candidates: list[InferenceBackend],
         *,
-        pool: PoolType,
         user_id: str,
         model: str | None,
     ) -> InferenceBackend | None:
         """The user's pinned backend, if it still exists and has room."""
-        assigned = await redis_client.get(self._sticky_key(pool=pool, user_id=user_id, model=model))
+        assigned = await redis_client.get(self._sticky_key(user_id=user_id, model=model))
         if not assigned:
             return None
         backend = next((b for b in candidates if b.id == assigned), None)
@@ -417,9 +395,7 @@ class InferenceBackendPool:
         # hold across processes: every API replica loads the config
         # independently, and per-instance state would mean the first
         # process to notice a change flushed on everyone's behalf while
-        # the rest never did. It also has to be per pool — chat and
-        # codeindex share one provider, so a single shared marker would
-        # let whichever pool checked first consume the change.
+        # the rest never did.
         repointed = {
             backend_id
             for backend_id, routing in current.items()

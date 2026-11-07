@@ -41,7 +41,6 @@ from app.api.base_v1.schema.nodes import (
     PinnedNodeCreate,
     PinnedNodeUpdate,
     PinnedNodeView,
-    PoolStatusView,
 )
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.config import settings
@@ -53,7 +52,7 @@ from app.services.ai.health import NodeHealthProbe
 from app.services.ai.node_drain import NodeDrainRegistry
 from app.services.ai.node_registry import HEARTBEAT_INTERVAL_SECONDS, NodeRegistry
 from app.services.ai.pool_manager import PoolManager
-from app.services.ai.schemas import HealthState, VALID_POOL_TYPES
+from app.services.ai.schemas import HealthState
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +92,12 @@ def require_node_manager(current_user: PortalUser = Depends(get_current_portal_u
     '/inference',
     response_model=InferenceStatusView,
     status_code=status.HTTP_200_OK,
-    description='Live inference node statistics and health for both pools.',
+    description='Live inference node statistics and health.',
 )
 async def get_inference_status(current_user: PortalUser = Depends(require_admin)) -> InferenceStatusView:
     manager = PoolManager()
     provider = manager.provider
 
-    # Read once for both pools. A node serving both would otherwise be
-    # looked up, labelled and probed twice to produce the same answer.
     registered = {node.backend.id: node for node in await NodeRegistry().list_nodes()}
     try:
         backends = await provider.load()
@@ -114,38 +111,29 @@ async def get_inference_status(current_user: PortalUser = Depends(require_admin)
     # which is not a failure of anything.
     metrics = await probe.metrics_for(backends)
 
-    pools = []
-    for pool_type in VALID_POOL_TYPES:
-        try:
-            statuses = await manager.get_pool(pool_type).backend_statuses(
-                registered=registered, sources=sources, health=health, metrics=metrics
-            )
-        except BackendConfigError:
-            # A deployment that has configured no GPUs yet, or whose
-            # config file is currently broken, should see an empty
-            # cluster and the reason on the page — not a 500 that tells
-            # them nothing.
-            statuses = []
-        # Totals over what can actually take work. A drained node's
-        # capacity is not capacity — counting it overstates the number an
-        # operator reads to decide whether they need another GPU. Its own
-        # row still shows its in-flight count, which is what you watch
-        # fall to zero before doing maintenance on it.
-        serving = [s for s in statuses if s.drain is None]
-        in_flight = sum(s.in_flight for s in serving)
-        capacity = sum(s.max_concurrent for s in serving)
-        pools.append(
-            PoolStatusView(
-                pool=pool_type,
-                nodes=[NodeStatusView.of(s) for s in statuses],
-                total_in_flight=in_flight,
-                total_capacity=capacity,
-                utilization=in_flight / capacity if capacity else 0.0,
-            )
+    try:
+        statuses = await manager.get_pool().backend_statuses(
+            registered=registered, sources=sources, health=health, metrics=metrics
         )
+    except BackendConfigError:
+        # A deployment that has configured no GPUs yet, or whose config
+        # file is currently broken, should see an empty cluster and the
+        # reason on the page — not a 500 that tells them nothing.
+        statuses = []
+    # Totals over what can actually take work. A drained node's capacity
+    # is not capacity — counting it overstates the number an operator
+    # reads to decide whether they need another GPU. Its own row still
+    # shows its in-flight count, which is what you watch fall to zero
+    # before doing maintenance on it.
+    serving = [s for s in statuses if s.drain is None]
+    in_flight = sum(s.in_flight for s in serving)
+    capacity = sum(s.max_concurrent for s in serving)
 
     return InferenceStatusView(
-        pools=pools,
+        nodes=[NodeStatusView.of(s) for s in statuses],
+        total_in_flight=in_flight,
+        total_capacity=capacity,
+        utilization=in_flight / capacity if capacity else 0.0,
         registration_enabled=bool(settings.node_registration_token),
         heartbeat_interval_seconds=HEARTBEAT_INTERVAL_SECONDS,
     )
@@ -155,7 +143,7 @@ async def get_inference_status(current_user: PortalUser = Depends(require_admin)
     '/inference/models',
     response_model=AvailableModels,
     status_code=status.HTTP_200_OK,
-    description='Model ids the chat pool serves, for choosing a group default.',
+    description='Model ids the inference nodes serve, for choosing a group default.',
 )
 async def list_models(current_user: PortalUser = Depends(require_admin)) -> AvailableModels:
     """What the portal can offer as a group's model.
@@ -167,7 +155,7 @@ async def list_models(current_user: PortalUser = Depends(require_admin)) -> Avai
     for it logs the admin out.
     """
     try:
-        pairs = await PoolManager().get_chat_pool().list_available_models('chat')
+        pairs = await PoolManager().get_pool().list_available_models()
     except BackendConfigError:
         # No GPUs configured yet is a state to render, not an error.
         return AvailableModels(models=[])
@@ -229,7 +217,6 @@ async def add_node(
             models=list(body.models),
             api_key=body.api_key or None,
             max_concurrent=body.max_concurrent,
-            pools=list(body.pools),
             multimodal=body.multimodal,
             created_by_user_id=current_user.user_id,
         )
@@ -255,7 +242,7 @@ async def get_node(node_id: str, current_user: PortalUser = Depends(require_admi
 
     `GET /inference` answers what the fleet is *doing* — load, health,
     heartbeats — and is the wrong source for a form: it reports a
-    node's live pools rather than its stored ones, and carries no
+    node's live state rather than its stored definition, and carries no
     `enabled` at all. An edit form needs the row as written, which is
     what this returns.
 

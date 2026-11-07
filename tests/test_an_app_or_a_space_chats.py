@@ -50,7 +50,7 @@ class FakeModel:
 
 async def _chat(client, headers: dict[str, str], model: FakeModel):
     with (
-        patch('app.services.ai.pool_manager.PoolManager.get_chat_pool', new=lambda _self: model.pool),
+        patch('app.services.ai.pool_manager.PoolManager.get_pool', new=lambda _self: model.pool),
         patch('app.api.base_v1.endpoints.client.chat._non_stream_response', new=model.answer),
     ):
         return await client.post(

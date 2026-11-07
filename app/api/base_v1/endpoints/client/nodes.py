@@ -88,7 +88,6 @@ async def register_node(request: Request, body: NodeRegistration = Body(...)) ->
         node_id=backend.id,
         base_url=backend.base_url,
         models=list(backend.models),
-        pools=list(backend.pools),
         replaced=bool(existing),
     )
 

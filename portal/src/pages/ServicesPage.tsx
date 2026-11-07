@@ -340,7 +340,7 @@ export function ServicesPage() {
         </PageHeader.TitleArea>
         <PageHeader.Description>
           <Text>
-            Services such as CodeIndex register themselves with this install when they start. An approved one can
+            Services register themselves with this install when they start. An approved one can
             get tokens for every organisation here, and its extension goes to every signed-in machine, so compare its
             key thumbprint with the one it printed in its own log, and read what its extension does, before approving.
             Anybody who can reach igni can register; only the thumbprint says it is yours.

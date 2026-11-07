@@ -246,9 +246,9 @@ class _NoRoom:
     def __init__(self) -> None:
         self.asked = 0
 
-    async def acquire(self, user_id, kind, *, model=None):
+    async def acquire(self, user_id, *, model=None):
         self.asked += 1
-        raise NoBackendAvailableError('chat')
+        raise NoBackendAvailableError()
 
     async def release(self, lease):
         raise AssertionError('nothing was leased')
@@ -264,7 +264,7 @@ async def test_under_uvicorn_a_client_timeout_leaves_the_model_queue(monkeypatch
     monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
     monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
     monkeypatch.setattr(chat_module.GroupsService, 'model_for_user', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_chat_pool=lambda: pool))
+    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_pool=lambda: pool))
     monkeypatch.setattr(chat_module.settings, 'chat_queue_max_wait_seconds', 30)
 
     app = FastAPI()
@@ -306,7 +306,7 @@ async def test_under_uvicorn_a_client_timeout_leaves_the_model_queue(monkeypatch
 class _OneNode:
     """A chat pool with one free node."""
 
-    async def acquire(self, user_id, kind, *, model=None, exclude_backend_id=None):
+    async def acquire(self, user_id, *, model=None, exclude_backend_id=None):
         return _FakeLease()
 
     async def release(self, lease):
@@ -323,7 +323,7 @@ async def test_under_uvicorn_a_client_that_gives_up_leaves_a_499_in_the_access_l
     monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
     monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
     monkeypatch.setattr(chat_module.GroupsService, 'model_for_user', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_chat_pool=lambda: pool))
+    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_pool=lambda: pool))
     monkeypatch.setattr(chat_module.settings, 'chat_queue_max_wait_seconds', 30)
     work = _Work(30)
 

@@ -79,24 +79,6 @@ host, because with the ingress enabled that is where `/.well-known` and
 {{- end -}}
 
 {{/*
-Artifacts' own public URL: its identity. The audience of every token
-issued for it and the base igni calls for erasure and export. Always
-https on its own host — see the `artifacts` block in values.yaml.
-*/}}
-{{- define "igni.artifactsPublicUrl" -}}
-{{- printf "https://%s" (lower .Values.artifacts.host) -}}
-{{- end -}}
-
-{{/*
-This release's API as a pod in the same cluster reaches it. A service
-calls igni here; the issuer it compares tokens against is still
-PUBLIC_BASE_URL, which this need not equal.
-*/}}
-{{- define "igni.apiInClusterUrl" -}}
-{{- printf "http://%s-api.%s.svc:%v" (include "igni.fullname" .) .Release.Namespace .Values.service.apiPort -}}
-{{- end -}}
-
-{{/*
 One NetworkPolicy peer from `{namespaceSelector, podSelector}` label
 maps: both in one peer, so a podSelector narrows the namespace rather
 than widening to that label in every namespace.
@@ -163,20 +145,6 @@ somebody has to read logs to explain.
 {{- end -}}
 {{- if not .Values.redis.host -}}
 {{- fail "redis.host is required. This chart deploys no Redis: bring your own and point at it." -}}
-{{- end -}}
-{{- if .Values.artifacts.enabled -}}
-{{- if not .Values.artifacts.host -}}
-{{- fail "artifacts.host is required when artifacts.enabled is true: a service is served on its own hostname (e.g. artifacts.example.com), never as a path on igni's. Its URL is its identity: the audience of every token issued for it, and where igni calls it to erase or export a person's data. See docs/service-identity.md." -}}
-{{- end -}}
-{{- if or (contains "/" .Values.artifacts.host) (contains ":" .Values.artifacts.host) -}}
-{{- fail "artifacts.host must be a bare hostname such as artifacts.example.com, with no scheme, port or path: the chart publishes it on https:// and gives the service https://<artifacts.host> as its URL." -}}
-{{- end -}}
-{{- if eq (lower .Values.artifacts.host) (lower (.Values.ingress.host | default "")) -}}
-{{- fail "artifacts.host must differ from ingress.host: Artifacts is its own origin, and sharing igni's would make the audience of its tokens ambiguous." -}}
-{{- end -}}
-{{- if not .Values.artifacts.serviceName -}}
-{{- fail "artifacts.serviceName is required when artifacts.enabled is true: it is the Service the artifacts.host ingress rule sends document traffic to." -}}
-{{- end -}}
 {{- end -}}
 {{- if and .Values.secrets.create (not .Values.secrets.existingSecret) -}}
 {{- if not .Values.secrets.secretEncryptionKey -}}

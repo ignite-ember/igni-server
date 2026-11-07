@@ -31,7 +31,7 @@ MODELS = [('igni-1.0-27b', 'http://gpu-01:8000/v1'), ('legal-reviewer', 'http://
 def served_models(monkeypatch):
     """A pool serving a base model and one adapter."""
 
-    async def _list(self, pool):
+    async def _list(self):
         return MODELS
 
     monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _list)
@@ -112,7 +112,7 @@ class TestRefusingWhatNothingServes:
     async def test_a_broken_pool_does_not_block_group_edits(self, client, admin, monkeypatch):
         """Group administration should not require the GPUs to be up."""
 
-        async def _boom(self, pool):
+        async def _boom(self):
             raise ConnectionError('redis is down')
 
         monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _boom)

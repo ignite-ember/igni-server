@@ -32,7 +32,6 @@ def _lora_node(node_id='gpu-01', base='base-27b', adapters=('sql-expert', 'docs-
         base_url=f'http://{node_id}.internal:8000/v1',
         models=[base, *adapters],
         max_concurrent=8,
-        pools=['chat'],
     )
 
 
@@ -41,9 +40,7 @@ def pool(tmp_path):
     def build(backends: list[InferenceBackend]):
         path = tmp_path / f'backends-{id(backends)}.json'
         path.write_text(json.dumps([b.model_dump() for b in backends]))
-        instance = InferenceBackendPool(
-            'chat', provider=InferenceBackendProvider(path=str(path), registry=FakeRegistry())
-        )
+        instance = InferenceBackendPool(provider=InferenceBackendProvider(path=str(path), registry=FakeRegistry()))
         redis = FakeRedis()
 
         async def _stub():
@@ -80,12 +77,12 @@ class TestConfiguring:
 class TestSelection:
     async def test_an_adapter_selects_its_node(self, pool):
         instance, _ = pool([_lora_node('gpu-01', adapters=('sql-expert',)), _lora_node('gpu-02', adapters=())])
-        lease = await instance.acquire('alice', 'chat', model='sql-expert')
+        lease = await instance.acquire('alice', model='sql-expert')
         assert lease.backend_id == 'gpu-01'
 
     async def test_the_base_model_selects_either(self, pool):
         instance, _ = pool([_lora_node('gpu-01'), _lora_node('gpu-02')])
-        lease = await instance.acquire('alice', 'chat', model='base-27b')
+        lease = await instance.acquire('alice', model='base-27b')
         assert lease.backend_id in {'gpu-01', 'gpu-02'}
 
     async def test_an_unknown_adapter_lists_what_is_there(self, pool):
@@ -94,7 +91,7 @@ class TestSelection:
         simply on another node."""
         instance, _ = pool([_lora_node('gpu-01')])
         with pytest.raises(ModelNotAvailableError) as exc:
-            await instance.acquire('alice', 'chat', model='nonexistent')
+            await instance.acquire('alice', model='nonexistent')
         assert 'sql-expert' in str(exc.value)
         assert 'docs-writer' in str(exc.value)
 
@@ -105,12 +102,12 @@ class TestTheLease:
         adapter was requested serves plausible output from the wrong
         weights, and nothing fails."""
         instance, _ = pool([_lora_node()])
-        lease = await instance.acquire('alice', 'chat', model='sql-expert')
+        lease = await instance.acquire('alice', model='sql-expert')
         assert lease.model == 'sql-expert'
 
     async def test_an_unspecified_request_gets_the_base_model(self, pool):
         instance, _ = pool([_lora_node()])
-        lease = await instance.acquire('alice', 'chat')
+        lease = await instance.acquire('alice')
         assert lease.model == 'base-27b'
 
 
@@ -121,13 +118,13 @@ class TestCapacityIsPerNode:
         names."""
         instance, _ = pool([_lora_node('gpu-01', adapters=('sql-expert',))])
 
-        held = [await instance.acquire(f'u{i}', 'chat', model='base-27b') for i in range(8)]
+        held = [await instance.acquire(f'u{i}', model='base-27b') for i in range(8)]
         assert len(held) == 8
 
         from app.services.ai.schemas import NoBackendAvailableError
 
         with pytest.raises(NoBackendAvailableError):
-            await instance.acquire('late', 'chat', model='sql-expert')
+            await instance.acquire('late', model='sql-expert')
 
 
 class TestAdvertising:
@@ -135,7 +132,7 @@ class TestAdvertising:
         """The CLI lists these, so an adapter nobody can see is an adapter
         nobody uses."""
         instance, _ = pool([_lora_node()])
-        names = {name for name, _ in await instance.list_available_models('chat')}
+        names = {name for name, _ in await instance.list_available_models()}
         assert names == {'base-27b', 'sql-expert', 'docs-writer'}
 
 

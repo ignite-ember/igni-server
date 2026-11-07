@@ -130,7 +130,7 @@ class EmailDelivery:
     def note_undeliverable(self, *, purpose: str, email: str) -> None:
         """Log a message that was dropped and carries nothing to recover.
 
-        Welcome notes and indexing notifications, where the content is
+        Welcome notes and other notices, where the content is
         informational and losing it costs nothing that has to be
         replaced by hand.
         """

@@ -68,14 +68,6 @@ AUDIT_WRITE_FAILURES = Counter(
     registry=REGISTRY,
 )
 
-# ── Webhooks ─────────────────────────────────────────────────────────
-#
-# Rejections are normal in small numbers — a stale secret after a
-# rotation, a provider retrying an old delivery. A sustained rate of
-# `invalid_signature` from a host that should not be sending is the
-# interesting case, and it is invisible in the application log unless
-# somebody is reading it.
-
 # ── Retention (DP-6, DP-7) ───────────────────────────────────────────
 RETENTION_FAILURES = Counter(
     'igni_retention_failures_total',

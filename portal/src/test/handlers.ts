@@ -94,10 +94,10 @@ export const defaultHandlers = [
   // an error.
   http.get('/v1/portal/inference', () =>
     HttpResponse.json({
-      pools: [
-        { pool: 'chat', nodes: [], total_in_flight: 0, total_capacity: 0, utilization: 0 },
-        { pool: 'codeindex', nodes: [], total_in_flight: 0, total_capacity: 0, utilization: 0 },
-      ],
+      nodes: [],
+      total_in_flight: 0,
+      total_capacity: 0,
+      utilization: 0,
       registration_enabled: false,
       heartbeat_interval_seconds: 60,
     }),

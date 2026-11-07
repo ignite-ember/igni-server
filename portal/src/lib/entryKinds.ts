@@ -287,17 +287,13 @@ export const ENTRY_KINDS: EntryKindSpec[] = [
     // The template shows the two switches an admin reaches for most,
     // set to their defaults — so it teaches the shape and the key names
     // while saving it unedited changes nothing. `{"<key>": "<value>"}`
-    // taught neither.
-    //
-    // Both are Neo4j-backed. Turning CodeIndex off drops the tool, the
-    // CodeIndex-first prompt and the changeset sync; turning knowledge
-    // off as well is what skips the Neo4j sidecar entirely, so a member
-    // who does not read code never downloads or runs a graph database.
+    // taught neither. Only igni's own keys: an extension documents its
+    // settings itself.
     path: '.igni/settings.json',
     template: [
       '{',
-      '  "code_index": { "enabled": true },',
-      '  "knowledge": { "enabled": true }',
+      '  "learning": { "enabled": true },',
+      '  "display": { "show_tool_calls": true }',
       '}',
       '',
     ].join('\n'),

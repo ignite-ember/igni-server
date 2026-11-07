@@ -12,8 +12,6 @@ export interface UsageDataPoint {
 
 // ─── Inference nodes ────────────────────────────────────────────────
 
-export type PoolType = 'chat' | 'codeindex'
-
 /**
  * Where a node came from. The two are operated differently — a
  * configured node changes by editing config and redeploying, a
@@ -62,7 +60,6 @@ export interface NodeStatus {
   base_url: string
   /** Every id this node answers to: the base model, plus any LoRA adapters. */
   models: string[]
-  pools: PoolType[]
   multimodal: boolean
   source: NodeSource
   in_flight: number
@@ -88,13 +85,6 @@ export interface NodeDrain {
   reason: string | null
 }
 
-export interface PoolStatus {
-  pool: PoolType
-  nodes: NodeStatus[]
-  total_in_flight: number
-  total_capacity: number
-  utilization: number
-}
 
 /** A node an admin added by hand. The api_key is never returned. */
 export interface PinnedNode {
@@ -102,7 +92,6 @@ export interface PinnedNode {
   base_url: string
   models: string[]
   max_concurrent: number
-  pools: PoolType[]
   multimodal: boolean
   enabled: boolean
   has_api_key: boolean
@@ -114,7 +103,6 @@ export interface PinnedNodeInput {
   models: string[]
   api_key?: string
   max_concurrent: number
-  pools: PoolType[]
   multimodal: boolean
 }
 
@@ -137,7 +125,10 @@ export interface NodeProbeResult {
 }
 
 export interface InferenceStatus {
-  pools: PoolStatus[]
+  nodes: NodeStatus[]
+  total_in_flight: number
+  total_capacity: number
+  utilization: number
   /**
    * Whether this deployment accepts self-registration at all. Without
    * it, "nothing has registered" and "registration is switched off" look

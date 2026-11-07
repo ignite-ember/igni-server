@@ -155,7 +155,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 
 | Table | Held | Returned on a subject-access request | Withheld | Not personal |
 |---|---|---|---|---|
-| `inference_nodes` | 2 | `created_at`, `created_by_user_id` | — | 11 |
+| `inference_nodes` | 2 | `created_at`, `created_by_user_id` | — | 10 |
 
 ### The cloud's producers and their VMs
 
