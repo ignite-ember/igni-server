@@ -15,6 +15,17 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
+### Added
+
+- **Personal API keys.** A person makes a key on the portal (*API keys*) and
+  gives it to a program, which exchanges it at the token endpoint
+  (`urn:igni:params:oauth:grant-type:api-key`) for a 15-minute session as
+  them — igni server's API, and their igni in Fleet. Keys expire (30, 90 or
+  365 days), stop when the person signs out everywhere, leaves or is
+  deactivated, and are recorded at every exchange. A key's session cannot
+  make keys, take a CLI session, sign a VM in or authorise a service.
+  [docs/service-identity.md](docs/service-identity.md) §22.
+
 ### Changed
 
 - Releases are built, signed and sealed by `.github/workflows/release.yml`,

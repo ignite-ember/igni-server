@@ -221,6 +221,9 @@ class VmCredentials:
         claims = JWTService().decode_token(request.subject_token or '')
         if not claims.user_id:
             raise OAuthError.invalid_grant("subject_token must be the person's igni session")
+        if claims.api_key_id:
+            # A VM credential lives 90 days; a key's session buys none (§22).
+            raise OAuthError.invalid_grant('a session from an API key cannot sign a VM in')
         org_id = request.organisation or claims.org_id
         if not org_id:
             raise OAuthError.invalid_request('organisation is required: this session is not pinned to one')

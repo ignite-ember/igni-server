@@ -39,13 +39,23 @@ class ServerMetadata(BaseModel):
     id_token_signing_alg_values_supported: list[str] = ['RS256']
     subject_types_supported: list[str] = ['public']
     client_assertion_type: str = ASSERTION_TYPE
+    #: Fleet's gateway, where a producer's igni is reached (`FLEET_GATEWAY_URL`);
+    #: absent when this deployment has no Fleet. igni's SDK reads it so a program
+    #: needs only this server's address.
+    igni_gateway: str | None = None
 
 
-@router.get('/.well-known/openid-configuration', response_model=ServerMetadata, tags=['Identity'])
+@router.get(
+    '/.well-known/openid-configuration',
+    response_model=ServerMetadata,
+    response_model_exclude_none=True,
+    tags=['Identity'],
+)
 async def metadata(response: Response) -> ServerMetadata:
     response.headers['Cache-Control'] = f'public, max-age={int(RELOAD_EVERY.total_seconds())}'
     issuer = JWTService().issuer
     grants = TokenGrants()
+    # A field left out rather than published as null when there is no Fleet.
     return ServerMetadata(
         issuer=issuer,
         jwks_uri=f'{issuer}/.well-known/jwks.json',
@@ -57,6 +67,7 @@ async def metadata(response: Response) -> ServerMetadata:
         registration_endpoint=f'{issuer}/v1/clients',
         directory_endpoint=f'{issuer}/v1/directory',
         grant_types_supported=GRANT_TYPES,
+        igni_gateway=settings.fleet_gateway_url.rstrip('/') or None,
     )
 
 

@@ -276,6 +276,18 @@ PERSONAL_DATA_COLUMNS: dict[str, str] = {
     'vm_credentials.revoked_by_id': 'included',
     'vm_credentials.secret_hash': 'withheld',
     'vm_credentials.previous_hashes': 'withheld',
+    # Their personal API keys: what they called each, when it was made,
+    # last used, expires, and why it stopped. Never the key — only a hash
+    # of its secret is kept.
+    'api_keys.user_id': 'included',
+    'api_keys.name': 'included',
+    'api_keys.created_at': 'included',
+    'api_keys.expires_at': 'included',
+    'api_keys.last_used_at': 'included',
+    'api_keys.revoked_at': 'included',
+    'api_keys.revoked_reason': 'included',
+    'api_keys.revoked_by_id': 'included',
+    'api_keys.secret_hash': 'withheld',
     # Which MCP servers they approved, from which configuration, when.
     'person_mcp_approvals.user_id': 'included',
     'person_mcp_approvals.server_name': 'included',
@@ -650,6 +662,7 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'service_attachments.client_id',
         'vm_credentials.id',
         'vm_credentials.audience',
+        'api_keys.id',
         'vm_credentials.generation',
         'vm_credentials.pending_pickup',
         'vm_credentials.picked_up_at',
@@ -861,7 +874,7 @@ class SubjectAccessService(metaclass=SingletonMeta):
                 ),
                 'service_attachments.content': (
                     'The bytes of files a service sent your agent. They are described '
-                    'above; the bytes were the service\'s to send, are kept at most 14 '
+                    "above; the bytes were the service's to send, are kept at most 14 "
                     'days, and the copy imported into your chat is in your igni.'
                 ),
                 'vm_credentials.secret_hash': (
@@ -871,6 +884,10 @@ class SubjectAccessService(metaclass=SingletonMeta):
                 'vm_credentials.previous_hashes': (
                     "Hashes of your cloud VM's earlier credentials, kept to notice one "
                     'being reused. Withheld for the same reason.'
+                ),
+                'api_keys.secret_hash': (
+                    'Hashes of your API keys. A hash cannot be used to act as you, but '
+                    'it is a credential check, not information about you.'
                 ),
                 'producer_feed_marks.producer_id': (
                     "That something about you changed and the cloud's gateway has yet to "
@@ -886,7 +903,7 @@ class SubjectAccessService(metaclass=SingletonMeta):
                     'same change is in your own audit activity above.'
                 ),
                 'producer_exports.content_oid': (
-                    "An archive of your data in an organisation you were removed from, "
+                    'An archive of your data in an organisation you were removed from, '
                     'exported for that organisation, which controls it, during its '
                     'retention. Ask the organisation for it; it is deleted when it expires.'
                 ),

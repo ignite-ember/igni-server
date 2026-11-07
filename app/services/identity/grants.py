@@ -86,6 +86,9 @@ class TokenRequest(BaseModel):
     #: `urn:igni:params:oauth:grant-type:vm-credential`: the VM's own
     #: credential (`app.services.cloud.vm_credentials`).
     vm_credential: str | None = None
+    #: `urn:igni:params:oauth:grant-type:api-key`: a person's API key
+    #: (`app.services.identity.api_keys`).
+    api_key: str | None = None
     #: `revocations`: a service token for no organisation, good only for
     #: following revocations and the organisations it serves (§3, §21).
     scope: str | None = None

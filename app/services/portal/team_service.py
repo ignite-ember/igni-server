@@ -24,6 +24,7 @@ from app.security.account_domains import email_domain
 from app.services.cloud.producer_feed import ProducerFeed
 from app.services.cloud.revocations import Revocations
 from app.services.cloud.vm_credentials import VmCredentials
+from app.services.identity.api_keys import ApiKeys
 from app.services.portal.member_status import MemberStatus
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,7 @@ class TeamService:
 
         watermark = await self._user_db.withdraw_sessions(user_id)
         await VmCredentials().revoke_person(user_id)
+        await ApiKeys().revoke_person(user_id)
         await Revocations().sessions_withdrawn(user_id, watermark)
         logger.info(
             'Sessions withdrawn for %s in org %s by %s, valid after %s',
@@ -290,3 +292,4 @@ class TeamService:
         async with ProducerFeed().removal():
             await self._db.delete(current_user.org_id, user_id)
         await VmCredentials().revoke_person(user_id, org_ids=[current_user.org_id])
+        await ApiKeys().revoke_person(user_id, org_ids=[current_user.org_id])

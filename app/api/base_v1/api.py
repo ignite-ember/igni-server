@@ -37,6 +37,7 @@ from .endpoints.platform import (
 )
 from .endpoints.portal import (
     access_review,
+    api_keys as portal_api_keys,
     apps as portal_apps,
     audit,
     authorize as portal_authorize,
@@ -103,6 +104,7 @@ portal_router.include_router(groups.router, tags=['Portal - Groups'])
 portal_router.include_router(portal_apps.router, tags=['Portal - Apps'])
 portal_router.include_router(portal_vm_profiles.router, tags=['Portal - VM profiles'])
 portal_router.include_router(portal_vm_credentials.router, tags=['Portal - VM credentials'])
+portal_router.include_router(portal_api_keys.router, tags=['Portal - API keys'])
 portal_router.include_router(space_limits.router, tags=['Portal - Spaces'])
 portal_router.include_router(producer_volumes.router, tags=['Portal - VM profiles'])
 portal_router.include_router(portal_retention.router, tags=['Portal - Retention'])

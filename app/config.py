@@ -328,6 +328,11 @@ class Settings(BaseSettings):
 
     # MCP Gateway
     mcp_gateway_url: str = Field(default='http://mcp_gateway:7778', description='MCP Gateway service URL')
+    # Where people's and apps' programs reach Fleet's gateway — its public
+    # URL, as `igni-gateway`'s `[public] listen` is published. Announced in
+    # `/.well-known/openid-configuration` as `igni_gateway`, so igni's SDK
+    # needs only this server's address. Empty: no Fleet here.
+    fleet_gateway_url: str = Field(default='', description="Fleet gateway's public URL; empty when there is no Fleet")
 
     # ── Secrets at rest ──────────────────────────────────────────────
     # Fernet key encrypting the secrets this deployment stores in its own

@@ -406,6 +406,8 @@ _SECRET_NAMED_BUT_NOT_A_SECRET = {
     # SHA-256 of the credential and of its superseded generations.
     ('vm_credentials', 'secret_hash'): 'a hash',
     ('vm_credentials', 'previous_hashes'): 'hashes',
+    # SHA-256 of a personal API key's 256-bit secret; the key is shown once.
+    ('api_keys', 'secret_hash'): 'a hash',
     # Never written by anything (`test_invite_cannot_be_guessed.py`).
     ('org_invitations', 'token'): 'a dead column',
     # Never written by anything: a pending address is confirmed with a

@@ -24,6 +24,7 @@ from app.api.base_v1.schema.portal.user import PortalAccount
 from app.db.redis.authorization_codes import AuthorizationCodeDB, PendingAuthorization
 from app.db.sql.models.registered_client import RegisteredClient
 from app.db.sql.organizations import OrganizationDB
+from app.security.api_key_sessions import no_api_key_session
 from app.security.portal_auth import get_current_account
 from app.services.identity.registry import ClientRegistry
 
@@ -81,7 +82,7 @@ async def describe(
     )
 
 
-@router.post('/oauth/authorize', response_model=Redirect)
+@router.post('/oauth/authorize', response_model=Redirect, dependencies=[Depends(no_api_key_session)])
 async def authorize(body: Authorize, account: PortalAccount = Depends(get_current_account)) -> Redirect:
     client = await _client(body.client_id, body.redirect_uri)
     if body.code_challenge_method != 'S256':

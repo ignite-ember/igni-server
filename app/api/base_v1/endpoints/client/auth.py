@@ -15,6 +15,7 @@ from app.api.base_v1.schema.auth import (
 from app.db.redis.auth_handoff import AuthHandoffDB
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
+from app.security.api_key_sessions import is_api_key_session, REFUSED as API_KEY_SESSION_REFUSED
 from app.security.subject import resolve_existing_user_id
 from app.services.auth.auth_service import AuthService
 from app.services.auth.jwt_service import JWTService, TokenResponse
@@ -259,6 +260,9 @@ async def create_cli_token(
     # Minting a fresh token for somebody who no longer exists would
     # hand out 30 more days on the strength of an old one. F122.
     user_id = await resolve_existing_user_id(token)
+    # Nor 30 days on the strength of a 15-minute session an API key bought (§22).
+    if is_api_key_session(token):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=API_KEY_SESSION_REFUSED)
 
     membership = await _team_db.get_active_member(body.org_id, user_id)
     if not membership:

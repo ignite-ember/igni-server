@@ -90,6 +90,10 @@ class TokenClaims:
     #: the time (`GET /v1/extensions` answers with it), never from this
     #: claim alone.
     group: str | None = None
+    #: The personal API key this session was bought with, if it was
+    #: (`docs/service-identity.md` §22). Such a session may do what the
+    #: person may, except mint further credentials.
+    api_key_id: str | None = None
 
 
 class JWTService:
@@ -123,15 +127,20 @@ class JWTService:
         org_name: str | None = None,
         group: str | None = None,
         incarnation: str | None = None,
+        api_key_id: str | None = None,
     ) -> str:
         """A session for `user_id`, optionally pinned to an organisation and carrying its group there.
 
         *incarnation* — the membership a VM's token is for (§11.3) — is
         carried as `inc`, so the gateway can match it to the feed.
+        *api_key_id* — the personal API key the session was exchanged for
+        (§22) — is carried as `api_key`.
         """
         extra: dict[str, object] = {'kind': PERSON}
         if incarnation:
             extra['inc'] = incarnation
+        if api_key_id:
+            extra['api_key'] = api_key_id
         if org_id:
             extra['org'] = org_id
             if group:
@@ -159,6 +168,7 @@ class JWTService:
             org_name=str(payload['org_name']) if 'org_name' in payload else None,
             issued_at=int(issued_at) if issued_at is not None else None,
             group=str(payload['group']) if payload.get('group') else None,
+            api_key_id=str(payload['api_key']) if payload.get('api_key') else None,
         )
 
     def decode_user_id(self, token: str) -> str | None:
