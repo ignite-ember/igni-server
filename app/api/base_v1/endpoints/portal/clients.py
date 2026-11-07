@@ -18,214 +18,159 @@ path.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel
 
+from app.api.base_v1.schema.portal.clients import ClientDetail, ClientSummary
 from app.api.base_v1.schema.portal.user import PortalAccount
-from app.db.sql.models.registered_client import RegisteredClient
-from app.db.sql.models.service_extension import ServiceExtension
-from app.db.sql.registered_clients import RegisteredClientDB
-from app.db.sql.service_extensions import ServiceExtensionDB
 from app.middlewares.audit import set_audit_detail, set_audit_target
 from app.security.deployment_admin import require_deployment_admin
-from app.services.identity.extension_review import ExtensionReview, ExtensionReviews
-from app.services.identity.extensions import ExtensionConflict, HeldUpdate, HeldUpdates
-from app.services.identity.registry import ClientRegistry, ExtensionIdTaken
+from app.services.identity.client_review import (
+    client_review,
+    ClientNotFound,
+    ClientReview,
+    HeldDecision,
+    NoHeldUpdate,
+    ReviewedClient,
+)
+from app.services.identity.extensions import ExtensionConflict, HeldUpdate
+from app.services.identity.registry import ExtensionIdTaken
 
 router = APIRouter()
 
-
-class ExtensionSummary(BaseModel):
-    extension_id: str
-    version: str
-    name: str
-    description: str
-    published_at: datetime
-
-    @classmethod
-    def of(cls, extension: ServiceExtension) -> ExtensionSummary:
-        return cls(
-            extension_id=extension.extension_id,
-            version=extension.version,
-            name=str(extension.manifest.get('name') or extension.extension_id),
-            description=str(extension.manifest.get('description') or ''),
-            published_at=extension.published_at,
-        )
-
-
-class ExtensionDetail(ExtensionSummary):
-    """Everything the extension would put on people's machines.
-
-    `manifest` is the whole manifest as the service sent it: what it
-    adds (pages, menus, commands, indicators, settings, its prompt
-    contributions), what it may touch (`permissions`) and what it needs
-    (`requires`). `plugin` lists its own agents, the agents of igni's it
-    stands in for, and its skills. `review` is its impact on igni and
-    every collision it is in, with who wins it by priority.
-    """
-
-    sha256: str
-    manifest: dict[str, object]
-    plugin: dict[str, object]
-    review: ExtensionReview | None = None
-
-
-class ClientSummary(BaseModel):
-    client_id: str
-    kind: str
-    name: str
-    base_url: str
-    redirect_uris: list[str]
-    #: Compare with the one the client printed before approving.
-    thumbprint: str
-    state: str
-    created_at: datetime
-    decided_at: datetime | None = None
-    #: What it ships to people's machines, if it has uploaded anything.
-    extension: ExtensionSummary | None = None
-    #: A newer version that asks for more, waiting for a super admin.
-    held_version: str | None = None
-
-    @classmethod
-    def of(
-        cls,
-        client: RegisteredClient,
-        extension: ServiceExtension | None = None,
-        held: ServiceExtension | None = None,
-    ) -> ClientSummary:
-        return cls(
-            client_id=client.client_id,
-            kind=client.kind,
-            name=client.name,
-            base_url=client.base_url,
-            redirect_uris=list(client.redirect_uris or []),
-            thumbprint=client.thumbprint,
-            state=client.state,
-            created_at=client.created_at,
-            decided_at=client.decided_at,
-            extension=ExtensionSummary.of(extension) if extension is not None else None,
-            held_version=held.version if held is not None else None,
-        )
-
-
-class ClientDetail(ClientSummary):
-    extension_detail: ExtensionDetail | None = None
-    #: The held version and what it adds, if one is waiting.
-    held_update: HeldUpdate | None = None
+_NO_SUCH_CLIENT = 'No such client'
+_NO_HELD_UPDATE = 'This service has no update waiting'
 
 
 @router.get('/clients', response_model=list[ClientSummary])
-async def list_clients(_admin: PortalAccount | None = Depends(require_deployment_admin)) -> list[ClientSummary]:
-    store = ServiceExtensionDB()
-    extensions = await store.all_described()
-    held = await store.all_held()
-    return [
-        ClientSummary.of(client, extensions.get(client.client_id), held.get(client.client_id))
-        for client in await ClientRegistry().all()
-    ]
+async def list_clients(
+    _admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
+) -> list[ClientSummary]:
+    return [ClientSummary.of(reviewed) for reviewed in await review.all()]
 
 
 @router.get('/held-updates', response_model=list[HeldUpdate])
-async def held_updates(_admin: PortalAccount | None = Depends(require_deployment_admin)) -> list[HeldUpdate]:
+async def held_updates(
+    _admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
+) -> list[HeldUpdate]:
     """Every held version, oldest first, each with what it asks for that the approved one did not."""
-    return await HeldUpdates().all()
+    return await review.held_updates()
 
 
 @router.get('/clients/{client_id}', response_model=ClientDetail)
 async def client_detail(
-    client_id: str, _admin: PortalAccount | None = Depends(require_deployment_admin)
+    client_id: str,
+    _admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
 ) -> ClientDetail:
-    client = await RegisteredClientDB().get(client_id)
-    if client is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such client')
-    store = ServiceExtensionDB()
-    extension = await store.of(client_id)
-    held = await HeldUpdates().of(client_id)
-    summary = ClientSummary.of(client, extension, await store.held_of(client_id))
-    detail = (
-        ExtensionDetail(
-            **ExtensionSummary.of(extension).model_dump(),
-            sha256=extension.sha256,
-            manifest=dict(extension.manifest),
-            plugin=dict(extension.plugin),
-            review=await ExtensionReviews().review(client_id),
-        )
-        if extension is not None
-        else None
-    )
-    return ClientDetail(**summary.model_dump(), extension_detail=detail, held_update=held)
-
-
-async def _decide(request: Request, client_id: str, decision: str, admin: PortalAccount | None) -> ClientSummary:
-    registry = ClientRegistry()
-    by = admin.user_id if admin else None
     try:
-        client = (
-            await registry.approve(client_id, by_user_id=by)
-            if decision == 'approved'
-            else await registry.revoke(client_id, by_user_id=by)
-        )
-    except ExtensionIdTaken as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    if client is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such client')
-    set_audit_target(request, target_type='registered_client', target_id=client_id)
-    set_audit_detail(request, {'client': client.name, 'decision': decision, 'thumbprint': client.thumbprint})
-    store = ServiceExtensionDB()
-    return ClientSummary.of(client, await store.of(client_id), await store.held_of(client_id))
+        dossier = await review.dossier(client_id)
+    except ClientNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_SUCH_CLIENT) from exc
+    return ClientDetail.of_dossier(dossier)
 
 
 @router.post('/clients/{client_id}/approve', response_model=ClientSummary)
 async def approve(
-    request: Request, client_id: str, admin: PortalAccount | None = Depends(require_deployment_admin)
+    request: Request,
+    client_id: str,
+    admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
 ) -> ClientSummary:
-    return await _decide(request, client_id, 'approved', admin)
+    try:
+        reviewed = await review.approve(client_id, by_user_id=admin.user_id if admin else None)
+    except ExtensionIdTaken as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ClientNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_SUCH_CLIENT) from exc
+    _audit_decision(request, reviewed=reviewed, decision='approved')
+    return ClientSummary.of(reviewed)
 
 
 @router.post('/clients/{client_id}/revoke', response_model=ClientSummary)
 async def revoke(
-    request: Request, client_id: str, admin: PortalAccount | None = Depends(require_deployment_admin)
+    request: Request,
+    client_id: str,
+    admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
 ) -> ClientSummary:
-    return await _decide(request, client_id, 'revoked', admin)
+    try:
+        reviewed = await review.revoke(client_id, by_user_id=admin.user_id if admin else None)
+    except ClientNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_SUCH_CLIENT) from exc
+    _audit_decision(request, reviewed=reviewed, decision='revoked')
+    return ClientSummary.of(reviewed)
 
 
 @router.delete('/clients/{client_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def remove(
-    request: Request, client_id: str, _admin: PortalAccount | None = Depends(require_deployment_admin)
+    request: Request,
+    client_id: str,
+    _admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
 ) -> Response:
     """Forget a registration — a stray one, or one revoked for good.
 
     The client can register again with the same key, and starts over
     as pending.
     """
-    if not await ClientRegistry().remove(client_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such client')
+    try:
+        await review.remove(client_id)
+    except ClientNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_SUCH_CLIENT) from exc
     set_audit_target(request, target_type='registered_client', target_id=client_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-async def _decide_held(request: Request, client_id: str, decision: str) -> ClientSummary:
-    """Approve or reject the version a service is waiting on, and say so in the audit trail."""
-    client = await RegisteredClientDB().get(client_id)
-    updates = HeldUpdates()
-    held = await updates.of(client_id)
-    if client is None or held is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='This service has no update waiting')
-    if decision == 'approved':
-        try:
-            await updates.approve(client_id)
-        except ExtensionConflict as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    else:
-        await updates.reject(client_id)
-    set_audit_target(request, target_type='registered_client', target_id=client_id)
+@router.post('/clients/{client_id}/held-update/approve', response_model=ClientSummary)
+async def approve_held_update(
+    request: Request,
+    client_id: str,
+    _admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
+) -> ClientSummary:
+    """The held version becomes the approved one, and machines receive it."""
+    try:
+        decision = await review.approve_held(client_id)
+    except NoHeldUpdate as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_HELD_UPDATE) from exc
+    except ExtensionConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    _audit_held_decision(request, decision=decision, outcome='approved')
+    return ClientSummary.of(decision.reviewed)
+
+
+@router.post('/clients/{client_id}/held-update/reject', response_model=ClientSummary)
+async def reject_held_update(
+    request: Request,
+    client_id: str,
+    _admin: PortalAccount | None = Depends(require_deployment_admin),
+    review: ClientReview = Depends(client_review),
+) -> ClientSummary:
+    """The held version is discarded; the service stays on the approved one."""
+    try:
+        decision = await review.reject_held(client_id)
+    except NoHeldUpdate as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_HELD_UPDATE) from exc
+    _audit_held_decision(request, decision=decision, outcome='rejected')
+    return ClientSummary.of(decision.reviewed)
+
+
+def _audit_decision(request: Request, *, reviewed: ReviewedClient, decision: str) -> None:
+    client = reviewed.client
+    set_audit_target(request, target_type='registered_client', target_id=client.client_id)
+    set_audit_detail(request, {'client': client.name, 'decision': decision, 'thumbprint': client.thumbprint})
+
+
+def _audit_held_decision(request: Request, *, decision: HeldDecision, outcome: str) -> None:
+    client, held = decision.reviewed.client, decision.decided
+    set_audit_target(request, target_type='registered_client', target_id=client.client_id)
     set_audit_detail(
         request,
         {
             'client': client.name,
-            'decision': f'held update {decision}',
+            'decision': f'held update {outcome}',
             'extension': held.extension_id,
             'version': held.version,
             'sha256': held.sha256,
@@ -233,21 +178,3 @@ async def _decide_held(request: Request, client_id: str, decision: str) -> Clien
             'added': [grant.text for grant in held.comparison.added],
         },
     )
-    store = ServiceExtensionDB()
-    return ClientSummary.of(client, await store.of(client_id), await store.held_of(client_id))
-
-
-@router.post('/clients/{client_id}/held-update/approve', response_model=ClientSummary)
-async def approve_held_update(
-    request: Request, client_id: str, _admin: PortalAccount | None = Depends(require_deployment_admin)
-) -> ClientSummary:
-    """The held version becomes the approved one, and machines receive it."""
-    return await _decide_held(request, client_id, 'approved')
-
-
-@router.post('/clients/{client_id}/held-update/reject', response_model=ClientSummary)
-async def reject_held_update(
-    request: Request, client_id: str, _admin: PortalAccount | None = Depends(require_deployment_admin)
-) -> ClientSummary:
-    """The held version is discarded; the service stays on the approved one."""
-    return await _decide_held(request, client_id, 'rejected')

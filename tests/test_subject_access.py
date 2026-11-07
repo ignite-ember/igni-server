@@ -27,25 +27,27 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import inspect
 import json
+import re
 import uuid
 
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine, text
 
+from app.config import settings
+from app.db.sql.schemas.subject_access import ThingsTheyCreated
 from app.db.sql.subject_access import ACTIVITY_LIMIT, SubjectAccessDB
 from app.db.sql.tenant_migrator import TenantMigrator
 from app.db.sql.tenant_names import TenantNames
 from app.services.identity.service_subjects import ExportAnswers
 from app.services.subject_access.classification import ColumnRegistry
-from app.services.subject_access.not_personal_columns import NOT_PERSONAL_COLUMNS
-from app.services.subject_access.personal_columns import PERSONAL_DATA_COLUMNS
 from app.services.subject_access.processing import ProcessingDescription
 from app.services.subject_access.report_builder import SubjectAccessReportBuilder
 from app.services.subject_access.schemas import (
     ColumnClassification,
     ColumnVerdict,
     InvalidSubjectAddress,
+    Section,
     SubjectAccessReport,
     SubjectAccessSections,
 )
@@ -219,7 +221,8 @@ class TestTheCoverageRule:
     def test_nothing_is_both_personal_and_not(self):
         """The two collections partition the columns. An entry in both
         means the rule above passes while the question is unanswered."""
-        both = sorted(set(PERSONAL_DATA_COLUMNS) & NOT_PERSONAL_COLUMNS)
+        registry = ColumnRegistry()
+        both = sorted(set(registry.personal()) & registry.not_personal())
         assert not both, f'classified as both personal and not personal: {both}'
 
     def test_every_included_column_is_returned_by_every_query_that_could(self):
@@ -333,8 +336,9 @@ class TestTheCoverageRule:
     def test_credentials_are_marked_withheld_not_included(self):
         """The two that must never be exported, asserted by name so a
         careless edit to the list is caught rather than shipped."""
-        assert PERSONAL_DATA_COLUMNS['users.hashed_password'].verdict is ColumnVerdict.WITHHELD
-        assert PERSONAL_DATA_COLUMNS['user_roles.email_verification_token'].verdict is ColumnVerdict.WITHHELD
+        registry = ColumnRegistry()
+        assert registry.verdict_of('users.hashed_password') is ColumnVerdict.WITHHELD
+        assert registry.verdict_of('user_roles.email_verification_token') is ColumnVerdict.WITHHELD
 
     def test_the_withheld_reasons_are_the_ones_the_subject_is_given(self):
         """Legal text, pinned by count and key. Moving the reasons onto
@@ -358,8 +362,6 @@ class TestAColumnClassification:
             ColumnClassification(verdict=ColumnVerdict.INCLUDED, reason='because')
 
     def test_the_verdict_compares_equal_to_its_word(self):
-        """`tools/generate_records_of_processing.py` compares to the bare
-        word; a plain `Enum` would empty its tables in silence."""
         assert ColumnVerdict.INCLUDED == 'included'
 
 
@@ -383,7 +385,6 @@ class TestTheArticle15Context:
         """Generated, not boilerplate. A deployment with no relay and no
         bucket sends nothing anywhere, and the report should say so rather
         than list recipients it does not have."""
-        from app.config import settings
 
         monkeypatch.setattr(settings, 'email_enabled', False)
         monkeypatch.setattr(settings, 'smtp_host', '')
@@ -394,8 +395,6 @@ class TestTheArticle15Context:
         assert 'none' in recipients[0].lower()
 
     def test_a_configured_relay_appears_as_a_recipient(self, monkeypatch):
-        from app.config import settings
-
         monkeypatch.setattr(settings, 'email_enabled', True)
         monkeypatch.setattr(settings, 'smtp_host', 'mail.corp.internal')
 
@@ -407,7 +406,6 @@ class TestTheArticle15Context:
         """EMAIL_BACKEND=ses sends with no SMTP_HOST. The report decided
         "is email configured" by the host, so an SES deployment's export
         said its data went nowhere while every code went to Amazon."""
-        from app.config import settings
 
         monkeypatch.setattr(settings, 'email_enabled', True)
         monkeypatch.setattr(settings, 'email_backend', 'ses')
@@ -419,9 +417,21 @@ class TestTheArticle15Context:
         assert any('Amazon SES in eu-west-1' in r for r in recipients), recipients
         assert not any('none' in r.lower() for r in recipients), recipients
 
-    def test_retention_reports_the_window_actually_in_force(self, monkeypatch):
-        from app.config import settings
+    def test_injected_settings_decide_whether_email_is_a_recipient(self, monkeypatch):
+        """The default `EmailDelivery` shares the injected settings. It used
+        to read the process-wide ones, so a description built with email
+        off still listed the relay the global settings named."""
 
+        monkeypatch.setattr(settings, 'email_enabled', True)
+        monkeypatch.setattr(settings, 'smtp_host', 'mail.corp.internal')
+        email_off = settings.model_copy(update={'email_enabled': False})
+
+        recipients = ProcessingDescription(settings=email_off).describe().recipients
+
+        assert len(recipients) == 1
+        assert 'none' in recipients[0].lower()
+
+    def test_retention_reports_the_window_actually_in_force(self, monkeypatch):
         monkeypatch.setattr(settings, 'audit_retention_days', 0)
         assert 'indefinitely' in ProcessingDescription().describe().retention.audit_events
 
@@ -644,8 +654,8 @@ class _FakeDB:
     async def group_memberships(self, org_id: str, *, user_id: str) -> list[dict]:
         return []
 
-    async def things_they_created(self, *, org_id: str, user_id: str, email: str) -> dict:
-        return {}
+    async def things_they_created(self, *, org_id: str, user_id: str, email: str) -> ThingsTheyCreated:
+        return ThingsTheyCreated.model_validate({name: [] for name in ThingsTheyCreated.model_fields})
 
     async def model_usage(self, org_id: str, *, user_id: str) -> list[dict]:
         return self._full('model_usage')
@@ -684,7 +694,7 @@ class TestATruncatedReportSaysSo:
 
     def test_a_full_section_is_declared_truncated(self):
         report = _builder()
-        report.capped('own_activity', [{}] * ACTIVITY_LIMIT, cap=ACTIVITY_LIMIT)
+        report.section(Section.OWN_ACTIVITY, rows=[{}] * ACTIVITY_LIMIT, cap=ACTIVITY_LIMIT)
 
         truncated = report.build().truncated
         assert truncated is not None
@@ -694,7 +704,7 @@ class TestATruncatedReportSaysSo:
         """Otherwise every export claims truncation and the flag means
         nothing."""
         report = _builder()
-        report.capped('own_activity', [{}, {}, {}], cap=ACTIVITY_LIMIT)
+        report.section(Section.OWN_ACTIVITY, rows=[{}, {}, {}], cap=ACTIVITY_LIMIT)
 
         assert report.build().truncated is None
 
@@ -712,6 +722,60 @@ class TestATruncatedReportSaysSo:
             'every read that carries a cap must report hitting it. A section that silently '
             'stops at its cap tells the subject they have all their data when they do not.'
         )
+
+
+class TestTheBuilderOwnsTheSections:
+    """The builder is the only writer of the sections, and each write
+    says what it is: the account, one read's rows, or the things made."""
+
+    def test_no_account_is_said_and_answers_no_user_id(self):
+        report = _builder()
+
+        assert report.account([]) is None
+
+        sections = report.build().sections
+        assert sections.account == []
+        assert sections.note is not None and 'No user account exists' in sections.note
+
+    def test_an_account_answers_its_user_id(self):
+        report = _builder()
+
+        assert report.account([{'user_id': 'u-1', 'email': 'someone@example.com'}]) == 'u-1'
+        assert report.build().sections.note is None
+
+    def test_every_section_name_is_a_field_of_the_sections(self):
+        """The values double as `truncated` wire keys, so they are pinned
+        to the model's field names."""
+        assert {section.value for section in Section} <= set(SubjectAccessSections.model_fields)
+
+    def test_every_capped_read_is_a_section(self):
+        """A capped read that is not a `Section` could not report its cap."""
+        assert set(_CAPPED_READS) <= {section.value for section in Section}
+
+    def test_an_uncapped_section_is_never_truncated(self):
+        report = _builder()
+        report.section(Section.GROUP_MEMBERSHIPS, rows=[{}] * ACTIVITY_LIMIT)
+
+        assert report.build().truncated is None
+
+
+class TestThingsTheyCreated:
+    """A fixed key set, so a model — and one that refuses to be incomplete."""
+
+    def test_a_missing_group_is_refused(self):
+        groups = {name: [] for name in ThingsTheyCreated.model_fields if name != 'inference_nodes'}
+
+        with pytest.raises(ValidationError):
+            ThingsTheyCreated.model_validate(groups)
+
+    def test_the_wire_order_is_the_order_the_database_reads_them(self):
+        """It was a dict built in this order; the JSON must not change."""
+        source = inspect.getsource(SubjectAccessDB.things_they_created)
+        read = re.findall(r'^\s+(\w+)=await self\._', source, flags=re.M)
+        things = ThingsTheyCreated.model_validate({name: [] for name in ThingsTheyCreated.model_fields})
+
+        assert read, 'no groups parsed from SubjectAccessDB.things_they_created — has it changed shape?'
+        assert list(things.model_dump(mode='json')) == read
 
 
 class TestTheEnvelopeCarriesEverythingTheExportSets:

@@ -9,16 +9,12 @@ as `app/services/ai/schemas.py` keeps the inference types.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-#: One table's rows, as the database layer returns them: the column set
-#: of whatever table was asked about. An inventory, not a contract —
-#: typing these would mean a model per table, maintained in step with
-#: every migration, on a path where being out of step means
-#: under-reporting somebody's data.
-Rows = list[dict[str, Any]]
+from app.db.sql.schemas.subject_access import Rows, ThingsTheyCreated
+from app.services.identity.service_subjects import ServiceSections
 
 
 class InvalidSubjectAddress(ValueError):
@@ -26,11 +22,7 @@ class InvalidSubjectAddress(ValueError):
 
 
 class ColumnVerdict(StrEnum):
-    """What the export does with one personal-data column.
-
-    A `StrEnum` so it compares equal to the bare words it replaced —
-    `tools/generate_records_of_processing.py` relies on that.
-    """
+    """What the export does with one personal-data column."""
 
     #: The export returns it, or matches on it to find the row.
     INCLUDED = 'included'
@@ -101,6 +93,24 @@ class ProcessingContext(BaseModel):
     rights: str
 
 
+class Section(StrEnum):
+    """The sections that are one read's rows, written through `SubjectAccessReportBuilder.section`.
+
+    Each value is a `SubjectAccessSections` field and, when the read is
+    capped, the key the report's `truncated` carries for it — so these
+    are wire names. `account`, `note`, `things_they_created` and
+    `services` are not here: each has its own builder method.
+    """
+
+    DEPLOYMENT_ROLE = 'deployment_role'
+    ORGANISATION_MEMBERSHIPS = 'organisation_memberships'
+    ORGANISATIONS_OWNED = 'organisations_owned'
+    GROUP_MEMBERSHIPS = 'group_memberships'
+    MODEL_USAGE = 'model_usage'
+    OWN_ACTIVITY = 'own_activity'
+    AUTHENTICATION_ATTEMPTS = 'authentication_attempts'
+
+
 def _absent(value: object) -> bool:
     return value is None
 
@@ -130,9 +140,9 @@ class SubjectAccessSections(BaseModel):
     model_usage: Rows | None = Field(default=None, exclude_if=_absent)
     own_activity: Rows | None = Field(default=None, exclude_if=_absent)
     #: Grouped by kind of thing, as `SubjectAccessDB.things_they_created` returns it.
-    things_they_created: dict[str, Any] | None = Field(default=None, exclude_if=_absent)
+    things_they_created: ThingsTheyCreated | None = Field(default=None, exclude_if=_absent)
     #: Each registered service's own sections, under the service's name.
-    services: dict[str, dict[str, list[dict[str, object]]]] | None = Field(default=None, exclude_if=_absent)
+    services: ServiceSections | None = Field(default=None, exclude_if=_absent)
     authentication_attempts: Rows | None = Field(default=None, exclude_if=_absent)
 
     def present_count(self) -> int:

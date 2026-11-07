@@ -56,10 +56,14 @@ in their head, and the schema grows.
 
 * `service.py` — `SubjectAccessService`, which runs one export;
 * `report_builder.py` — the report while it is assembled, and every
-  sentence it says about its own completeness;
+  sentence it says about its own completeness. The only writer of the
+  sections, through `account`, `section`, `things_they_created` and
+  `services_answered`;
 * `processing.py` — the Article 15 context;
 * `classification.py` — `ColumnRegistry`, the one reader of the two maps;
-* `schemas.py` — the report, its parts and its errors.
+* `schemas.py` — the report, its parts, the `Section` names and its errors.
 
-The reads themselves are `app/db/sql/subject_access.py`.
+The reads themselves are `app/db/sql/subject_access.py`; what they
+return — `Rows` and `ThingsTheyCreated` — is
+`app/db/sql/schemas/subject_access.py`.
 """

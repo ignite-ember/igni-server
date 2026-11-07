@@ -49,9 +49,13 @@ class ServiceExport(BaseModel):
     sections: list[ServiceSection] = Field(default_factory=list)
 
 
+#: `{service name: {section name: rows}}` — what every registered
+#: service answered an export with, keyed by runtime names, so a map.
+ServiceSections = dict[str, dict[str, list[dict[str, object]]]]
+
+
 class ExportAnswers(BaseModel):
-    #: `{service name: {section name: rows}}`.
-    sections: dict[str, dict[str, list[dict[str, object]]]] = Field(default_factory=dict)
+    sections: ServiceSections = Field(default_factory=dict)
     #: Services that did not answer, by name.
     missing: list[str] = Field(default_factory=list)
 

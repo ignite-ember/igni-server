@@ -27,6 +27,14 @@ class ColumnRegistry:
         self._personal = personal
         self._not_personal = not_personal
 
+    def personal(self) -> Mapping[str, ColumnClassification]:
+        """Every personal column, to its classification. Read-only."""
+        return self._personal
+
+    def not_personal(self) -> frozenset[str]:
+        """Every column judged not personal."""
+        return self._not_personal
+
     def verdict_of(self, column: str) -> ColumnVerdict | None:
         """The verdict on a personal column; `None` for one that is not personal or not classified."""
         classification = self._personal.get(column)
@@ -44,6 +52,8 @@ class ColumnRegistry:
         return {
             column: c.reason
             for column, c in self._personal.items()
+            # `reason is not None` is guaranteed for a withheld column by
+            # `ColumnClassification`; kept because it narrows the type.
             if c.verdict is ColumnVerdict.WITHHELD and c.reason is not None
         }
 

@@ -13,7 +13,7 @@ was maintained by hand and spent five passes claiming five controls did
 not exist, while the register beside it — which has a test — stayed
 correct. An Article 30 record listing tables and retention windows is
 exactly the kind of document that goes stale on the next migration, so
-the categories of personal data come from `PERSONAL_DATA_COLUMNS` (the
+the categories of personal data come from `ColumnRegistry` (the
 classification F115 built and asserts against the live schema), the
 retention windows come from `app/config.py`, and
 `tests/test_records_of_processing.py` fails if the committed file stops
@@ -42,10 +42,12 @@ import sys
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from app.services.subject_access.not_personal_columns import NOT_PERSONAL_COLUMNS  # noqa: E402
-from app.services.subject_access.personal_columns import PERSONAL_DATA_COLUMNS  # noqa: E402
+from app.services.subject_access.classification import ColumnRegistry  # noqa: E402
 
 OUT = _ROOT / 'docs/RECORDS_OF_PROCESSING.md'
+
+#: The column classification, read through the one object that reads it.
+_REGISTRY = ColumnRegistry()
 
 PLACEHOLDER = '`__CONTROLLER_TO_COMPLETE__`'
 """Marked, not guessed.
@@ -383,10 +385,10 @@ NO_PERSONAL_DATA: tuple[tuple[str, str], ...] = (
 def _tables_in_classification() -> dict[str, list[tuple[str, str]]]:
     """Every classified table, with its columns and dispositions."""
     tables: dict[str, list[tuple[str, str]]] = defaultdict(list)
-    for key, classification in PERSONAL_DATA_COLUMNS.items():
+    for key, classification in _REGISTRY.personal().items():
         table, column = key.split('.', 1)
-        tables[table].append((column, classification.verdict))
-    for key in NOT_PERSONAL_COLUMNS:
+        tables[table].append((column, classification.verdict.value))
+    for key in _REGISTRY.not_personal():
         table, column = key.split('.', 1)
         tables[table].append((column, 'not personal'))
     for columns in tables.values():
@@ -472,7 +474,7 @@ def misdescribed_tables() -> list[str]:
 
 def render() -> str:
     tables = _tables_in_classification()
-    personal_total = len(PERSONAL_DATA_COLUMNS)
+    personal_total = len(_REGISTRY.personal())
 
     out: list[str] = []
     w = out.append

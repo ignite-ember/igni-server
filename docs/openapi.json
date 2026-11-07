@@ -268,6 +268,46 @@
         "title": "AddedGrant",
         "type": "object"
       },
+      "AgentOverride": {
+        "description": "An agent this extension overrides, as its own file defines it while it runs.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "exclusive": {
+            "default": false,
+            "title": "Exclusive",
+            "type": "boolean"
+          },
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "when": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "When"
+          }
+        },
+        "required": [
+          "agent",
+          "file"
+        ],
+        "title": "AgentOverride",
+        "type": "object"
+      },
       "AgentToolsResponse": {
         "description": "What an agent may name in its ``tools:`` frontmatter.\n\nThe portal warns against this list as somebody types. Fetched\nrather than bundled: a copy in the frontend would be a third place\nto keep in step, and the first to fall behind.",
         "properties": {
@@ -724,6 +764,7 @@
         "type": "object"
       },
       "AuthorizationAsk": {
+        "description": "`GET /oauth/request`: who is asking, and the organisations the person may pick.",
         "properties": {
           "client_name": {
             "title": "Client Name",
@@ -745,6 +786,7 @@
         "type": "object"
       },
       "Authorize": {
+        "description": "`POST /oauth/authorize`: the person's choice, and the client's PKCE challenge.",
         "properties": {
           "client_id": {
             "title": "Client Id",
@@ -3186,18 +3228,14 @@
             "type": "string"
           },
           "manifest": {
-            "additionalProperties": true,
-            "title": "Manifest",
-            "type": "object"
+            "$ref": "#/components/schemas/Manifest"
           },
           "name": {
             "title": "Name",
             "type": "string"
           },
           "plugin": {
-            "additionalProperties": true,
-            "title": "Plugin",
-            "type": "object"
+            "$ref": "#/components/schemas/PluginSummary"
           },
           "published_at": {
             "format": "date-time",
@@ -4552,6 +4590,50 @@
           "email"
         ],
         "title": "MakeSuperAdmin",
+        "type": "object"
+      },
+      "Manifest": {
+        "additionalProperties": true,
+        "description": "The parts of an extension manifest igni reads. The rest is kept as sent.",
+        "properties": {
+          "contributes": {
+            "additionalProperties": true,
+            "title": "Contributes",
+            "type": "object"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "vendor": {
+            "default": "",
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "Manifest",
         "type": "object"
       },
       "MarkRead": {
@@ -6943,6 +7025,75 @@
         "title": "PlatformVmCapsResponse",
         "type": "object"
       },
+      "PluginAgent": {
+        "description": "One of the plugin's own agents, under the extension's namespace.",
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "name"
+        ],
+        "title": "PluginAgent",
+        "type": "object"
+      },
+      "PluginSkill": {
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PluginSkill",
+        "type": "object"
+      },
+      "PluginSummary": {
+        "properties": {
+          "agent_overrides": {
+            "items": {
+              "$ref": "#/components/schemas/AgentOverride"
+            },
+            "title": "Agent Overrides",
+            "type": "array"
+          },
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/PluginAgent"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/PluginSkill"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "title": "PluginSummary",
+        "type": "object"
+      },
       "Position": {
         "enum": [
           "before",
@@ -7654,6 +7805,7 @@
         "type": "string"
       },
       "Redirect": {
+        "description": "Where the page sends the person next: the client's redirect URI, carrying the code.",
         "properties": {
           "redirect_to": {
             "title": "Redirect To",
@@ -9218,14 +9370,12 @@
           "things_they_created": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/ThingsTheyCreated"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Things They Created"
+            ]
           }
         },
         "title": "SubjectAccessSections",
@@ -9402,6 +9552,214 @@
           "total_sessions"
         ],
         "title": "TeamMemberResponse",
+        "type": "object"
+      },
+      "ThingsTheyCreated": {
+        "additionalProperties": false,
+        "description": "Everything one person authored, owned, registered or decided in one organisation.\n\nThe field order is the wire order: it matches the order\n`SubjectAccessDB.things_they_created` reads them in, so the JSON is\nthe same as when this was a dict. Adding a group means adding a\nfield here **and** its query there — every field is required, so\nforgetting either side fails loudly.",
+        "properties": {
+          "api_keys": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Api Keys",
+            "type": "array"
+          },
+          "app_extensions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "App Extensions",
+            "type": "array"
+          },
+          "app_legal_holds": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "App Legal Holds",
+            "type": "array"
+          },
+          "apps": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Apps",
+            "type": "array"
+          },
+          "event_attachments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Event Attachments",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "group_entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Group Entries",
+            "type": "array"
+          },
+          "group_extensions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Group Extensions",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "inference_nodes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Inference Nodes",
+            "type": "array"
+          },
+          "legal_holds": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Legal Holds",
+            "type": "array"
+          },
+          "mcp_approvals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Mcp Approvals",
+            "type": "array"
+          },
+          "notifications": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Notifications",
+            "type": "array"
+          },
+          "producer_exports": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Producer Exports",
+            "type": "array"
+          },
+          "producer_feed": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Producer Feed",
+            "type": "array"
+          },
+          "producer_volumes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Producer Volumes",
+            "type": "array"
+          },
+          "revocations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Revocations",
+            "type": "array"
+          },
+          "vm_commands": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Vm Commands",
+            "type": "array"
+          },
+          "vm_credentials": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Vm Credentials",
+            "type": "array"
+          },
+          "vm_jobs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Vm Jobs",
+            "type": "array"
+          },
+          "vm_profile_requests": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Vm Profile Requests",
+            "type": "array"
+          },
+          "vm_profiles": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Vm Profiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups",
+          "group_entries",
+          "group_extensions",
+          "apps",
+          "app_extensions",
+          "vm_profiles",
+          "vm_profile_requests",
+          "vm_commands",
+          "vm_jobs",
+          "events",
+          "event_attachments",
+          "vm_credentials",
+          "api_keys",
+          "producer_volumes",
+          "mcp_approvals",
+          "notifications",
+          "producer_exports",
+          "revocations",
+          "legal_holds",
+          "app_legal_holds",
+          "producer_feed",
+          "inference_nodes"
+        ],
+        "title": "ThingsTheyCreated",
         "type": "object"
       },
       "TokenResponse": {

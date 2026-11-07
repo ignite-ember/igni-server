@@ -43,7 +43,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import quote
 
-from app.config import settings
+from app.config import Settings, settings as app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,15 @@ _MARKER = 'EMAIL DISABLED'
 
 
 class EmailDelivery:
-    """Decides whether email can be sent, and what to do when it cannot."""
+    """Decides whether email can be sent, and what to do when it cannot.
+
+    `settings` defaults to the process-wide object, so a test that
+    monkeypatches it is seen here; one that passes its own `Settings`
+    gets every decision made from that.
+    """
+
+    def __init__(self, *, settings: Settings = app_settings) -> None:
+        self._settings = settings
 
     @property
     def enabled(self) -> bool:
@@ -68,14 +76,14 @@ class EmailDelivery:
         It used to need ``smtp_host`` too, which sent every SES
         deployment's codes to the log instead of to SES.
         """
-        if not settings.email_enabled:
+        if not self._settings.email_enabled:
             return False
-        return settings.email_backend == 'ses' or bool(settings.smtp_host)
+        return self._settings.email_backend == 'ses' or bool(self._settings.smtp_host)
 
     @property
     def logs_codes(self) -> bool:
         """Whether an undeliverable code is written to the log (``LOG_SIGN_IN_CODES``)."""
-        return settings.log_sign_in_codes
+        return self._settings.log_sign_in_codes
 
     def record_undeliverable_code(self, *, purpose: str, email: str, code: str) -> None:
         """Account for a one-time code that could not be emailed.
@@ -107,8 +115,7 @@ class EmailDelivery:
             code,
         )
 
-    @staticmethod
-    def no_relay_message() -> str:
+    def no_relay_message(self) -> str:
         """What the person asking for a code is told when there is no relay.
 
         Deliberately vague about *where* a code went: it does not name the
@@ -117,10 +124,9 @@ class EmailDelivery:
         because "ask your administrator for the code" is untrue when no
         administrator has it.
         """
-        if settings.log_sign_in_codes:
+        if self._settings.log_sign_in_codes:
             return (
-                'Email delivery is not configured on this deployment. '
-                'Ask your administrator for the verification code.'
+                'Email delivery is not configured on this deployment. Ask your administrator for the verification code.'
             )
         return (
             'Email delivery is not configured on this deployment, so no verification code can be sent. '
@@ -145,4 +151,4 @@ def invite_url_for(email: str) -> str:
     alone. That is why it is safe to hand back to the admin who created
     it, and why it does not expire.
     """
-    return f'{settings.portal_base_url.rstrip("/")}/signup?email={quote(email)}'
+    return f'{app_settings.portal_base_url.rstrip("/")}/signup?email={quote(email)}'

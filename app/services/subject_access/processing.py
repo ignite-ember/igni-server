@@ -17,14 +17,14 @@ class ProcessingDescription:
     one relaying through SES.
 
     `settings` defaults to the process-wide object, so a test that
-    monkeypatches it is seen here. `EmailDelivery.enabled` always reads
-    the process-wide settings, so injecting a fresh `Settings` without a
-    matching `email` changes everything but the "is email on" decision.
+    monkeypatches it is seen here. The default `EmailDelivery` is built
+    from the same `settings`, so the "is email on" decision follows
+    whatever was injected.
     """
 
     def __init__(self, *, settings: Settings = app_settings, email: EmailDelivery | None = None) -> None:
         self._settings = settings
-        self._email = email or EmailDelivery()
+        self._email = email or EmailDelivery(settings=settings)
 
     def describe(self) -> ProcessingContext:
         return ProcessingContext(

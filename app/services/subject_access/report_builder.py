@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app.db.sql.schemas.subject_access import Rows, ThingsTheyCreated
 from app.services.identity.service_subjects import ExportAnswers
-from app.services.subject_access.schemas import ProcessingContext, Rows, SubjectAccessReport, SubjectAccessSections
+from app.services.subject_access.schemas import (
+    ProcessingContext,
+    Section,
+    SubjectAccessReport,
+    SubjectAccessSections,
+)
 
 _TRUNCATED = (
     '{cap} rows returned, which is the maximum this export produces. '
@@ -60,30 +66,34 @@ class SubjectAccessReportBuilder:
         self._truncated: dict[str, str] = {}
         self._scope: str | None = None
 
-    @property
-    def sections(self) -> SubjectAccessSections:
-        return self._sections
+    def account(self, rows: Rows) -> str | None:
+        """The account section; the account's user id, or `None` when there is none.
 
-    def no_account(self) -> None:
-        """Say why the report goes on with no account.
-
-        The person may still appear in authentication attempts, so the
-        report continues rather than returning empty — "we hold nothing"
-        would be a false answer to Article 15.
+        With no account the report says why it goes on: the person may
+        still appear in authentication attempts, so the report continues
+        rather than returning empty — "we hold nothing" would be a false
+        answer to Article 15.
         """
-        self._sections.note = _NO_ACCOUNT
+        self._sections.account = rows
+        if not rows:
+            self._sections.note = _NO_ACCOUNT
+            return None
+        return str(rows[0]['user_id'])
 
-    def capped(self, section: str, rows: Rows, *, cap: int) -> Rows:
-        """`rows`, with the report saying so if they stopped at `cap`.
+    def section(self, name: Section, *, rows: Rows, cap: int | None = None) -> None:
+        """One read's rows, with the report saying so if they stopped at `cap`.
 
         `cap` must be the cap the query applied: if the two drift, a
         section either reports a truncation that did not happen or stays
         silent about one that did — and the second hands somebody an
         incomplete answer to a legal request while calling it their data.
         """
-        if len(rows) >= cap:
-            self._truncated[section] = _TRUNCATED.format(cap=cap)
-        return rows
+        setattr(self._sections, name.value, rows)
+        if cap is not None and len(rows) >= cap:
+            self._truncated[name.value] = _TRUNCATED.format(cap=cap)
+
+    def things_they_created(self, things: ThingsTheyCreated) -> None:
+        self._sections.things_they_created = things
 
     def services_answered(self, answers: ExportAnswers) -> None:
         """The registered services' own sections, and which of them did not answer."""
