@@ -91,13 +91,19 @@ class DeploymentLicence:
         )
 
     def notice(self) -> LicenceNotice:
-        """What the portal shows everybody: one line per module that needs attention."""
+        """What the portal shows everybody: one line per module that needs attention, and the licensee."""
         warnings = [
             LicenceWarning(module=status.module, state=status.state, message=status.message)
             for status in self.statuses()
             if status.message is not None and self._worth_a_banner(status)
         ]
-        return LicenceNotice(warnings=warnings)
+        # Only a verified licence names anybody: a file that fails its signature could say anything.
+        payload = self._source.reading().payload
+        return LicenceNotice(
+            warnings=warnings,
+            customer=payload.customer if payload else None,
+            licence_id=payload.licence_id if payload else None,
+        )
 
     def install(self, envelope: LicenceEnvelope) -> LicenceOverview:
         """Verify an uploaded licence and, if it is good, put it where every component reads it."""

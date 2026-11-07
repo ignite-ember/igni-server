@@ -10,7 +10,7 @@ import { Sidebar } from './Sidebar'
 import './AppShell.css'
 
 /** Pages that are about the account or the install, not an organisation. */
-const WITHOUT_AN_ORGANISATION = ['/settings', '/super-admins', '/organisations']
+const WITHOUT_AN_ORGANISATION = ['/settings', '/super-admins', '/organisations', '/licence']
 
 export function AppShell() {
   const location = useLocation()

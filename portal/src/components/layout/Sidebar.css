@@ -113,6 +113,23 @@
 }
 
 
+/* ─── Licensee ──────────────────────────────────────────────────────── */
+
+/* Whose licence this deployment runs under, at the foot of the nav. Quiet
+   on purpose: it is there to be found on a screenshot, not to be read on
+   every visit. See Licensee.tsx. */
+.sidebar-licensee {
+  margin: var(--base-size-8, 8px) var(--base-size-16, 16px) var(--base-size-16, 16px);
+  font-size: var(--text-caption-size, 0.75rem);
+  line-height: var(--text-caption-lineHeight, 1.3333);
+  color: var(--fgColor-muted, var(--color-fg-muted));
+  overflow-wrap: anywhere;
+}
+
+.sidebar-licensee-id {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+}
+
 /* ─── Create org dialog ─────────────────────────────────────────────── */
 
 .create-org-fields {

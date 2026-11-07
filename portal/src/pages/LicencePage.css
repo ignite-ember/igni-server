@@ -1,0 +1,36 @@
+/* The deployment's licence. See LicencePage.tsx. */
+
+/* Whose licence it is, as label and value pairs. A grid rather than a
+   table: five facts about one thing, not rows of many. */
+.licence-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--base-size-8, 8px) var(--base-size-24, 24px);
+  margin: 0;
+}
+
+.licence-facts dt {
+  color: var(--fgColor-muted);
+}
+
+.licence-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* An identifier somebody may read out to Ignite Ember character by
+   character, and a path. */
+.licence-mono {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+}
+
+.licence-hint {
+  color: var(--fgColor-muted);
+  max-width: 68ch;
+}
+
+/* The pasted file is JSON with long base64 strings: monospace, so a
+   truncated paste is visible as one. */
+.licence-paste {
+  font-family: var(--fontStack-monospace, ui-monospace, monospace);
+}

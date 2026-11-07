@@ -22,6 +22,7 @@ import { EditNodePage } from "./pages/EditNodePage";
 import { CompliancePage } from "./pages/CompliancePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SuperAdminsPage } from "./pages/SuperAdminsPage";
+import { LicencePage } from "./pages/LicencePage";
 import { OrganisationsPage } from "./pages/OrganisationsPage";
 import { ServicesPage } from "./pages/ServicesPage";
 import { ServiceDetailPage } from "./pages/ServiceDetailPage";
@@ -109,6 +110,7 @@ export default function App() {
                       />
                       <Route path="settings" element={<SettingsPage />} />
                       <Route path="super-admins" element={<SuperAdminsPage />} />
+                      <Route path="licence" element={<LicencePage />} />
                       <Route path="organisations" element={<OrganisationsPage />} />
                       <Route path="services" element={<ServicesPage />} />
                       <Route path="services/:clientId" element={<ServiceDetailPage />} />

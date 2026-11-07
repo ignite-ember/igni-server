@@ -33,6 +33,15 @@ class LicenceWarning(BaseModel):
 
 
 class LicenceNotice(BaseModel):
-    """The banner: empty when nothing needs doing."""
+    """What everybody signed in sees: the banner, and whose licence this is.
+
+    `warnings` is empty when nothing needs doing. `customer` and
+    `licence_id` name the licensee of a verified licence, and are None
+    when there is none — no file, or one that is not good. The portal
+    shows them quietly on every page, so a deployment copied or shared
+    beyond its contract says whose it is.
+    """
 
     warnings: list[LicenceWarning]
+    customer: str | None = None
+    licence_id: str | None = None

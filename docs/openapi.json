@@ -4315,8 +4315,30 @@
         "type": "string"
       },
       "LicenceNotice": {
-        "description": "The banner: empty when nothing needs doing.",
+        "description": "What everybody signed in sees: the banner, and whose licence this is.\n\n`warnings` is empty when nothing needs doing. `customer` and\n`licence_id` name the licensee of a verified licence, and are None\nwhen there is none — no file, or one that is not good. The portal\nshows them quietly on every page, so a deployment copied or shared\nbeyond its contract says whose it is.",
         "properties": {
+          "customer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer"
+          },
+          "licence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Licence Id"
+          },
           "warnings": {
             "items": {
               "$ref": "#/components/schemas/LicenceWarning"

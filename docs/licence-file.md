@@ -110,10 +110,45 @@ Every component reads the same file at `/etc/igni/licence/licence.json`
 |---|---|
 | Kubernetes | One Secret with the key `licence.json`. Set `licence.existingSecret` in this chart, which mounts it read-only in the API, and mount the same Secret at the same path in each module's Deployment and in the gateway |
 | Compose | One directory, `IGNI_LICENCE_DIR` (default `./licence`), mounted into the API by `containers/docker-compose.prod.yml` and into each module at the same path |
-| Portal | A super admin uploads the file (`PUT /v1/portal/licence`). igni server verifies it first and refuses one that is not valid, with the reason. It writes the file only where the path is writable (compose). Where the path is a mounted Secret, it answers `409` and the Secret is updated instead |
+| Portal | A super admin installs the file on the portal's *Licence* page, or with `PUT /v1/portal/licence`. igni server verifies it first and refuses one that is not valid, with the reason. It writes the file only where the path is writable (compose). Where the path is a mounted Secret, it answers `409` and the Secret is updated instead |
 
 Renewing is replacing the file. Each component looks at it again at most
 once a minute and re-verifies it when it has changed. Nothing restarts.
+
+### From the portal
+
+*Deployment → Licence* in the sidebar, for super admins only. It shows
+who the licence is for, its ID, its kind and issue date, the file's path,
+and one row per paid module: its state, expiry, band (users) and the
+sentence the modules show people.
+
+To install, choose the `.json` file Ignite Ember sent, or paste it. The
+file's contents are put in the box, so what is about to be sent is on the
+screen, and nothing is sent that is not JSON. igni server verifies it
+against the keys built into this release before writing anything:
+
+| Answer | What the page says |
+|---|---|
+| `200` | Installed, naming the licence and the customer. The page, the banner and the licensee line refresh |
+| `422` | Not installed, with the reason and what to do: `malformed` (ask for the file again), `unknown_key` (a licence for another release, or a test licence), `invalid_signature` (it was changed after signing; install it exactly as sent) |
+| `409` | The licence is valid, but the path is a mounted Secret or a read-only volume: put it in the Secret instead |
+
+### Where the licensee is shown
+
+Ignite Ember protects the paid modules with this file, the contract and
+traceability, not DRM, so the licence names its customer wherever it is
+in use:
+
+* **The portal**, on every page, for everybody signed in: *Licensed to
+  Example Bank N.V. · IE-2026-0042* at the foot of the sidebar, from
+  `customer` and `licence_id` in `GET /v1/portal/licence/notice`. Only a
+  licence that verifies is quoted, and with none there is nothing there
+  at all.
+* **igni server's log**, once an hour from every replica:
+  `licence: IE-2026-0042, licensed to Example Bank N.V.`, or
+  `licence: no licence installed`. The customer is an organisation, so the
+  line carries no personal data.
+* **Each module's log**, when it loads the licence.
 
 **Renewing without a module.** A module the customer does not renew stays
 in the new licence with its old expiry, so it goes on to read-only rather
@@ -203,7 +238,7 @@ carry no licence.
 
 | Where | What |
 |---|---|
-| Portal | A banner on every page for everybody signed in (`GET /v1/portal/licence/notice`), one sentence per module that is expiring, lapsed, read-only or whose file does not verify. Nothing on a deployment with no paid module. A super admin sees the whole licence at `GET /v1/portal/licence` |
+| Portal | A banner on every page for everybody signed in (`GET /v1/portal/licence/notice`), one sentence per module that is expiring, lapsed, read-only or whose file does not verify. Nothing on a deployment with no paid module. A super admin sees the whole licence on the *Licence* page (`GET /v1/portal/licence`) |
 | Module responses | `igni-licence: grace; days-left=60` (or `valid; days-left=12`, `read_only`) on every response while there is something to say, for clients to show |
 | Module status | `GET /v1/licence` on each Python module: the module's status and its band |
 | Audit trail | Once a UTC day while any module needs attention, a `licence:daily` event in the deployment's own trail, with each module's state |

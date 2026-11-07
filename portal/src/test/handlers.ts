@@ -21,6 +21,40 @@ const ME_DEFAULT = {
   ],
 }
 
+const UNLICENSED_MODULES = (
+  [
+    ['codeindex', 'CodeIndex'],
+    ['artifacts', 'Artifacts'],
+    ['fleet', 'Fleet'],
+    ['factory', 'The Factory'],
+    ['autopilot', 'Autopilot'],
+  ] as const
+).map(([module, name]) => ({
+  module,
+  state: 'unlicensed',
+  reason: 'no_licence',
+  licence_id: null,
+  customer: null,
+  kind: null,
+  users: null,
+  expires: null,
+  read_only_from: null,
+  days_left: null,
+  message: `${name} is not licensed on this deployment. No licence is installed.`,
+}))
+
+/** `GET /portal/licence` on a deployment with no licence file. */
+export const NO_LICENCE = {
+  path: '/etc/igni/licence/licence.json',
+  installed: false,
+  problem: 'no_licence',
+  licence_id: null,
+  customer: null,
+  kind: null,
+  issued: null,
+  modules: UNLICENSED_MODULES,
+}
+
 export const defaultHandlers = [
   http.get('/v1/portal/me', () => HttpResponse.json(ME_DEFAULT)),
 
@@ -34,8 +68,13 @@ export const defaultHandlers = [
     }),
   ),
 
-  // The free base with no paid modules: nothing to say about a licence.
-  http.get('/v1/portal/licence/notice', () => HttpResponse.json({ warnings: [] })),
+  // The free base with no paid modules: nothing to say about a licence,
+  // and nobody to name as its licensee.
+  http.get('/v1/portal/licence/notice', () =>
+    HttpResponse.json({ warnings: [], customer: null, licence_id: null }),
+  ),
+  // What a super admin sees there: no file, and every module unlicensed.
+  http.get('/v1/portal/licence', () => HttpResponse.json(NO_LICENCE)),
 
   // A deployment its startup checks have nothing to say about.
   http.get('/v1/portal/deployment/notices', () => HttpResponse.json({ notices: [] })),

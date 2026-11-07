@@ -52,7 +52,7 @@ personal data unless noted.
 |---|---|---|
 | The version | `GET /version` on igni server, and on each paid module | The first thing asked for. A report against the wrong version is answered for the wrong code |
 | Readiness | `GET /ready` | Says which dependency is down: PostgreSQL, Redis, or the pool |
-| Licence status | `GET /v1/portal/licence` (super admin), or `GET /v1/licence` on a module | Names the customer and the licence id. Needed for anything about read-only or a refused request |
+| Licence status | The portal's *Licence* page, or `GET /v1/portal/licence` (super admin), or `GET /v1/licence` on a module | Names the customer and the licence id, which also sit at the foot of the portal's sidebar for anybody signed in. Needed for anything about read-only or a refused request |
 | Logs around the fault | `LOG_FORMAT=json` makes them filterable ([observability.md](observability.md)) | igni's logs carry no request body or prompt, by a rule over all of `app/` (`tests/test_the_prompt_stays_out_of_the_logs.py`). **Remove any one-time sign-in code first**: with no mail relay configured, igni writes them to the log |
 | Metrics | `/metrics`, behind the metrics token | Labels are from an allow-list, so a label cannot carry personal data |
 | Configuration | The chart values or env file, **with every secret removed** | Lets Ignite Ember reproduce the setup |

@@ -25,6 +25,16 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
   deactivated, and are recorded at every exchange. A key's session cannot
   make keys, take a CLI session, sign a VM in or authorise a service.
   [docs/service-identity.md](docs/service-identity.md) §22.
+- **The portal shows whose licence it is, and installs one.** A *Licence*
+  page for super admins (*Deployment → Licence*) shows the licensee, the
+  licence ID, its kind and issue date, and each paid module's state,
+  expiry, band and message, and installs a licence file chosen or pasted
+  there, with the reason when it is refused. Everybody signed in sees
+  *Licensed to <customer> · <licence ID>* at the foot of the sidebar;
+  nothing without a licence. `GET /v1/portal/licence/notice` gains
+  `customer` and `licence_id`, null without a verified licence, and the
+  hourly licence job logs the licence ID and customer (or that none is
+  installed). [docs/licence-file.md](docs/licence-file.md).
 
 ### Changed
 

@@ -75,6 +75,7 @@ describe('Sidebar', () => {
     await screen.findByText('Demo Org')
     expect(screen.getByRole('link', { name: /Super admins/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Services/i })).toHaveAttribute('href', '/services')
+    expect(screen.getByRole('link', { name: /^Licence$/ })).toHaveAttribute('href', '/licence')
     await userEvent.click(orgButton)
 
     const menu = await screen.findByRole('menu')
@@ -89,5 +90,19 @@ describe('Sidebar', () => {
     await screen.findByText('Demo Org')
     expect(screen.queryByRole('link', { name: /Super admins/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Services/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^Licence$/ })).not.toBeInTheDocument()
+  })
+
+  test('names the licensee at its foot, for everybody', async () => {
+    server.use(
+      http.get('/v1/portal/me', () => HttpResponse.json(meResponse('member'))),
+      http.get('/v1/portal/licence/notice', () =>
+        HttpResponse.json({ warnings: [], customer: 'Example Bank N.V.', licence_id: 'IE-2026-0042' }),
+      ),
+    )
+
+    renderWithProviders(<Sidebar />)
+
+    expect(await screen.findByText(/Licensed to Example Bank N\.V\./)).toBeInTheDocument()
   })
 })

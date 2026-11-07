@@ -187,6 +187,60 @@ export interface SuperAdmin {
   full_name: string | null
 }
 
+// ─── Licence ────────────────────────────────────────────────────────
+
+/** The paid modules a licence can name (`app.services.licence.Module`). */
+export type LicensedModule = 'codeindex' | 'artifacts' | 'fleet' | 'factory' | 'autopilot'
+export type LicenceState = 'valid' | 'grace' | 'read_only' | 'unlicensed'
+export type LicenceKind = 'commercial' | 'evaluation'
+
+/** One paid module that needs attention, in a sentence anybody can act on. */
+export interface LicenceWarning {
+  module: LicensedModule
+  state: LicenceState
+  message: string
+}
+
+/**
+ * What everybody signed in is told (`GET /portal/licence/notice`): the
+ * banner, and whose licence this is. `customer` and `licence_id` are
+ * null with no verified licence; older servers leave them out.
+ */
+export interface LicenceNotice {
+  warnings: LicenceWarning[]
+  customer?: string | null
+  licence_id?: string | null
+}
+
+/** One module's standing under the installed licence (`ModuleStatus`). */
+export interface LicenceModuleStatus {
+  module: LicensedModule
+  state: LicenceState
+  reason: string | null
+  licence_id: string | null
+  customer: string | null
+  kind: LicenceKind | null
+  users: number | null
+  expires: string | null
+  read_only_from: string | null
+  days_left: number | null
+  message: string | null
+}
+
+/** The installed file and each module's standing, as a super admin sees it (`GET /portal/licence`). */
+export interface LicenceOverview {
+  path: string
+  /** A file is installed, good or not. */
+  installed: boolean
+  /** Why there is no usable licence, when there is none. */
+  problem: string | null
+  licence_id: string | null
+  customer: string | null
+  kind: LicenceKind | null
+  issued: string | null
+  modules: LicenceModuleStatus[]
+}
+
 // ─── Registered clients ─────────────────────────────────────────────
 
 export type RegisteredClientKind = 'service' | 'app'
