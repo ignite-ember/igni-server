@@ -50,10 +50,16 @@ class Entitlement(BaseModel):
 class GroupExtensions:
     """Per-group enablement, and the entitlement it gives a person."""
 
-    def __init__(self) -> None:
-        self._enabled = GroupExtensionsDB()
-        self._groups = GroupsDB()
-        self._extensions = ServiceExtensionDB()
+    def __init__(
+        self,
+        *,
+        enabled: GroupExtensionsDB | None = None,
+        groups: GroupsDB | None = None,
+        extensions: ServiceExtensionDB | None = None,
+    ) -> None:
+        self._enabled = enabled or GroupExtensionsDB()
+        self._groups = groups or GroupsDB()
+        self._extensions = extensions or ServiceExtensionDB()
 
     async def _group_in_org(self, org_id: str, group_id: str) -> None:
         if await self._groups.get_group(org_id, group_id) is None:

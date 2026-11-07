@@ -128,13 +128,13 @@ class TestJoiningIt:
     async def test_a_failure_costs_the_group_not_the_session(self, monkeypatch, client, member):
         """This runs while a CLI is starting up."""
 
-        async def _boom(self, user_id):
+        async def _boom(self, *args, **kwargs):
             raise ConnectionError('database is down')
 
         # The *active* variant, which is what `ensure_for_user` calls
         # since B8 — patching the old one left this test proving that a
         # method no longer on the path can fail safely.
-        monkeypatch.setattr('app.db.sql.groups.GroupsDB.get_active_user_group_summary', _boom)
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
 
         assert await DefaultGroup.ensure_for_user('dev-1') is None
 

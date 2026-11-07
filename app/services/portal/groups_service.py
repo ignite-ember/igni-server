@@ -28,9 +28,13 @@ from app.api.base_v1.schema.portal.groups import (
     UpdateGroupRequest,
 )
 from app.api.base_v1.schema.portal.user import PortalUser
+from app.db.sql.group_entries import GroupEntriesDB
+from app.db.sql.group_members import GroupMembersDB
+from app.db.sql.group_summaries import GroupSummariesDB
 from app.db.sql.groups import GroupsDB
 from app.db.sql.models.org_group import OrgGroup
 from app.db.sql.models.org_group_entry import OrgGroupEntry
+from app.db.sql.schemas.group import EntryCreate, EntryPatch, GroupPatch, GroupSettings
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.services.ai.pool_manager import PoolManager
@@ -46,9 +50,13 @@ from app.services.portal.entry_kinds import (
     VALID_CONTENT_TYPES,
     VALID_KINDS,
 )
+from app.services.portal.group_refusals import GroupRefusals
 from app.services.portal.hook_scripts import warning_for as hook_script_warning
 
-_db = GroupsDB()
+_groups = GroupsDB()
+_members = GroupMembersDB()
+_entries = GroupEntriesDB()
+_summaries = GroupSummariesDB()
 _team_db = TeamDB()
 _user_db = UserDB()
 
@@ -93,7 +101,7 @@ class GroupsService:
         another org's entries by knowing the id — the group endpoints
         were scoped and the entry endpoints under them were not.
         """
-        group = await _db.get_group(org_id, group_id)
+        group = await _groups.get_group(org_id, group_id)
         if not group:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Group not found')
         return group
@@ -160,11 +168,11 @@ class GroupsService:
         if seed_default_for_user_id:
             await DefaultGroup.place_everyone(org_id, by_user_id=seed_default_for_user_id)
 
-        rows, total = await _db.list_groups(org_id, offset=offset, limit=limit)
+        page = await _groups.list_groups(org_id, offset=offset, limit=limit)
         groups = []
-        for g in rows:
-            members = await _db.list_members(org_id, g.id)  # type: ignore[arg-type]
-            entries = await _db.list_entries(org_id, g.id)  # type: ignore[arg-type]
+        for g in page.items:
+            members = await _members.list_members(org_id, g.id)
+            entries = await _entries.list_entries(org_id, g.id)
             groups.append(
                 OrgGroupDetail(
                     id=g.id,
@@ -181,11 +189,11 @@ class GroupsService:
                     entry_count=len(entries),
                 )
             )
-        return OrgGroupList(groups=groups, total=total, offset=offset, limit=limit)
+        return OrgGroupList(groups=groups, total=page.total, offset=offset, limit=limit)
 
     @staticmethod
     async def create_group(body: CreateGroupRequest, current_user: PortalUser) -> OrgGroupResponse:
-        existing = await _db.get_group_by_name(current_user.org_id, body.name)
+        existing = await _groups.get_group_by_name(current_user.org_id, body.name)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -194,25 +202,24 @@ class GroupsService:
 
         await _refuse_unserved_model(body.default_model)
 
-        if body.template_group_id:
-            group = await _db.copy_group(
-                org_id=current_user.org_id,
-                from_group_id=body.template_group_id,
-                name=body.name,
-                description=body.description,
-                default_model=body.default_model or None,
-                theme=_theme_to_json(body.theme),
-                created_by_user_id=current_user.user_id,
-            )
-        else:
-            group = await _db.create_group(
-                org_id=current_user.org_id,
-                name=body.name,
-                description=body.description,
-                default_model=body.default_model or None,
-                theme=_theme_to_json(body.theme),
-                created_by_user_id=current_user.user_id,
-            )
+        settings = GroupSettings(
+            name=body.name,
+            description=body.description,
+            default_model=body.default_model or None,
+            theme=_theme_to_json(body.theme),
+        )
+        with GroupRefusals():
+            if body.template_group_id:
+                group = await _groups.copy_group(
+                    current_user.org_id,
+                    from_group_id=body.template_group_id,
+                    settings=settings,
+                    by_user_id=current_user.user_id,
+                )
+            else:
+                group = await _groups.create_group(
+                    current_user.org_id, settings=settings, by_user_id=current_user.user_id
+                )
         return GroupsService._response(group)
 
     @staticmethod
@@ -229,25 +236,26 @@ class GroupsService:
         copied: each is in exactly one group, and stays where they are.
         """
         source = await GroupsService._group_in_org(current_user.org_id, group_id)
-        if await _db.get_group_by_name(current_user.org_id, body.name):
+        if await _groups.get_group_by_name(current_user.org_id, body.name):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"A group named '{body.name}' already exists in this organization.",
             )
-        group = await _db.copy_group(
-            org_id=current_user.org_id,
-            from_group_id=group_id,
+        settings = GroupSettings(
             name=body.name,
             description=body.description if body.description is not None else source.description,
             default_model=source.default_model,
             theme=source.theme,
-            created_by_user_id=current_user.user_id,
         )
+        with GroupRefusals():
+            group = await _groups.copy_group(
+                current_user.org_id, from_group_id=group_id, settings=settings, by_user_id=current_user.user_id
+            )
         return GroupsService._response(group)
 
     @staticmethod
     async def get_group(group_id: str, org_id: str, by_user_id: str | None = None) -> OrgGroupDetail:
-        group = await _db.get_group(org_id, group_id)
+        group = await _groups.get_group(org_id, group_id)
         if not group:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Group not found')
         if by_user_id and bool(group.is_default):
@@ -255,8 +263,8 @@ class GroupsService:
             # are placed before they are counted.
             await DefaultGroup.place_everyone(org_id, by_user_id=by_user_id)
 
-        members = await _db.list_members(org_id, group_id)
-        entries = await _db.list_entries(org_id, group_id)
+        members = await _members.list_members(org_id, group_id)
+        entries = await _entries.list_entries(org_id, group_id)
 
         return OrgGroupDetail(
             id=group.id,
@@ -282,7 +290,7 @@ class GroupsService:
         await GroupsService._writable_group(current_user.org_id, group_id)
 
         if body.name:
-            existing = await _db.get_group_by_name(current_user.org_id, body.name)
+            existing = await _groups.get_group_by_name(current_user.org_id, body.name)
             if existing and existing.id != group_id:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -291,22 +299,8 @@ class GroupsService:
 
         await _refuse_unserved_model(body.default_model)
 
-        group = await _db.update_group(
-            org_id=current_user.org_id,
-            group_id=group_id,
-            name=body.name,
-            description=body.description,
-            default_model=body.default_model or None,
-            # An empty string is the explicit clear; absent leaves it,
-            # because ``None`` already means "not supplied" here.
-            clear_default_model=body.default_model == '',
-            theme=_theme_to_json(body.theme),
-            # A theme object that overrides nothing is the clear. It
-            # can't use the empty-string trick — it isn't a string —
-            # but it lands in the same place: ``_theme_to_json``
-            # returns None for it, and NULL is "no branding".
-            clear_theme=body.theme is not None and _theme_to_json(body.theme) is None,
-        )
+        with GroupRefusals():
+            group = await _groups.update_group(current_user.org_id, group_id, patch=_group_patch(body))
         return GroupsService._response(group)
 
     @staticmethod
@@ -314,7 +308,8 @@ class GroupsService:
         """Delete a group. Its people go back to the Default group, in the same transaction."""
         await GroupsService._writable_group(current_user.org_id, group_id)
         await DefaultGroup.ensure_for_org(current_user.org_id, created_by_user_id=current_user.user_id)
-        await _db.delete_group(current_user.org_id, group_id)
+        with GroupRefusals():
+            await _groups.delete_group(current_user.org_id, group_id)
 
     # ------------------------------------------------------------------
     # Members
@@ -338,7 +333,7 @@ class GroupsService:
         await GroupsService._group_in_org(org_id, group_id)
         if by_user_id:
             await DefaultGroup.place_everyone(org_id, by_user_id=by_user_id)
-        rows = await _db.list_members(org_id, group_id)
+        rows = await _members.list_members(org_id, group_id)
         members = []
         for r in rows:
             user = await _user_db.get_by_user_id(r.user_id)  # type: ignore[arg-type]
@@ -377,8 +372,8 @@ class GroupsService:
                 detail='This user is not a member of the organization.',
             )
 
-        member = await _db.place(
-            org_id=current_user.org_id,
+        member = await _members.place(
+            current_user.org_id,
             group_id=group_id,
             user_id=user_id,
             added_by_user_id=current_user.user_id,
@@ -398,7 +393,10 @@ class GroupsService:
         """Take a person out of this group, back into the Default one. 409 on Default itself."""
         await GroupsService._group_in_org(current_user.org_id, group_id)
         await DefaultGroup.ensure_for_org(current_user.org_id, created_by_user_id=current_user.user_id)
-        await _db.return_to_default(current_user.org_id, group_id, user_id, by_user_id=current_user.user_id)
+        with GroupRefusals():
+            await _members.return_to_default(
+                current_user.org_id, group_id=group_id, user_id=user_id, by_user_id=current_user.user_id
+            )
 
     @staticmethod
     async def memberships(current_user: PortalUser) -> OrgGroupMembershipList:
@@ -412,7 +410,7 @@ class GroupsService:
         return OrgGroupMembershipList(
             memberships=[
                 OrgGroupMembership(**membership.model_dump())
-                for membership in await _db.memberships(current_user.org_id)
+                for membership in await _members.memberships(current_user.org_id)
             ]
         )
 
@@ -431,7 +429,7 @@ class GroupsService:
         route's shape is "no group" and that is the honest answer to give
         somebody who is not entitled to know the difference.
         """
-        summary = await _db.get_user_group_summary(user_id)
+        summary = await _summaries.get_user_group_summary(user_id)
         if not summary:
             return None
         if str(summary.org_id) != str(org_id):
@@ -445,7 +443,7 @@ class GroupsService:
     @staticmethod
     async def list_entries(group_id: str, org_id: str) -> OrgGroupEntryList:
         await GroupsService._group_in_org(org_id, group_id)
-        rows = await _db.list_entries(org_id, group_id)
+        rows = await _entries.list_entries(org_id, group_id)
         entries = [
             OrgGroupEntryResponse(
                 id=o.id,
@@ -490,7 +488,7 @@ class GroupsService:
             # already in this list. Without the exclusion every save
             # collided with itself, and a correctly-named agent was told
             # another agent had claimed its name.
-            entries = await _db.list_entries(org_id, group_id)
+            entries = await _entries.list_entries(org_id, group_id)
             others = {
                 name
                 for e in entries
@@ -508,7 +506,7 @@ class GroupsService:
             return warnings
 
         if kind == 'hooks':
-            entries = await _db.list_entries(org_id, group_id)
+            entries = await _entries.list_entries(org_id, group_id)
             available = {str(e.entry_name) for e in entries if str(e.kind) == 'scripts'}
             script_warning = hook_script_warning(content, available_scripts=available)
             return [script_warning] if script_warning else []
@@ -519,7 +517,7 @@ class GroupsService:
     async def get_entry(group_id: str, entry_id: str, org_id: str) -> OrgGroupEntry:
         """One entry, scoped to the org that owns its group."""
         await GroupsService._group_in_org(org_id, group_id)
-        entry = await _db.get_entry(org_id, group_id, entry_id)
+        entry = await _entries.get_entry(org_id, group_id=group_id, entry_id=entry_id)
         if not entry:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Entry not found')
         return entry
@@ -579,20 +577,21 @@ class GroupsService:
             source_ref = (body.source_ref or '').strip() or None
             source_subdir = (body.source_subdir or '').strip() or None
 
-        entry = await _db.create_entry(
-            org_id=current_user.org_id,
-            group_id=group_id,
+        new_entry = EntryCreate(
             kind=body.kind,
             entry_name=body.entry_name,
             content=body.content,
             content_type=body.content_type,
             enabled=body.enabled,
-            created_by_user_id=current_user.user_id,
             source_url=source_url,
             source_ref=source_ref,
             source_subdir=source_subdir,
             model=body.model or None,
         )
+        with GroupRefusals():
+            entry = await _entries.create_entry(
+                current_user.org_id, group_id=group_id, entry=new_entry, by_user_id=current_user.user_id
+            )
         return OrgGroupEntryResponse(
             id=entry.id,
             group_id=entry.group_id,
@@ -621,23 +620,15 @@ class GroupsService:
 
         if body.model:
             # Same rule as on create, but the kind lives on the row.
-            existing = await _db.get_entry(org_id, group_id, entry_id)
+            existing = await _entries.get_entry(org_id, group_id=group_id, entry_id=entry_id)
             if existing and str(existing.kind) not in KINDS_WITH_MODEL:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f'Only agents can name a model; {existing.kind!r} cannot.',
                 )
             await _refuse_unserved_model(body.model)
-        entry = await _db.update_entry(
-            org_id=org_id,
-            group_id=group_id,
-            entry_id=entry_id,
-            content=body.content,
-            enabled=body.enabled,
-            model=body.model or None,
-            # An empty string clears it; absent leaves it alone.
-            clear_model=body.model == '',
-        )
+        with GroupRefusals():
+            entry = await _entries.update_entry(org_id, group_id=group_id, entry_id=entry_id, patch=_entry_patch(body))
         return OrgGroupEntryResponse(
             id=entry.id,
             group_id=entry.group_id,
@@ -655,7 +646,8 @@ class GroupsService:
     @staticmethod
     async def delete_entry(group_id: str, entry_id: str, org_id: str) -> None:
         await GroupsService._writable_group(org_id, group_id)
-        await _db.delete_entry(org_id, group_id, entry_id)
+        with GroupRefusals():
+            await _entries.delete_entry(org_id, group_id=group_id, entry_id=entry_id)
 
     # ------------------------------------------------------------------
     # CLI pack
@@ -675,10 +667,10 @@ class GroupsService:
             # group's pinned model is the organisation's configuration,
             # and somebody who has been deactivated falls back to the
             # deployment default like any other stranger.
-            summary = await _db.get_active_user_group_summary(user_id)
+            summary = await _summaries.get_active_user_group_summary(user_id)
             if not summary:
                 return None
-            group = await _db.get_group(summary.org_id, summary.id)
+            group = await _groups.get_group(summary.org_id, summary.id)
             return str(group.default_model) if group and group.default_model else None
         except Exception as exc:  # noqa: BLE001 — routing must survive a group lookup
             logger.warning('Could not resolve a group model for %s: %s', user_id, exc)
@@ -704,11 +696,11 @@ class GroupsService:
             return None
 
         group_id = summary.id
-        group = await _db.get_group(summary.org_id, group_id)
+        group = await _groups.get_group(summary.org_id, group_id)
         if not group:
             return None
 
-        entries = await _db.list_entries(summary.org_id, group_id)
+        entries = await _entries.list_entries(summary.org_id, group_id)
         pack_entries = [
             OrgGroupPackEntry(
                 kind=o.kind,
@@ -734,6 +726,40 @@ class GroupsService:
             theme=_theme_from_json(group.theme),
             org_id=summary.org_id,
         )
+
+
+def _group_patch(body: UpdateGroupRequest) -> GroupPatch:
+    """The edit a request asks for: only the fields it supplies.
+
+    The one place a `GroupPatch` is built, because a field set to None
+    on it is a clear, and a None standing for "not in the request" would
+    wipe what was stored. An empty `default_model` is the explicit clear.
+    A theme that overrides nothing is the theme's clear: it cannot use
+    the empty-string trick, since it is not a string, but
+    `_theme_to_json` returns None for it and NULL is "no branding".
+    """
+    patch = GroupPatch()
+    if body.name is not None:
+        patch.name = body.name
+    if body.description is not None:
+        patch.description = body.description
+    if body.default_model is not None:
+        patch.default_model = body.default_model or None
+    if body.theme is not None:
+        patch.theme = _theme_to_json(body.theme)
+    return patch
+
+
+def _entry_patch(body: UpdateEntryRequest) -> EntryPatch:
+    """The edit a request asks for: only the fields it supplies. An empty `model` is the explicit clear."""
+    patch = EntryPatch()
+    if body.content is not None:
+        patch.content = body.content
+    if body.enabled is not None:
+        patch.enabled = body.enabled
+    if body.model is not None:
+        patch.model = body.model or None
+    return patch
 
 
 def _theme_to_json(theme: GroupTheme | None) -> str | None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.db.sql.group_summaries import GroupSummariesDB
 from app.db.sql.groups import GroupsDB
 from app.db.sql.models.org_group_extension import OrgGroupExtension
 from app.db.sql.tenancy import TenantSessions
@@ -167,7 +168,7 @@ class TestOffUntilAnAdminSwitchesItOn:
         user_id, person = await org.person('newcomer@example.com')
 
         assert _ids(await _listed(client, person)) == []
-        default = await GroupsDB().get_user_group_summary(user_id)
+        default = await GroupSummariesDB().get_user_group_summary(user_id)
         assert default is not None
         assert await org.switch(str(default.id), EXTENSION, True) == 204
         assert _ids(await _listed(client, person)) == [EXTENSION]
@@ -250,7 +251,7 @@ class TestOneGroupDecides:
         assert removed.status_code == 204, removed.text
 
         listing = await _listed(client, person)
-        default = await GroupsDB().get_user_group_summary(user_id)
+        default = await GroupSummariesDB().get_user_group_summary(user_id)
         assert default is not None
         assert listing['group'] == str(default.id) != legal
         assert _ids(listing) == []
@@ -276,7 +277,7 @@ class TestTheSessionTokenCarriesTheirGroup:
         response = await client.post('/cli/token', headers=person, json={'org_id': org.org_id})
 
         claims = JWTService().decode_token(response.json()['access_token'])
-        default = await GroupsDB().get_user_group_summary(user_id)
+        default = await GroupSummariesDB().get_user_group_summary(user_id)
         assert default is not None
         assert claims.group == str(default.id)
 

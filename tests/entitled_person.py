@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.sql.group_extensions import GroupExtensionsDB
+from app.db.sql.group_summaries import GroupSummariesDB
 from app.db.sql.groups import GroupsDB
 from app.db.sql.models.org_group import OrgGroup
 from app.db.sql.models.org_group_member import OrgGroupMember
@@ -58,7 +59,7 @@ class EntitledPerson:
         group_id = await self.group_id()
         user_id = await self._user_id(self._email)
         await add_member(self._db, org_id, user_id)
-        if await GroupsDB().get_user_group_summary(user_id) is None:
+        if await GroupSummariesDB().get_user_group_summary(user_id) is None:
             await put_in_org(org_id, OrgGroupMember(group_id=group_id, user_id=user_id))
         for extension_id in extension_ids:
             await GroupExtensionsDB().enable(org_id, group_id, extension_id, by_user_id=None)

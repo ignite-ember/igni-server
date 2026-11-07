@@ -35,16 +35,23 @@ import json
 import logging
 from pathlib import Path
 
+from app.db.sql.group_entries import GroupEntriesDB
+from app.db.sql.group_members import GroupMembersDB
+from app.db.sql.group_summaries import GroupSummariesDB
 from app.db.sql.groups import GroupsDB
 from app.db.sql.models.org_group import OrgGroup
 from app.db.sql.organizations import OrganizationDB
-from app.db.sql.schemas.group import GroupSummary
+from app.db.sql.schemas.group import EntryCreate, GroupSettings, GroupSummary
 from app.db.sql.team import TeamDB
 from app.services.portal.entry_kinds import ALLOWED_CONTENT_TYPE
+from app.services.portal.group_refusals import GroupRefusals
 
 logger = logging.getLogger(__name__)
 
-_db = GroupsDB()
+_groups = GroupsDB()
+_members = GroupMembersDB()
+_entries = GroupEntriesDB()
+_summaries = GroupSummariesDB()
 _org_db = OrganizationDB()
 _team_db = TeamDB()
 
@@ -159,7 +166,7 @@ class DefaultGroup:
             # somebody who had been deactivated, while the branch below
             # (`list_user_orgs`) has always filtered on active. The strict
             # check was on the rare path.
-            existing = await _db.get_active_user_group_summary(user_id, org_id)
+            existing = await _summaries.get_active_user_group_summary(user_id, org_id)
             if existing:
                 return existing
 
@@ -177,9 +184,11 @@ class DefaultGroup:
                 return None
 
             # Only if still ungrouped: an admin placing them meanwhile wins.
-            if await _db.place_if_ungrouped(org_id, str(group.id), [user_id], added_by_user_id=user_id):
+            if await _members.place_if_ungrouped(
+                org_id, group_id=str(group.id), user_ids=[user_id], added_by_user_id=user_id
+            ):
                 logger.info('Put %s in the default group of org %s', user_id, org_id)
-            return await _db.get_active_user_group_summary(user_id, org_id)
+            return await _summaries.get_active_user_group_summary(user_id, org_id)
         except Exception as exc:  # noqa: BLE001 — a CLI start must survive this
             logger.warning('Could not assign %s to a default group: %s', user_id, exc)
             return None
@@ -200,7 +209,9 @@ class DefaultGroup:
             return None
         members, _ = await _team_db.list_members(org_id)
         active = [str(member.user_id) for member in members if member.status == 'active']
-        placed = await _db.place_if_ungrouped(org_id, str(group.id), active, added_by_user_id=by_user_id)
+        placed = await _members.place_if_ungrouped(
+            org_id, group_id=str(group.id), user_ids=active, added_by_user_id=by_user_id
+        )
         if placed:
             logger.info('Put %d people in the default group of org %s', placed, org_id)
         return group
@@ -214,31 +225,32 @@ class DefaultGroup:
         them a fresh one the next time anything asked — which, now that
         listing the groups seeds it, would be on every page load.
         """
-        groups, _ = await _db.list_groups(org_id)
-        for group in groups:
+        for group in (await _groups.list_groups(org_id)).items:
             if bool(group.is_default):
                 return group
 
-        group = await _db.create_group(
-            org_id=org_id,
-            name=DEFAULT_GROUP_NAME,
-            description=DEFAULT_GROUP_DESCRIPTION,
-            created_by_user_id=created_by_user_id,
-            is_default=True,
-        )
+        with GroupRefusals():
+            group = await _groups.create_group(
+                org_id,
+                settings=GroupSettings(name=DEFAULT_GROUP_NAME, description=DEFAULT_GROUP_DESCRIPTION),
+                by_user_id=created_by_user_id,
+                is_default=True,
+            )
 
         seeded = 0
         for kind, entry_name, content in seed_entries():
             try:
-                await _db.create_entry(
-                    org_id=org_id,
+                await _entries.create_entry(
+                    org_id,
                     group_id=str(group.id),
-                    kind=kind,
-                    entry_name=entry_name,
-                    content=content,
-                    content_type=ALLOWED_CONTENT_TYPE[kind],
-                    enabled=True,
-                    created_by_user_id=created_by_user_id,
+                    entry=EntryCreate(
+                        kind=kind,
+                        entry_name=entry_name,
+                        content=content,
+                        content_type=ALLOWED_CONTENT_TYPE[kind],
+                        enabled=True,
+                    ),
+                    by_user_id=created_by_user_id,
                 )
                 seeded += 1
             except Exception as exc:  # noqa: BLE001 — one bad file is not worth the group

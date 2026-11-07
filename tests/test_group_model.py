@@ -158,10 +158,12 @@ class TestRouting:
         """Consulted on every chat request that names no model, so it must
         never be the thing that fails one."""
 
-        async def _boom(self, user_id):
+        async def _boom(self, *args, **kwargs):
             raise ConnectionError('database is down')
 
-        monkeypatch.setattr('app.db.sql.groups.GroupsDB.get_user_group_summary', _boom)
+        # The *active* variant is what `model_for_user` calls (B8);
+        # patching the other left this passing without exercising anything.
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
         assert await GroupsService.model_for_user('anyone') is None
 
 
