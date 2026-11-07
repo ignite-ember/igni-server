@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +41,15 @@ class GroupMembersDB(TenantData):
                 select(OrgGroupMember).where(OrgGroupMember.group_id == group_id).order_by(OrgGroupMember.added_at)
             )
             return list(rows.scalars().all())
+
+    async def count_by_group(self, session: AsyncSession, *, group_ids: list[str]) -> dict[str, int]:
+        """How many people each of these groups holds, in the caller's transaction. A group with none is absent."""
+        rows = await session.execute(
+            select(OrgGroupMember.group_id, func.count(OrgGroupMember.id))
+            .where(OrgGroupMember.group_id.in_(group_ids))
+            .group_by(OrgGroupMember.group_id)
+        )
+        return {str(group_id): int(count) for group_id, count in rows.all()}
 
     async def memberships(self, org_id: str) -> list[GroupMembership]:
         """Every person with a group in this organisation, and which group it is."""

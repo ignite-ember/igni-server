@@ -1,22 +1,20 @@
 """Pydantic schemas for portal group management.
 
-A group's theme lives in `group_theme`, and its entries in `group_entries`.
+A group's theme lives in `group_theme`, its entries in `group_entries`, and
+the CLI pack in `group_pack`.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-import hashlib
-import json
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.base_v1.schema.portal.group_entries import OrgGroupPackEntry
 from app.api.base_v1.schema.portal.group_theme import GroupTheme
 from app.db.sql.models.org_group import OrgGroup
 from app.db.sql.models.org_group_member import OrgGroupMember
-from app.db.sql.schemas.group import GroupPatch
+from app.db.sql.schemas.group import GroupPatch, GroupSettings, GroupTally
 
 # ------------------------------------------------------------------
 # Groups
@@ -70,9 +68,14 @@ class OrgGroupDetail(OrgGroupResponse):
     entry_count: int = 0
 
     @classmethod
-    def of(cls, group: OrgGroup, *, member_count: int = 0, entry_count: int = 0) -> Self:
-        """A stored group with how many people and entries it holds."""
-        return super().of(group).model_copy(update={'member_count': member_count, 'entry_count': entry_count})
+    def of(cls, group: OrgGroup, tally: GroupTally | None = None) -> Self:
+        """A stored group with how many people and entries it holds; none counted is all zeros."""
+        counts = tally or GroupTally()
+        return (
+            super()
+            .of(group)
+            .model_copy(update={'member_count': counts.member_count, 'entry_count': counts.entry_count})
+        )
 
 
 class OrgGroupList(BaseModel):
@@ -101,12 +104,30 @@ class CreateGroupRequest(BaseModel):
     )
     theme: GroupTheme | None = Field(None, description="Brand overrides. Omit for igni's palette.")
 
+    def to_settings(self) -> GroupSettings:
+        """The new group's settings. An empty `default_model` is none; a theme that overrides nothing is none."""
+        return GroupSettings(
+            name=self.name,
+            description=self.description,
+            default_model=self.default_model or None,
+            theme=self.theme.to_column() if self.theme else None,
+        )
+
 
 class CopyGroupRequest(BaseModel):
     """Copy a group: its entries, extensions and settings, under a new name, with nobody in it."""
 
     name: str = Field(..., min_length=1, max_length=120, description='Name of the copy (unique within org)')
     description: str | None = Field(None, description="The copy's description. Omit to keep the original's.")
+
+    def to_settings(self, source: OrgGroup) -> GroupSettings:
+        """The copy's settings: its own name, and the rest *source*'s unless this request supplies them."""
+        return GroupSettings(
+            name=self.name,
+            description=self.description if self.description is not None else source.description,
+            default_model=source.default_model,
+            theme=source.theme,
+        )
 
 
 class UpdateGroupRequest(BaseModel):
@@ -227,74 +248,6 @@ class OrgGroupSummary(BaseModel):
     id: str
     org_id: str
     name: str
-
-
-class OrgGroupPack(BaseModel):
-    """Full pack of entries for a group — consumed by igni CLI."""
-
-    group_id: str
-    group_name: str
-    fetched_at: datetime
-    entries: list[OrgGroupPackEntry]
-    # What the group's people get when an agent names no model.
-    default_model: str | None = None
-    # Brand overrides, applied by the client's UI. Group-level like
-    # ``default_model`` rather than an entry, and delivered the same
-    # way — this pack is already polled with an ETag, so branding costs
-    # no extra request and an unchanged theme costs no bytes.
-    theme: GroupTheme | None = None
-    #: The organisation the group belongs to. Not part of the served
-    #: payload (excluded from `as_payload`, so the response and its ETag
-    #: are what they were); carried so the signed form can name it.
-    org_id: str | None = Field(default=None, exclude=True)
-
-    def as_payload(self) -> dict:
-        """The pack as JSON-ready types.
-
-        `mode='json'`, so `fetched_at` leaves as an ISO string. Python
-        mode hands `JSONResponse`'s encoder a raw `datetime`, which it
-        refuses — and that is a property of this model's fields, so it
-        belongs here rather than in a comment beside one caller.
-        """
-        return self.model_dump(mode='json')
-
-    def etag(self, *, bound_to: str = '') -> str:
-        """A validator for "has this pack changed".
-
-        **`fetched_at` is excluded, and that is the whole point.** It
-        is `now()`, so a tag over the whole payload differs on every
-        request: present, well-formed, and unable to match by
-        construction. The tag covers what identifies the pack, not
-        when it was read.
-
-        `usedforsecurity=False` is not only documentation. This is a
-        cache validator and not a signature, and on a FIPS-enabled
-        host a bare `hashlib.md5()` raises — which would make this a
-        500 on exactly the kind of regulated deployment a self-hosted
-        product is installed into.
-
-        `bound_to` folds in what the signed form depends on besides the
-        content: who it was signed for and with which key (see
-        `GroupPackSigner.binding`). Without it, somebody else signing in
-        on the same machine, or the first poll after a key rotation,
-        would get a 304 and keep a signature that no longer verifies.
-        """
-        identity: dict = {key: value for key, value in self.as_payload().items() if key != 'fetched_at'}
-        if bound_to:
-            identity['_bound_to'] = bound_to
-        digest = hashlib.md5(json.dumps(identity, sort_keys=True).encode(), usedforsecurity=False)
-        return f'"{digest.hexdigest()}"'
-
-
-class SignedOrgGroupPack(OrgGroupPack):
-    """What `GET /v1/portal/me/group/pack` serves: the pack, and the pack signed.
-
-    Every field of `OrgGroupPack` is still here, unchanged, for clients
-    that read them. `signed_pack` is the same content as a compact JWS
-    (`app.services.portal.group_pack_signature`); igni applies only that.
-    """
-
-    signed_pack: str
 
 
 class GroupExtension(BaseModel):

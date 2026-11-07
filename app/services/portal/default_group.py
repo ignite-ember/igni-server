@@ -48,13 +48,6 @@ from app.services.portal.group_refusals import GroupRefusals
 
 logger = logging.getLogger(__name__)
 
-_groups = GroupsDB()
-_members = GroupMembersDB()
-_entries = GroupEntriesDB()
-_summaries = GroupSummariesDB()
-_org_db = OrganizationDB()
-_team_db = TeamDB()
-
 DEFAULT_GROUP_NAME = 'Default'
 DEFAULT_GROUP_DESCRIPTION = (
     'What igni ships, as a starting point. Edit or delete any of it here — '
@@ -141,8 +134,24 @@ def seed_entries() -> list[tuple[str, str, str]]:
 class DefaultGroup:
     """Creates the org's default group and puts ungrouped users in it."""
 
-    @staticmethod
-    async def ensure_for_user(user_id: str, org_id: str | None = None) -> GroupSummary | None:
+    def __init__(
+        self,
+        *,
+        groups: GroupsDB | None = None,
+        members: GroupMembersDB | None = None,
+        entries: GroupEntriesDB | None = None,
+        summaries: GroupSummariesDB | None = None,
+        orgs: OrganizationDB | None = None,
+        team: TeamDB | None = None,
+    ) -> None:
+        self._groups = groups or GroupsDB()
+        self._members = members or GroupMembersDB()
+        self._entries = entries or GroupEntriesDB()
+        self._summaries = summaries or GroupSummariesDB()
+        self._orgs = orgs or OrganizationDB()
+        self._team = team or TeamDB()
+
+    async def ensure_for_user(self, user_id: str, org_id: str | None = None) -> GroupSummary | None:
         """Return the user's group summary, joining the default if none.
 
         The annotation said ``dict | None`` and had since before the DB
@@ -166,11 +175,11 @@ class DefaultGroup:
             # somebody who had been deactivated, while the branch below
             # (`list_user_orgs`) has always filtered on active. The strict
             # check was on the rare path.
-            existing = await _summaries.get_active_user_group_summary(user_id, org_id)
+            existing = await self._summaries.get_active_user_group_summary(user_id, org_id)
             if existing:
                 return existing
 
-            orgs = await _org_db.list_user_orgs(user_id)
+            orgs = await self._orgs.list_user_orgs(user_id)
             if org_id is not None:
                 # The organisation the session is in, and only if the person
                 # is an active member of it (`list_user_orgs` is active-only).
@@ -179,22 +188,19 @@ class DefaultGroup:
                 return None
             org_id = str(orgs[0][0].id)
 
-            group = await DefaultGroup.ensure_for_org(org_id, created_by_user_id=user_id)
-            if group is None:
-                return None
+            group = await self.ensure_for_org(org_id, created_by_user_id=user_id)
 
             # Only if still ungrouped: an admin placing them meanwhile wins.
-            if await _members.place_if_ungrouped(
+            if await self._members.place_if_ungrouped(
                 org_id, group_id=str(group.id), user_ids=[user_id], added_by_user_id=user_id
             ):
                 logger.info('Put %s in the default group of org %s', user_id, org_id)
-            return await _summaries.get_active_user_group_summary(user_id, org_id)
+            return await self._summaries.get_active_user_group_summary(user_id, org_id)
         except Exception as exc:  # noqa: BLE001 — a CLI start must survive this
             logger.warning('Could not assign %s to a default group: %s', user_id, exc)
             return None
 
-    @staticmethod
-    async def place_everyone(org_id: str, by_user_id: str) -> OrgGroup | None:
+    async def place_everyone(self, org_id: str, *, by_user_id: str) -> OrgGroup:
         """Put every active member of the organisation who is in no group into Default.
 
         A person joins an organisation in the shared plane, and their
@@ -204,20 +210,17 @@ class DefaultGroup:
         their own first sync, or an admin opening the groups. Either
         way, by the time a group is shown, everybody is in one.
         """
-        group = await DefaultGroup.ensure_for_org(org_id, created_by_user_id=by_user_id)
-        if group is None:
-            return None
-        members, _ = await _team_db.list_members(org_id)
+        group = await self.ensure_for_org(org_id, created_by_user_id=by_user_id)
+        members, _ = await self._team.list_members(org_id)
         active = [str(member.user_id) for member in members if member.status == 'active']
-        placed = await _members.place_if_ungrouped(
+        placed = await self._members.place_if_ungrouped(
             org_id, group_id=str(group.id), user_ids=active, added_by_user_id=by_user_id
         )
         if placed:
             logger.info('Put %d people in the default group of org %s', placed, org_id)
         return group
 
-    @staticmethod
-    async def ensure_for_org(org_id: str, created_by_user_id: str) -> OrgGroup | None:
+    async def ensure_for_org(self, org_id: str, *, created_by_user_id: str) -> OrgGroup:
         """Return the org's default group, creating and seeding it once.
 
         Found by its ``is_default`` flag, not its name. An admin who
@@ -225,12 +228,12 @@ class DefaultGroup:
         them a fresh one the next time anything asked — which, now that
         listing the groups seeds it, would be on every page load.
         """
-        for group in (await _groups.list_groups(org_id)).items:
-            if bool(group.is_default):
+        for group in (await self._groups.list_groups(org_id)).items:
+            if group.is_default:
                 return group
 
         with GroupRefusals():
-            group = await _groups.create_group(
+            group = await self._groups.create_group(
                 org_id,
                 settings=GroupSettings(name=DEFAULT_GROUP_NAME, description=DEFAULT_GROUP_DESCRIPTION),
                 by_user_id=created_by_user_id,
@@ -240,7 +243,7 @@ class DefaultGroup:
         seeded = 0
         for kind, entry_name, content in seed_entries():
             try:
-                await _entries.create_entry(
+                await self._entries.create_entry(
                     org_id,
                     group_id=str(group.id),
                     entry=EntryCreate(

@@ -56,10 +56,12 @@ class GroupExtensions:
         enabled: GroupExtensionsDB | None = None,
         groups: GroupsDB | None = None,
         extensions: ServiceExtensionDB | None = None,
+        default_group: DefaultGroup | None = None,
     ) -> None:
         self._enabled = enabled or GroupExtensionsDB()
         self._groups = groups or GroupsDB()
         self._extensions = extensions or ServiceExtensionDB()
+        self._default_group = default_group or DefaultGroup(groups=self._groups)
 
     async def _group_in_org(self, org_id: str, group_id: str) -> None:
         if await self._groups.get_group(org_id, group_id=group_id) is None:
@@ -148,7 +150,7 @@ class GroupExtensions:
     async def _group_summary_of(self, user_id: str, org_id: str | None) -> GroupSummary | None:
         if not org_id:
             return None
-        summary = await DefaultGroup.ensure_for_user(user_id, org_id)
+        summary = await self._default_group.ensure_for_user(user_id, org_id)
         if summary is None or str(summary.org_id) != str(org_id):
             return None
         return GroupSummary(id=str(summary.id), org_id=str(summary.org_id), name=summary.name)

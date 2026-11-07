@@ -163,7 +163,7 @@ class TestTheStandardSet:
         """Which is what makes "the standard set, minus the coding
         agents" two steps rather than a merge rule."""
         headers, _ = admin
-        await DefaultGroup.ensure_for_user('admin-1')
+        await DefaultGroup().ensure_for_user('admin-1')
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
         default = next(g for g in groups if g['name'] == DEFAULT_GROUP_NAME)
 
@@ -179,7 +179,7 @@ class TestTheStandardSet:
 
     async def test_and_then_it_can_be_cut_down(self, client, admin):
         headers, _ = admin
-        await DefaultGroup.ensure_for_user('admin-1')
+        await DefaultGroup().ensure_for_user('admin-1')
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
         default = next(g for g in groups if g['name'] == DEFAULT_GROUP_NAME)
         legal = (

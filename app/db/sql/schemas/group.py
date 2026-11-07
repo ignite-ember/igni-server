@@ -55,6 +55,13 @@ class GroupPage(BaseModel):
     total: int
 
 
+class GroupTally(BaseModel):
+    """How many people and entries one group holds. A group with neither is all zeros."""
+
+    member_count: int = 0
+    entry_count: int = 0
+
+
 class GroupSettings(BaseModel):
     """What a new group is made with."""
 

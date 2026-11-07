@@ -36,7 +36,9 @@ class GroupMembersService:
         self._users = users or UserDB()
         self._summaries = summaries or GroupSummariesDB()
         self._access = access or GroupAccess()
-        self._default_group = default_group or DefaultGroup()
+        self._default_group = default_group or DefaultGroup(
+            members=self._members, team=self._team, summaries=self._summaries
+        )
 
     async def list_members(self, *, org_id: str, group_id: str, by_user_id: str | None = None) -> OrgGroupMemberList:
         """The people in a group of *org_id*, with who they are.

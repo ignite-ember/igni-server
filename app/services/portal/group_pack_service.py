@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.api.base_v1.schema.portal.group_entries import OrgGroupPackEntry
+from app.api.base_v1.schema.portal.group_pack import OrgGroupPack
 from app.api.base_v1.schema.portal.group_theme import GroupTheme
-from app.api.base_v1.schema.portal.groups import OrgGroupPack
 from app.db.sql.group_entries import GroupEntriesDB
 from app.db.sql.groups import GroupsDB
 from app.services.portal.default_group import DefaultGroup
@@ -24,7 +24,7 @@ class GroupPackService:
     ) -> None:
         self._groups = groups or GroupsDB()
         self._entries = entries or GroupEntriesDB()
-        self._default_group = default_group or DefaultGroup()
+        self._default_group = default_group or DefaultGroup(groups=self._groups, entries=self._entries)
 
     async def get_my_group_pack(self, *, user_id: str, org_id: str | None = None) -> OrgGroupPack | None:
         """The full pack of entries for the group the user belongs to.

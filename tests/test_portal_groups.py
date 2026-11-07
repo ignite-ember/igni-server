@@ -1,5 +1,8 @@
 """Integration tests for portal group endpoints."""
 
+from datetime import datetime, timezone
+
+from app.api.base_v1.schema.portal.group_pack import OrgGroupPack
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -867,10 +870,6 @@ class TestThePackKnowsItsOwnIdentity:
     """
 
     def _pack(self, **overrides):
-        from datetime import datetime, timezone
-
-        from app.api.base_v1.schema.portal.groups import OrgGroupPack
-
         fields = {
             'group_id': 'g-1',
             'group_name': 'Engineering',

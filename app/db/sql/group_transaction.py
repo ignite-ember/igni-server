@@ -23,7 +23,7 @@ from app.db.sql.group_entries import GroupEntriesDB
 from app.db.sql.group_extensions import GroupExtensionsDB
 from app.db.sql.group_members import GroupMembersDB
 from app.db.sql.models.org_group import OrgGroup
-from app.db.sql.schemas.group import GroupNameTaken
+from app.db.sql.schemas.group import GroupNameTaken, GroupTally
 from app.db.sql.tenancy import TenantScoped, TenantSessions
 
 
@@ -84,6 +84,15 @@ class GroupTransaction:
         await self._session.flush()
 
     # ── What the groups own ─────────────────────────────────────────
+
+    async def tallies(self, *, group_ids: list[str]) -> dict[str, GroupTally]:
+        """How many people and entries each of these groups holds; all zeros for one that holds neither."""
+        members = await self._members.count_by_group(self._session, group_ids=group_ids)
+        entries = await self._entries.count_by_group(self._session, group_ids=group_ids)
+        return {
+            group_id: GroupTally(member_count=members.get(group_id, 0), entry_count=entries.get(group_id, 0))
+            for group_id in group_ids
+        }
 
     async def return_everyone_in(self, *, group_id: str) -> None:
         """Move everybody in this group to the Default one."""

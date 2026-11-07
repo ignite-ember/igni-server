@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,15 @@ class GroupEntriesDB(TenantData):
                 .order_by(OrgGroupEntry.kind, OrgGroupEntry.entry_name)
             )
             return list(rows.scalars().all())
+
+    async def count_by_group(self, session: AsyncSession, *, group_ids: list[str]) -> dict[str, int]:
+        """How many entries each of these groups holds, in the caller's transaction. A group with none is absent."""
+        rows = await session.execute(
+            select(OrgGroupEntry.group_id, func.count(OrgGroupEntry.id))
+            .where(OrgGroupEntry.group_id.in_(group_ids))
+            .group_by(OrgGroupEntry.group_id)
+        )
+        return {str(group_id): int(count) for group_id, count in rows.all()}
 
     async def get_entry(self, org_id: str, *, group_id: str, entry_id: str) -> OrgGroupEntry | None:
         async with self.session_scope(org_id) as session:

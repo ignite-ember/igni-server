@@ -18,7 +18,14 @@ from app.db.sql.group_extensions import GroupExtensionsDB
 from app.db.sql.group_members import GroupMembersDB
 from app.db.sql.group_transaction import GroupAggregate
 from app.db.sql.models.org_group import OrgGroup
-from app.db.sql.schemas.group import GroupNotFound, GroupPage, GroupPatch, GroupSettings, TemplateGroupNotFound
+from app.db.sql.schemas.group import (
+    GroupNotFound,
+    GroupPage,
+    GroupPatch,
+    GroupSettings,
+    GroupTally,
+    TemplateGroupNotFound,
+)
 from app.db.sql.tenancy import TenantSessions
 
 
@@ -55,6 +62,17 @@ class GroupsDB(GroupAggregate):
         async with self._transaction(org_id) as tx:
             total = await tx.count()
             return GroupPage(items=await tx.page(offset=offset, limit=limit), total=total)
+
+    async def tallies(self, org_id: str, *, group_ids: list[str]) -> dict[str, GroupTally]:
+        """How many people and entries each group holds, keyed by group id, read in one transaction.
+
+        Every id asked for is in the answer; a group that holds nothing
+        is `GroupTally()`. No ids opens no session.
+        """
+        if not group_ids:
+            return {}
+        async with self._transaction(org_id) as tx:
+            return await tx.tallies(group_ids=group_ids)
 
     async def get_group(self, org_id: str, *, group_id: str) -> OrgGroup | None:
         async with self._transaction(org_id) as tx:

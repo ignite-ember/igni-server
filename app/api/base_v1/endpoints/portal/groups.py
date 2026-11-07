@@ -11,6 +11,7 @@ from app.api.base_v1.schema.portal.group_entries import (
     OrgGroupEntryList,
     UpdateEntryRequest,
 )
+from app.api.base_v1.schema.portal.group_pack import SignedOrgGroupPack
 from app.api.base_v1.schema.portal.groups import (
     AddMemberRequest,
     CopyGroupRequest,
@@ -23,7 +24,6 @@ from app.api.base_v1.schema.portal.groups import (
     OrgGroupResponse,
     OrgGroupSummary,
     SetGroupExtension,
-    SignedOrgGroupPack,
     UpdateGroupRequest,
 )
 from app.api.base_v1.schema.portal.user import PortalAccount, PortalUser
@@ -65,7 +65,7 @@ async def list_groups(
             org_id=current_user.org_id,
             offset=offset,
             limit=limit,
-            seed_default_for_user_id=current_user.user_id,
+            by_user_id=current_user.user_id,
         )
 
 

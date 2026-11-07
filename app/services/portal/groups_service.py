@@ -17,7 +17,6 @@ from app.api.base_v1.schema.portal.groups import (
 from app.db.sql.group_entries import GroupEntriesDB
 from app.db.sql.group_members import GroupMembersDB
 from app.db.sql.groups import GroupsDB
-from app.db.sql.models.org_group import OrgGroup
 from app.db.sql.schemas.group import GroupSettings
 from app.services.portal.default_group import DefaultGroup
 from app.services.portal.group_access import GroupAccess
@@ -38,52 +37,33 @@ class GroupsService:
         default_group: DefaultGroup | None = None,
     ) -> None:
         self._groups = groups or GroupsDB()
-        self._members = members or GroupMembersDB()
-        self._entries = entries or GroupEntriesDB()
         self._access = access or GroupAccess(groups=self._groups)
         self._served = served or ServedModels()
-        self._default_group = default_group or DefaultGroup()
+        self._default_group = default_group or DefaultGroup(
+            groups=self._groups, members=members or GroupMembersDB(), entries=entries or GroupEntriesDB()
+        )
 
     async def list_groups(
-        self,
-        *,
-        org_id: str,
-        offset: int = 0,
-        limit: int | None = None,
-        seed_default_for_user_id: str | None = None,
+        self, *, org_id: str, by_user_id: str, offset: int = 0, limit: int | None = None
     ) -> OrgGroupList:
-        """Every group in the org, with its member and entry counts.
-
-        Seeds the Default group first when a user id is given, and puts
-        everybody who is in no group yet into it. This is where an admin
-        goes looking for the group to start others from, so this is where
-        it has to exist, holding the people it holds.
-        """
-        if seed_default_for_user_id:
-            await self._default_group.place_everyone(org_id, by_user_id=seed_default_for_user_id)
-
+        """Every group in the org with its counts, once everybody is in one (`DefaultGroup.place_everyone`)."""
+        await self._default_group.place_everyone(org_id, by_user_id=by_user_id)
         page = await self._groups.list_groups(org_id, offset=offset, limit=limit)
-        groups = [await self._detail(org_id=org_id, group=group) for group in page.items]
+        tallies = await self._groups.tallies(org_id, group_ids=[group.id for group in page.items])
+        groups = [OrgGroupDetail.of(group, tallies[group.id]) for group in page.items]
         return OrgGroupList(groups=groups, total=page.total, offset=offset, limit=limit)
 
     async def create_group(self, *, org_id: str, body: CreateGroupRequest, by_user_id: str) -> OrgGroupResponse:
-        """A new group, empty or copied from *body*'s template."""
+        """A new group, empty or copied from *body*'s template.
+
+        The served check applies to a model the request asks for; a copy
+        (`copy_group`) inherits one that was checked when it was set.
+        """
         await self._access.refuse_taken_name(org_id=org_id, name=body.name)
         await self._served.refuse_unserved(body.default_model)
-
-        settings = GroupSettings(
-            name=body.name,
-            description=body.description,
-            default_model=body.default_model or None,
-            theme=body.theme.to_column() if body.theme else None,
+        return await self._make(
+            org_id=org_id, settings=body.to_settings(), from_group_id=body.template_group_id, by_user_id=by_user_id
         )
-        if body.template_group_id:
-            group = await self._groups.copy_group(
-                org_id, from_group_id=body.template_group_id, settings=settings, by_user_id=by_user_id
-            )
-        else:
-            group = await self._groups.create_group(org_id, settings=settings, by_user_id=by_user_id)
-        return OrgGroupResponse.of(group)
 
     async def copy_group(
         self, *, org_id: str, group_id: str, body: CopyGroupRequest, by_user_id: str
@@ -101,25 +81,17 @@ class GroupsService:
         """
         source = await self._access.in_org(org_id=org_id, group_id=group_id)
         await self._access.refuse_taken_name(org_id=org_id, name=body.name)
-        settings = GroupSettings(
-            name=body.name,
-            description=body.description if body.description is not None else source.description,
-            default_model=source.default_model,
-            theme=source.theme,
+        return await self._make(
+            org_id=org_id, settings=body.to_settings(source), from_group_id=group_id, by_user_id=by_user_id
         )
-        group = await self._groups.copy_group(org_id, from_group_id=group_id, settings=settings, by_user_id=by_user_id)
-        return OrgGroupResponse.of(group)
 
-    async def get_group(self, *, org_id: str, group_id: str, by_user_id: str | None = None) -> OrgGroupDetail:
-        """One group with its counts.
-
-        The Default group's count is everybody nobody has put elsewhere,
-        so when a user id is given they are placed before they are counted.
-        """
+    async def get_group(self, *, org_id: str, group_id: str, by_user_id: str) -> OrgGroupDetail:
+        """One group with its counts; the Default group's people are placed before they are counted."""
         group = await self._access.in_org(org_id=org_id, group_id=group_id)
-        if by_user_id and bool(group.is_default):
+        if group.is_default:
             await self._default_group.place_everyone(org_id, by_user_id=by_user_id)
-        return await self._detail(org_id=org_id, group=group)
+        tallies = await self._groups.tallies(org_id, group_ids=[group.id])
+        return OrgGroupDetail.of(group, tallies[group.id])
 
     async def update_group(self, *, org_id: str, group_id: str, body: UpdateGroupRequest) -> OrgGroupResponse:
         """Change what *body* supplies, and nothing else."""
@@ -132,12 +104,19 @@ class GroupsService:
         return OrgGroupResponse.of(group)
 
     async def delete_group(self, *, org_id: str, group_id: str, by_user_id: str) -> None:
-        """Delete a group. Its people go back to the Default group, in the same transaction."""
+        """Delete a group. Its people go back to the Default group, which must exist before the transaction."""
         await self._access.writable(org_id=org_id, group_id=group_id)
         await self._default_group.ensure_for_org(org_id, created_by_user_id=by_user_id)
         await self._groups.delete_group(org_id, group_id=group_id)
 
-    async def _detail(self, *, org_id: str, group: OrgGroup) -> OrgGroupDetail:
-        members = await self._members.list_members(org_id, group.id)
-        entries = await self._entries.list_entries(org_id, group.id)
-        return OrgGroupDetail.of(group, member_count=len(members), entry_count=len(entries))
+    async def _make(
+        self, *, org_id: str, settings: GroupSettings, from_group_id: str | None, by_user_id: str
+    ) -> OrgGroupResponse:
+        """The one place a group is made: a copy of *from_group_id* when given, empty otherwise."""
+        if from_group_id:
+            group = await self._groups.copy_group(
+                org_id, from_group_id=from_group_id, settings=settings, by_user_id=by_user_id
+            )
+        else:
+            group = await self._groups.create_group(org_id, settings=settings, by_user_id=by_user_id)
+        return OrgGroupResponse.of(group)

@@ -34,7 +34,7 @@ class GroupAccess:
         reference point and nothing to copy, so it is immutable.
         """
         group = await self.in_org(org_id=org_id, group_id=group_id)
-        if bool(group.is_default):
+        if group.is_default:
             raise GroupIsStandard()
         return group
 

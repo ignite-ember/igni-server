@@ -43,7 +43,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from app.api.base_v1.schema.portal.groups import OrgGroupPack
+from app.api.base_v1.schema.portal.group_pack import OrgGroupPack
 from app.security import jose
 from app.services.auth.jwt_service import JWTService
 from app.services.identity.key_ring import KeyRing, SigningKeys

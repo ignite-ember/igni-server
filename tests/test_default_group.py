@@ -77,14 +77,14 @@ class TestTheSeed:
 
 class TestJoiningIt:
     async def test_a_user_with_no_group_gets_one(self, client, member):
-        summary = await DefaultGroup.ensure_for_user('dev-1')
+        summary = await DefaultGroup().ensure_for_user('dev-1')
 
         assert summary is not None
         assert summary.name == DEFAULT_GROUP_NAME
 
     async def test_it_arrives_holding_the_shipped_agents(self, client, member):
         headers, _ = member
-        await DefaultGroup.ensure_for_user('dev-1')
+        await DefaultGroup().ensure_for_user('dev-1')
 
         pack = (await client.get('/portal/me/group/pack', headers=headers)).json()
         got = {(o['kind'], o['entry_name']) for o in pack['entries']}
@@ -94,8 +94,8 @@ class TestJoiningIt:
         """A second one beside the group an admin has been editing would
         be worse than none."""
         headers, _ = member
-        await DefaultGroup.ensure_for_user('dev-1')
-        await DefaultGroup.ensure_for_user('dev-1')
+        await DefaultGroup().ensure_for_user('dev-1')
+        await DefaultGroup().ensure_for_user('dev-1')
 
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
         assert [g['name'] for g in groups].count(DEFAULT_GROUP_NAME) == 1
@@ -105,8 +105,8 @@ class TestJoiningIt:
         await create_user(db, user_id='dev-2', email='dev2@test.com')
         await add_member(db, org_id=org_id, user_id='dev-2', role='member')
 
-        first = await DefaultGroup.ensure_for_user('dev-1')
-        second = await DefaultGroup.ensure_for_user('dev-2')
+        first = await DefaultGroup().ensure_for_user('dev-1')
+        second = await DefaultGroup().ensure_for_user('dev-2')
 
         assert first.id == second.id
 
@@ -116,14 +116,14 @@ class TestJoiningIt:
         legal = (await client.post('/portal/groups', json={'name': 'Legal'}, headers=headers)).json()
         await client.post(f'/portal/groups/{legal["id"]}/members', json={'user_id': 'dev-1'}, headers=headers)
 
-        summary = await DefaultGroup.ensure_for_user('dev-1')
+        summary = await DefaultGroup().ensure_for_user('dev-1')
 
         assert summary.name == 'Legal'
 
     async def test_someone_in_no_org_gets_nothing(self, client, db):
         await create_user(db, user_id='nomad-1', email='nomad@test.com')
 
-        assert await DefaultGroup.ensure_for_user('nomad-1') is None
+        assert await DefaultGroup().ensure_for_user('nomad-1') is None
 
     async def test_a_failure_costs_the_group_not_the_session(self, monkeypatch, client, member):
         """This runs while a CLI is starting up."""
@@ -136,7 +136,7 @@ class TestJoiningIt:
         # method no longer on the path can fail safely.
         monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
 
-        assert await DefaultGroup.ensure_for_user('dev-1') is None
+        assert await DefaultGroup().ensure_for_user('dev-1') is None
 
 
 class TestThroughThePack:
