@@ -9,7 +9,7 @@ name: Release
 # the paid module images (containers/release/modules.tsv), and a CI
 # artefact of a public repository is downloadable by any signed-in GitHub
 # user, so no release is ever built in a run that belongs to this
-# repository. igni__release holds a caller workflow, the `prod`
+# repository. igni__release holds a caller workflow, the `release`
 # environment and the release keys, and no source. docs/RELEASING.md.
 on:
   workflow_call:
@@ -31,7 +31,7 @@ on:
 # exportable), and the jobs that sign reach it with GitHub's OIDC token
 # through Workload Identity Federation: there is no signing secret, here
 # or in igni__release. Only those jobs get `id-token: write`, and Google
-# lets a token sign only when it was issued to igni__release's `prod`
+# lets a token sign only when it was issued to igni__release's `release`
 # environment. docs/OFFLINE_UPDATES.md, "The release key".
 permissions:
   contents: read
@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     # In a called workflow `github.repository` is the caller's, so this
     # names the repository that called, not this one. Only igni__release
-    # has the `prod` environment and the release keys. A fork that calls
+    # has the `release` environment and the release keys. A fork that calls
     # this, or this repository calling it, would have neither; skipping
     # this job skips the rest, which all need it. S27.
     if: github.repository == 'ignite-ember/igni__release'
@@ -70,7 +70,7 @@ jobs:
     # The `dev-` and `stage-` prefixes are gone with the dev and stage
     # images: nothing deployed them once the Google Cloud projects went.
     # The tag is the naming; the release cosign key, held by
-    # igni__release's `prod` environment alone, is the guarantee: the
+    # igni__release's `release` environment alone, is the guarantee: the
     # bundle refuses any image it did not sign. docs/OFFLINE_UPDATES.md,
     # "Where images come from".
     outputs:
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [resolve]
     # Only after `resolve`, which runs in igni__release only (S27).
-    environment: prod
+    environment: release
     permissions:
       contents: read
       packages: write
@@ -173,7 +173,7 @@ jobs:
       # Nothing is pushed unsigned. The push below happens before the
       # signature, so without the environment's signing key an image would
       # reach the registry with no signature, and under a release tag.
-      # Until igni__release's `prod` environment names the KMS key and the
+      # Until igni__release's `release` environment names the KMS key and the
       # identity that may sign with it (docs/OFFLINE_UPDATES.md), the job
       # stops here, before the push.
       - name: The signing key is in this environment
@@ -188,7 +188,7 @@ jobs:
             [ -n "${!name}" ] || missing+=("${name}")
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::No image is pushed unsigned. Missing variables in environment 'prod': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
+            echo "::error::No image is pushed unsigned. Missing variables in environment 'release': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
             exit 1
           fi
 
@@ -302,7 +302,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [resolve]
     # Only after `resolve`, which runs in igni__release only (S27).
-    environment: prod
+    environment: release
     permissions:
       contents: read
       packages: write
@@ -321,7 +321,7 @@ jobs:
       # Nothing is pushed unsigned. The push below happens before the
       # signature, so without the environment's signing key an image would
       # reach the registry with no signature, and under a release tag.
-      # Until igni__release's `prod` environment names the KMS key and the
+      # Until igni__release's `release` environment names the KMS key and the
       # identity that may sign with it (docs/OFFLINE_UPDATES.md), the job
       # stops here, before the push.
       - name: The signing key is in this environment
@@ -336,7 +336,7 @@ jobs:
             [ -n "${!name}" ] || missing+=("${name}")
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::No image is pushed unsigned. Missing variables in environment 'prod': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
+            echo "::error::No image is pushed unsigned. Missing variables in environment 'release': ${missing[*]}. See docs/OFFLINE_UPDATES.md."
             exit 1
           fi
 
@@ -462,7 +462,7 @@ jobs:
     name: Offline Bundle
     runs-on: ubuntu-latest
     needs: [resolve, build-backend, build-portal]
-    environment: prod
+    environment: release
     permissions:
       contents: read
       packages: write

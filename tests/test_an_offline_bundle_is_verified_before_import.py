@@ -823,7 +823,7 @@ class TestTheReleaseSignsWhatItShips:
         job = release['jobs']['offline-bundle']
         script = self._runs(job)
 
-        assert job.get('environment') == 'prod', 'the bundle is not sealed with the release key'
+        assert job.get('environment') == 'release', 'the bundle is not sealed with the release key'
         assert 'resolve' in job.get('needs', []), 'the bundle does not wait for the ref to be resolved to main'
         assert 'tools/release/igni-bundle seal' in script
         seal = script[script.index('tools/release/igni-bundle seal') :].replace('\\\n', ' ')
@@ -969,13 +969,13 @@ class TestTheReleaseSignsWhatItShips:
 
     def test_every_signing_job_reaches_the_kms_key_through_oidc(self):
         """Google lets a token use the key only when GitHub issued it to
-        igni__release's `prod` environment, so a signing job must run in
+        igni__release's `release` environment, so a signing job must run in
         that environment and must be allowed to ask for the token."""
         jobs = self._signing_jobs()
 
         assert {'build-backend', 'build-portal', 'offline-bundle'} <= set(jobs), sorted(jobs)
         for name, job in jobs.items():
-            assert job.get('environment') == 'prod', f'{name} signs outside the prod environment'
+            assert job.get('environment') == 'release', f'{name} signs outside the release environment'
             assert (job.get('permissions') or {}).get('id-token') == 'write', f'{name} cannot get an OIDC token'
             auth = [s for s in job['steps'] if str(s.get('uses', '')).startswith('google-github-actions/auth@')]
             assert len(auth) == 1, f'{name} does not authenticate to Google'

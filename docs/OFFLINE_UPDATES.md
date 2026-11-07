@@ -229,7 +229,7 @@ and every other job needs it. `resolve` also refuses a ref that is not on
 `main` of this repository, or whose CD run on `main` (the tests) did not
 pass, and every job checks out the commit it resolved. This repository's
 own `cd.yml` runs the tests on each push to `main` and builds nothing.
-`igni__release` holds no source: one caller workflow and the `prod`
+`igni__release` holds no source: one caller workflow and the `release`
 environment, which is the only thing allowed to sign with the release key. The module packages on GHCR stay private,
 readable by `igni__release`'s workflows only (package settings, "Manage
 Actions access"); `igni-api`, `igni-portal` and `igni-bundle` grant it
@@ -269,14 +269,14 @@ only now, so `igni-api` and `igni-portal` get the `main` row alone, from
 |---|---|---|
 | `dev` | `dev` | `dev-<sha>`, `dev` |
 | `stage` | `stage` | `stage-<sha>`, `stage` |
-| `main` | `prod` | `<sha>`, `<version>`, `latest` |
+| `main` | `prod` (`release` in `igni__release`) | `<sha>`, `<version>`, `latest` |
 
 So a release tag only ever comes from `main`, and the bundle copies only
 release tags (the commit for igni-api and igni-portal, the pinned version
 for the modules). The naming is a convention; the guarantee is the key.
 `GITHUB_TOKEN` from any branch can write any tag of a package, and GHCR
 has no immutable tags, so what stops a non-release image reaching a
-customer is that only `igni__release`'s `prod` environment can sign with
+customer is that only `igni__release`'s `release` environment can sign with
 the release key, its deployment branch policy allows `main` only (which
 runs the release from a commit on this repository's `main`), and the
 bundle job refuses any image that key did not sign. The module
@@ -291,15 +291,18 @@ private key, so there is none to leak, to keep in two places, or to hand
 over when somebody leaves. CD signs through it with GitHub's OIDC token
 (Workload Identity Federation): the jobs that sign get `id-token: write`,
 and Google accepts the token only when GitHub issued it to a job in
-`igni__release`'s `prod` environment. There is no signing secret in
-GitHub. cosign names the key as `gcpkms://projects/…/cryptoKeyVersions/N`,
+`igni__release`'s `release` environment (its subject is
+`repo:ignite-ember/igni__release:environment:release`). There is no
+signing secret in GitHub. cosign names the key as `gcpkms://projects/…/cryptoKeyVersions/N`,
 and the same key signs the images, their SBOM attestations and the
 bundle's MANIFEST, so a customer holds one public key and needs one tool.
 
-Variables, set on the `prod` GitHub environment of `igni__release` (never
-on this public repository, whose workflows use no environment). None is a
-secret: each names something, and only the environment's OIDC token can
-use it.
+`release` is a GitHub environment of `igni__release`, and it is a lock,
+not a deployment target: Ignite Ember ships images, so nothing is deployed
+to it. Its deployment branch policy allows `main` only, the jobs that sign
+run in it, and it holds four variables (never on this public repository,
+whose workflows use no environment). None is a secret: each names
+something, and only the environment's OIDC token can use it.
 
 | Name | Kind | Content |
 |---|---|---|
