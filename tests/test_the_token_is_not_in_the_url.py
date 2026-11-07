@@ -129,7 +129,7 @@ class TestTheWindowIsShort:
     def test_it_is_shorter_than_the_oauth_state_window(self):
         """State has to survive a person taking their time at the
         provider's consent screen. This does not."""
-        from app.db.redis.oauth_state import _TTL_SECONDS as state_ttl
+        from app.db.redis.oauth_state import STATE_TTL_SECONDS as state_ttl
 
         assert _TTL_SECONDS < state_ttl
 

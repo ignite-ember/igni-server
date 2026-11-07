@@ -30,7 +30,7 @@ def _google_sign_in_enabled(monkeypatch):
 
 class TestOAuthRedirect:
     async def test_google_redirect(self, client, monkeypatch):
-        async def fake_generate_state(metadata=None):
+        async def fake_generate_state(record):
             return 'fake-state-token'
 
         monkeypatch.setattr(OAuthService, 'generate_state', staticmethod(fake_generate_state))
@@ -75,8 +75,8 @@ class TestAProviderThatCannotBeUsedIsRefusedHere:
 
 class TestOAuthCallback:
     async def test_google_callback_new_user(self, client, monkeypatch):
-        async def fake_validate_state(state):
-            return {}
+        async def fake_validate_state(state, shape):
+            return shape()
 
         async def fake_exchange(provider, code):
             return OAuthUserInfo(
@@ -129,8 +129,8 @@ class TestOAuthCallback:
         )
         invited_id = str(invited.id)
 
-        async def fake_validate_state(state):
-            return {}
+        async def fake_validate_state(state, shape):
+            return shape()
 
         async def fake_exchange(provider, code):
             return OAuthUserInfo(
@@ -159,8 +159,8 @@ class TestOAuthCallback:
 
 
 def _signs_in_as(monkeypatch, email: str, *, state: dict | None = None) -> None:
-    async def fake_validate_state(_state):
-        return state or {}
+    async def fake_validate_state(_state, shape):
+        return shape.model_validate(state or {})
 
     async def fake_exchange(provider, code):
         return OAuthUserInfo(email=email, first_name='Ada', last_name='L', provider='google')
@@ -223,8 +223,8 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         """Not a 500 page on the API's host: the portal's sign-in form,
         which shows the error, and no code."""
 
-        async def fake_validate_state(_state):
-            return {}
+        async def fake_validate_state(_state, shape):
+            return shape()
 
         async def broken_exchange(provider, code):
             raise OAuthExchangeFailed(provider) from RuntimeError('upstream said: invalid_grant')
@@ -261,8 +261,8 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         deployment refuses — keeps its status rather than being folded
         into the generic failure redirect."""
 
-        async def fake_validate_state(_state):
-            return {}
+        async def fake_validate_state(_state, shape):
+            return shape()
 
         async def refusing_exchange(provider, code):
             raise HTTPException(status_code=403, detail='not allowed here')

@@ -25,6 +25,7 @@ from cryptography.fernet import Fernet
 import pytest
 import redis.asyncio as aioredis
 
+from app.api.base_v1.schema.oidc import OidcSignInState
 from app.config import settings
 from app.db.redis.auth_handoff import AuthHandoffDB
 from app.db.redis.authorization_codes import AuthorizationCodeDB, PendingAuthorization
@@ -104,10 +105,11 @@ class TestTheFlowsLeaveNothingUsable:
         state = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(48)
         nonce = secrets.token_urlsafe(16)
-        await OAuthStateDB().store(state, {'code_verifier': verifier, 'nonce': nonce})
+        signin = OidcSignInState(nonce=nonce, pkce=verifier)
+        await OAuthStateDB().store(state, signin)
 
         await _assert_nowhere(state, verifier, nonce)
-        assert await OAuthStateDB().validate_and_consume(state) == {'code_verifier': verifier, 'nonce': nonce}
+        assert await OAuthStateDB().claim(state, OidcSignInState) == signin
 
     async def test_an_authorization_code(self):
         pending = PendingAuthorization(
@@ -166,9 +168,7 @@ class TestAnEntryThatWillNotDecrypt:
     async def test_a_node_is_skipped_with_an_error_and_told_to_register_again(self, another_key, caplog):
         node_id = f'scan-{uuid.uuid4().hex[:8]}'
         registry = NodeRegistry()
-        backend = InferenceBackend(
-            id=node_id, base_url=f'http://{node_id}.internal/v1', model='m', api_key='sk-old'
-        )
+        backend = InferenceBackend(id=node_id, base_url=f'http://{node_id}.internal/v1', model='m', api_key='sk-old')
         try:
             await registry.register(backend)
             another_key()
@@ -237,7 +237,7 @@ class TestAnEntryThatWillNotDecrypt:
 
     async def test_oauth_state_yields_nothing(self, another_key):
         state = secrets.token_urlsafe(32)
-        await OAuthStateDB().store(state, {'code_verifier': 'v'})
+        await OAuthStateDB().store(state, OidcSignInState(nonce='n', pkce='v'))
         another_key()
 
-        assert await OAuthStateDB().validate_and_consume(state) is None
+        assert await OAuthStateDB().claim(state, OidcSignInState) is None

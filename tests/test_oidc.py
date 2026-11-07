@@ -10,13 +10,17 @@ each have a case that would pass if the check were missing.
 """
 
 from datetime import datetime, timedelta, timezone
+import secrets
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt
 from jwt.algorithms import RSAAlgorithm
+from pydantic import ValidationError
 import pytest
 
+from app.api.base_v1.schema.oidc import OidcSignInState
+from app.db.redis.oauth_state import OAuthStateDB
 from app.services.auth.oidc import OidcClaims, OidcClient, OidcError, OidcNotConfigured
 
 ISSUER = 'https://idp.acme.internal/realms/igni'
@@ -312,28 +316,29 @@ class TestTheStateThatSurvivesTheRoundTrip:
     assert them without going through an endpoint.
     """
 
-    def test_a_state_round_trips_through_the_flat_store(self):
-        """The shared store holds `dict[str, str]` because four callers
-        put different things in it — so the model has to survive being
-        flattened and read back."""
-        from app.api.base_v1.schema.oidc import OidcSignInState
-
+    async def test_a_state_round_trips_through_the_store(self):
+        """The record goes into Redis sealed and comes back as the model."""
         original = OidcSignInState(nonce='n-1', pkce='v-1', returnTo='/docs')
+        state = secrets.token_urlsafe(32)
 
-        restored = OidcSignInState.model_validate(original.as_metadata())
+        await OAuthStateDB().store(state, original)
+        restored = await OAuthStateDB().claim(state, OidcSignInState)
 
-        assert (restored.nonce, restored.pkce, restored.return_to) == ('n-1', 'v-1', '/docs')
+        assert restored == original
 
-    def test_an_absent_return_to_is_not_stored_as_an_empty_string(self):
+    async def test_an_absent_return_to_is_not_stored_as_an_empty_string(self, monkeypatch):
         """The redirect used to build the key conditionally; that has to
         keep being true or the callback appends `?returnTo=` to the
         frontend URL."""
-        from app.api.base_v1.schema.oidc import OidcSignInState
+        sealed: list[str] = []
+        monkeypatch.setattr('app.db.redis.oauth_state.seal', lambda plaintext: sealed.append(plaintext) or plaintext)
+        monkeypatch.setattr('app.db.redis.oauth_state.unseal', lambda stored: stored)
+        state = secrets.token_urlsafe(32)
 
-        metadata = OidcSignInState(nonce='n-1', pkce='v-1').as_metadata()
+        await OAuthStateDB().store(state, OidcSignInState(nonce='n-1', pkce='v-1'))
 
-        assert 'returnTo' not in metadata
-        assert OidcSignInState.model_validate(metadata).return_to == ''
+        assert 'returnTo' not in sealed[0]
+        assert (await OAuthStateDB().claim(state, OidcSignInState)).return_to == ''
 
     @pytest.mark.parametrize(
         'metadata',
@@ -358,9 +363,5 @@ class TestTheStateThatSurvivesTheRoundTrip:
         store backs the GitHub and GitLab link flows, whose records
         carry entirely different keys.
         """
-        from pydantic import ValidationError
-
-        from app.api.base_v1.schema.oidc import OidcSignInState
-
         with pytest.raises(ValidationError):
             OidcSignInState.model_validate(metadata)

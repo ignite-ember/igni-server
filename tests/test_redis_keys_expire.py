@@ -29,7 +29,9 @@ from __future__ import annotations
 import pytest
 import redis.asyncio as aioredis
 
+from app.api.base_v1.schema.oauth import SocialSignInState
 from app.config import settings
+from app.db.redis.oauth_state import OAuthStateDB, STATE_TTL_SECONDS
 
 
 @pytest.fixture
@@ -86,21 +88,18 @@ class TestOAuthState:
         single-use, which is asserted here so the two protections are not
         confused for each other.
         """
-        from app.db.redis.oauth_state import _PREFIX, _TTL_SECONDS, OAuthStateDB
-        from app.db.redis.sealed import digest
-
-        key = f'{_PREFIX}{digest("ttl-probe")}'
+        key = OAuthStateDB.redis_key('ttl-probe')
         await r.delete(key)
 
-        await OAuthStateDB().store('ttl-probe', {'a': '1'})
+        await OAuthStateDB().store('ttl-probe', SocialSignInState(returnTo='/docs'))
         ttl = await r.ttl(key)
 
         assert ttl > 0, f'ttl={ttl} — oauth state does not expire'
-        assert abs(ttl - _TTL_SECONDS) <= 5
+        assert abs(ttl - STATE_TTL_SECONDS) <= 5
 
-        consumed = await OAuthStateDB().validate_and_consume('ttl-probe')
+        consumed = await OAuthStateDB().claim('ttl-probe', SocialSignInState)
 
-        assert consumed == {'a': '1'}, 'the value did not survive the rewrite'
+        assert consumed == SocialSignInState(returnTo='/docs'), 'the value did not survive the rewrite'
         assert not await r.exists(key), 'state must be single-use'
 
 

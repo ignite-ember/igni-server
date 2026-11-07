@@ -12,13 +12,11 @@ token both read it before either deleted it. Measured against the real
 Redis, not argued: eight concurrent consumers of one token, four of
 them handed it.
 
-**And a token with no metadata came back as the integer 1.** It is
-stored as the sentinel `'1'`, which `json.loads` parses to `1` rather
-than failing — so the `except json.JSONDecodeError` below it never
-ran and the int was returned under a `dict | None` annotation. The
-social sign-in callback reads `metadata.get('returnTo', '')` one line
-after calling this, so signing in with GitHub, Google or GitLab
-*without* a `returnTo` raised `AttributeError` and answered 500.
+**And a token with no metadata came back as the integer 1**, through a
+`'1'` sentinel that `json.loads` parsed rather than refused, so the
+social sign-in callback raised `AttributeError` on a sign-in without a
+`returnTo`. The store now holds a typed record for every token, and
+one with nothing in it reads back as that record, empty.
 """
 
 from __future__ import annotations
@@ -26,8 +24,11 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+from pydantic import ValidationError
 import pytest
 
+from app.api.base_v1.schema.oauth import SocialSignInState
+from app.api.base_v1.schema.oidc import OidcSignInState
 from app.db.redis.oauth_state import OAuthStateDB
 from app.services.auth.oauth_service import OAuthService
 
@@ -42,12 +43,13 @@ class TestExactlyOneConsumerWins:
     async def test_a_second_consumer_is_refused(self):
         state = _token()
         db = OAuthStateDB()
-        await db.store(state, {'nonce': 'n-1', 'pkce': 'v-1'})
+        signin = OidcSignInState(nonce='n-1', pkce='v-1')
+        await db.store(state, signin)
 
-        first = await db.validate_and_consume(state)
-        second = await db.validate_and_consume(state)
+        first = await db.claim(state, OidcSignInState)
+        second = await db.claim(state, OidcSignInState)
 
-        assert first == {'nonce': 'n-1', 'pkce': 'v-1'}
+        assert first == signin
         assert second is None
 
     async def test_concurrent_consumers_do_not_all_win(self):
@@ -60,39 +62,46 @@ class TestExactlyOneConsumerWins:
         """
         state = _token()
         db = OAuthStateDB()
-        await db.store(state, {'nonce': 'n-1', 'pkce': 'v-1'})
+        await db.store(state, OidcSignInState(nonce='n-1', pkce='v-1'))
 
-        results = await asyncio.gather(*[db.validate_and_consume(state) for _ in range(8)])
+        results = await asyncio.gather(*[db.claim(state, OidcSignInState) for _ in range(8)])
 
         assert len([r for r in results if r]) == 1, results
 
     async def test_an_unknown_token_is_none(self):
-        assert await OAuthStateDB().validate_and_consume(_token()) is None
+        assert await OAuthStateDB().claim(_token(), SocialSignInState) is None
 
 
-class TestATokenWithNoMetadataIsStillADict:
-    async def test_it_reads_back_as_an_empty_mapping(self):
+class TestARecordWithNothingInItIsStillARecord:
+    async def test_it_reads_back_empty(self):
         state = _token()
-        await OAuthStateDB().store(state)
+        await OAuthStateDB().store(state, SocialSignInState())
 
-        claimed = await OAuthStateDB().validate_and_consume(state)
+        claimed = await OAuthStateDB().claim(state, SocialSignInState)
 
-        assert claimed == {}
-        assert isinstance(claimed, dict), f'{claimed!r} is a {type(claimed).__name__}'
+        assert claimed == SocialSignInState()
 
     async def test_the_social_callback_can_read_it(self):
-        """The failing line, through the service the endpoint uses.
+        """Through the service the endpoint uses: `/auth/{provider}`
+        with no `returnTo` stores an empty record."""
+        state = await OAuthService.generate_state(SocialSignInState())
 
-        `/auth/{provider}` stores `None` when no `returnTo` is given,
-        which is the only way to reach the sentinel.
-        """
-        state = await OAuthService.generate_state(None)
+        signin = await OAuthService.validate_state(state, SocialSignInState)
 
-        metadata = await OAuthService.validate_state(state)
+        assert signin.return_to == ''
 
-        assert metadata.get('returnTo', '') == ''
+    async def test_a_record_with_a_value_still_carries_it(self):
+        state = await OAuthService.generate_state(SocialSignInState(returnTo='/docs'))
 
-    async def test_a_token_with_metadata_still_carries_it(self):
-        state = await OAuthService.generate_state({'returnTo': '/docs'})
+        assert (await OAuthService.validate_state(state, SocialSignInState)).return_to == '/docs'
 
-        assert (await OAuthService.validate_state(state)).get('returnTo') == '/docs'
+
+class TestAnotherFlowsRecordIsNotThisFlows:
+    async def test_it_is_refused_rather_than_read_as_empty(self):
+        """A record that does not fit the shape asked for is an error the
+        caller handles, never a silently empty answer."""
+        state = _token()
+        await OAuthStateDB().store(state, SocialSignInState(returnTo='/docs'))
+
+        with pytest.raises(ValidationError):
+            await OAuthStateDB().claim(state, OidcSignInState)

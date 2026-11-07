@@ -127,8 +127,8 @@ class TestPkce:
         """
         stored: dict[str, dict[str, str]] = {}
 
-        async def _capture(metadata=None):
-            stored['metadata'] = dict(metadata or {})
+        async def _capture(record):
+            stored['record'] = record
             return 'state-token'
 
         async def _discovery(self):
@@ -143,7 +143,7 @@ class TestPkce:
         response = await client.get('/auth/oidc', follow_redirects=False)
 
         assert response.status_code == 302, response.text
-        verifier = stored['metadata']['pkce']
+        verifier = stored['record'].pkce
         assert verifier, 'no verifier was stored'
 
         location = response.headers['location']
@@ -163,8 +163,8 @@ class TestPkce:
         """
         exchanged: list[str] = []
 
-        async def _state(state: str):
-            return {'nonce': 'n-1'}  # a nonce, no verifier
+        async def _state(state: str, shape):
+            return shape.model_validate({'nonce': 'n-1'})  # a nonce, no verifier
 
         async def _exchange(self, **kwargs):
             exchanged.append(kwargs.get('code', ''))

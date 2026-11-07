@@ -19,11 +19,3 @@ class SocialSignInState(BaseModel):
     return_to: str = Field(default='', alias='returnTo')
 
     model_config = {'populate_by_name': True}
-
-    def as_metadata(self) -> dict[str, str]:
-        """The flat `dict[str, str]` the shared state store holds.
-
-        `exclude_defaults` keeps an absent `returnTo` absent, so a
-        sign-in with nowhere to return to stores no metadata at all.
-        """
-        return self.model_dump(by_alias=True, exclude_defaults=True)

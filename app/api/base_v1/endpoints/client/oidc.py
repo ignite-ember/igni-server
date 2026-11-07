@@ -46,9 +46,7 @@ async def oidc_redirect(returnTo: str = Query(default='', alias='returnTo')):
     # it. The verifier must never reach the browser — only its S256
     # challenge does — which is the reason it lives server-side rather
     # than in a cookie.
-    state = await OAuthService.generate_state(
-        OidcSignInState(nonce=nonce, pkce=verifier, returnTo=returnTo).as_metadata()
-    )
+    state = await OAuthService.generate_state(OidcSignInState(nonce=nonce, pkce=verifier, returnTo=returnTo))
 
     try:
         url = await client.authorize_url(state=state, nonce=nonce, code_challenge=client.pkce_challenge(verifier))
@@ -67,17 +65,10 @@ async def oidc_callback(code: str = Query(...), state: str = Query(...)):
     if not client.is_configured:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail='OIDC sign-in is not configured')
 
-    metadata = await OAuthService.validate_state(state)
     try:
-        # State missing either secret did not come from our redirect.
-        # Both were checked here by hand; `OidcSignInState` requires
-        # them, and the reason each one is mandatory is recorded on the
-        # field rather than in a comment beside one reader.
-        #
-        # The shared state store is a flat `dict[str, str]` because four
-        # callers put different things in it. What *this* pair of
-        # handlers agrees on is this model.
-        signin = OidcSignInState.model_validate(metadata)
+        # State missing either secret did not come from our redirect;
+        # `OidcSignInState` requires both, and records why on each field.
+        signin = await OAuthService.validate_state(state, OidcSignInState)
     except ValidationError as exc:
         logger.warning('OIDC callback state is not a sign-in state: %s', exc.error_count())
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Invalid OIDC state') from exc

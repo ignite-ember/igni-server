@@ -86,19 +86,23 @@ class OAuthService:
     """Handles OAuth authorization URL generation, code exchange, and user info retrieval."""
 
     @staticmethod
-    async def generate_state(metadata: dict[str, str] | None = None) -> str:
-        """Generate a CSRF state token and store it with optional metadata."""
+    async def generate_state(record: BaseModel) -> str:
+        """Generate a CSRF state token and store `record` with it."""
         state = secrets.token_urlsafe(32)
-        await _oauth_state_db.store(state, metadata)
+        await _oauth_state_db.store(state, record)
         return state
 
     @staticmethod
-    async def validate_state(state: str) -> dict[str, str]:
-        """Validate and consume a CSRF state token. Returns stored metadata."""
-        result = await _oauth_state_db.validate_and_consume(state)
-        if result is None:
+    async def validate_state[R: BaseModel](state: str, shape: type[R]) -> R:
+        """Consume a CSRF state token and return its record as `shape`.
+
+        A token this server did not issue, or has already consumed, is a
+        400. A record that is not a `shape` raises `ValidationError`.
+        """
+        record = await _oauth_state_db.claim(state, shape)
+        if record is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail='Invalid OAuth state')
-        return result
+        return record
 
     @staticmethod
     async def get_authorize_url(provider: OAuthProvider, state: str) -> str:

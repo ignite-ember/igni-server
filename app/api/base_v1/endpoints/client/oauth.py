@@ -61,7 +61,7 @@ async def oauth_redirect(
 ):
     resolved = await _resolve_provider(provider)
 
-    state = await OAuthService.generate_state(SocialSignInState(returnTo=returnTo).as_metadata())
+    state = await OAuthService.generate_state(SocialSignInState(returnTo=returnTo))
     url = await OAuthService.get_authorize_url(resolved, state)
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
@@ -79,7 +79,7 @@ async def oauth_callback(
     handoff: AuthHandoffDB = Depends(auth_handoff),
 ):
     resolved = await _resolve_provider(provider)
-    signin = SocialSignInState.model_validate(await OAuthService.validate_state(state))
+    signin = await OAuthService.validate_state(state, SocialSignInState)
 
     try:
         user_info = await OAuthService.exchange_and_get_user(resolved, code)
