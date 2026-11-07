@@ -122,7 +122,7 @@ class TestTheJsonFormatIsQueryable:
     def test_the_format_is_selected_from_the_environment(self):
         source = (_ROOT / 'app/main.py').read_text()
 
-        assert "os.getenv('LOG_FORMAT'" in source
+        assert 'settings.log_format' in source
         assert 'configure_logging' in source
 
 

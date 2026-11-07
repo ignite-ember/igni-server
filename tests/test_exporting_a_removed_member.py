@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.services import retention
+from app.services.retention import Retention
 from tests.cloud_world import CloudOrg, platform
 from tests.conftest import audit_rows
 
@@ -131,7 +131,7 @@ async def test_an_archive_expires(client, world, monkeypatch):
         'app.db.sql.producer_exports.datetime', type('Later', (), {'now': staticmethod(lambda tz=None: ahead)})
     )
 
-    removed = await retention.run_once()
+    removed = await Retention().run_once()
 
     assert removed.producer_exports == 1
     assert (await client.get(f'/portal/orgs/{acme.org_id}/exports/{export_id}', headers=acme.admin)).status_code == 404

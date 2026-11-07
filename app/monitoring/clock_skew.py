@@ -45,81 +45,84 @@ _INTERVAL_SECONDS = 60
 WARN_SECONDS = 1.0
 
 
-async def measure() -> float | None:
-    """Seconds this process is ahead of the database, or None if unasked.
+class ClockSkew:
+    """Measures the skew, publishes it, and keeps doing so on a loop."""
 
-    Positive means the app is ahead — the direction that lets a token
-    outlive its revocation. The app clock is read *after* the query
-    returns rather than before it, so the round trip counts against the
-    app rather than in its favour: an overstated skew is the safe error.
-    """
-    db_now = await ClockDB().now()
-    if db_now is None:
-        return None
-    if db_now.tzinfo is None:
-        db_now = db_now.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - db_now).total_seconds()
+    def __init__(self, *, clock: ClockDB | None = None, interval_seconds: float = _INTERVAL_SECONDS) -> None:
+        self._clock = clock or ClockDB()
+        self._interval_seconds = interval_seconds
+        self._task: asyncio.Task[None] | None = None
 
+    async def measure(self) -> float | None:
+        """Seconds this process is ahead of the database, or None if unasked.
 
-async def sample_once() -> float | None:
-    """Measure, publish, and complain if it is large enough to matter."""
-    skew = await measure()
-    if skew is None:
-        return None
+        Positive means the app is ahead — the direction that lets a token
+        outlive its revocation. The app clock is read *after* the query
+        returns rather than before it, so the round trip counts against the
+        app rather than in its favour: an overstated skew is the safe error.
+        """
+        db_now = await self._clock.now()
+        if db_now is None:
+            return None
+        if db_now.tzinfo is None:
+            db_now = db_now.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - db_now).total_seconds()
 
-    CLOCK_SKEW.set(skew)
-    if abs(skew) > WARN_SECONDS:
-        logger.warning(
-            'Clock skew against the database is %.2fs (threshold %.1fs). '
-            'Above this, a token minted by this process can outlive a session '
-            'withdrawal, the audit trail can be mis-ordered, and retention '
-            'windows are applied against the wrong day. Check NTP on this host.',
-            skew,
-            WARN_SECONDS,
-        )
-    return skew
+    async def sample_once(self) -> float | None:
+        """Measure, publish, and complain if it is large enough to matter."""
+        skew = await self.measure()
+        if skew is None:
+            return None
 
+        CLOCK_SKEW.set(skew)
+        if abs(skew) > WARN_SECONDS:
+            logger.warning(
+                'Clock skew against the database is %.2fs (threshold %.1fs). '
+                'Above this, a token minted by this process can outlive a session '
+                'withdrawal, the audit trail can be mis-ordered, and retention '
+                'windows are applied against the wrong day. Check NTP on this host.',
+                skew,
+                WARN_SECONDS,
+            )
+        return skew
 
-async def _loop() -> None:
-    while True:
-        try:
-            await sample_once()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # Never end the loop. A gauge that stopped updating looks
-            # exactly like a clock that stopped drifting.
-            logger.exception('Clock-skew sample failed; will try again')
-        await asyncio.sleep(_INTERVAL_SECONDS)
+    def start(self) -> None:
+        """Start sampling. Unconditional, unlike retention's loop.
 
+        Retention only runs when a window is configured; there is no
+        equivalent switch here, because a deployment that has turned nothing
+        on still has clocks and still revokes sessions.
+        """
+        self._task = asyncio.create_task(self._loop(), name='clock-skew')
 
-def start(app_state: dict[str, asyncio.Task[None]]) -> None:
-    """Start sampling. Unconditional, unlike retention's loop.
+    async def stop(self) -> None:
+        """Cancel the loop and wait for it to unwind.
 
-    Retention only runs when a window is configured; there is no
-    equivalent switch here, because a deployment that has turned nothing
-    on still has clocks and still revokes sessions.
-    """
-    app_state['clock_skew_task'] = asyncio.create_task(_loop())
+        The await matters for retention's reason: without it the event loop
+        closes first and the shutdown log carries "Task was destroyed but it
+        is pending" instead of nothing.
+        """
+        task, self._task = self._task, None
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            try:
+                await task
+            except Exception:
+                # Shutdown continues either way, but a loop that died of
+                # something other than the cancel we just sent is the only
+                # evidence that it stopped sampling before we asked it to.
+                logger.exception('Clock-skew loop did not unwind cleanly')
 
-
-async def stop(app_state: dict[str, asyncio.Task[None]]) -> None:
-    """Cancel the loop and wait for it to unwind.
-
-    The await matters for retention's reason: without it the event loop
-    closes first and the shutdown log carries "Task was destroyed but it
-    is pending" instead of nothing.
-    """
-    task = app_state.pop('clock_skew_task', None)
-    if task is None:
-        return
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        try:
-            await task
-        except Exception:
-            # Shutdown continues either way, but silently is the wrong
-            # way: a loop that died of something other than the cancel
-            # we just sent is the only evidence anyone will ever get
-            # that it stopped sampling before we asked it to.
-            logger.exception('Clock-skew loop did not unwind cleanly')
+    async def _loop(self) -> None:
+        while True:
+            try:
+                await self.sample_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Never end the loop. A gauge that stopped updating looks
+                # exactly like a clock that stopped drifting.
+                logger.exception('Clock-skew sample failed; will try again')
+            await asyncio.sleep(self._interval_seconds)

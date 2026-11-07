@@ -17,14 +17,13 @@ import pytest
 from app.config import settings
 from app.monitoring.metrics import RETENTION_FAILURES, RETENTION_LAST_SUCCESS
 from app.services import retention
-from app.services.retention import RetentionRun
+from app.services.retention import Retention, RetentionRun
 
 
 @pytest.fixture
-def quick(monkeypatch):
+def quick() -> Retention:
     """The loop's day-long sleeps, made short."""
-    monkeypatch.setattr(retention, '_FIRST_RUN_DELAY_SECONDS', 0)
-    monkeypatch.setattr(retention, '_INTERVAL_SECONDS', 0.01)
+    return Retention(first_run_delay_seconds=0, interval_seconds=0.01)
 
 
 @pytest.fixture
@@ -52,35 +51,34 @@ class _Rounds:
 
 async def test_a_round_that_raises_is_counted_and_the_next_one_runs(monkeypatch, quick, windows, caplog):
     rounds = _Rounds()
-    monkeypatch.setattr(retention, 'run_once', rounds)
+    monkeypatch.setattr(quick, 'run_once', rounds)
     failures_before = RETENTION_FAILURES._value.get()
     RETENTION_LAST_SUCCESS.set(0)
-    state: dict[str, asyncio.Task[None]] = {}
 
     with caplog.at_level(logging.INFO, logger=retention.__name__):
-        retention.start(state)
+        quick.start()
         await asyncio.wait_for(rounds.third.wait(), 5)
-        await retention.stop(state)
+        await quick.stop()
 
     assert RETENTION_FAILURES._value.get() == failures_before + 1
     assert RETENTION_LAST_SUCCESS._value.get() > 0
     assert 'Retention round failed; will try again' in caplog.text
     assert 'Retention removed' in caplog.text
-    assert 'retention_task' not in state
+    assert not quick.running
 
 
 async def test_nothing_starts_without_a_window(monkeypatch, caplog):
     monkeypatch.setattr(settings, 'audit_retention_days', 0)
     monkeypatch.setattr(settings, 'service_event_retention_days', 0)
     monkeypatch.setattr(settings, 'producer_feed_retention_days', 0)
-    state: dict[str, asyncio.Task[None]] = {}
+    idle = Retention()
 
     with caplog.at_level(logging.INFO, logger=retention.__name__):
-        retention.start(state)
+        idle.start()
 
-    assert state == {}
+    assert not idle.running
     assert 'nothing will be deleted' in caplog.text
-    await retention.stop(state)  # nothing to stop is not an error
+    await idle.stop()  # nothing to stop is not an error
 
 
 async def test_stopping_waits_for_the_loop_and_says_when_it_had_died(monkeypatch, quick, windows, caplog):
@@ -90,10 +88,11 @@ async def test_stopping_waits_for_the_loop_and_says_when_it_had_died(monkeypatch
     async def dies() -> None:
         raise RuntimeError('lost the session')
 
-    state: dict[str, asyncio.Task[None]] = {'retention_task': asyncio.ensure_future(dies())}
+    monkeypatch.setattr(quick, '_loop', dies)
+    quick.start()
     await asyncio.sleep(0)
 
     with caplog.at_level(logging.ERROR, logger=retention.__name__):
-        await retention.stop(state)
+        await quick.stop()
 
     assert 'Retention loop did not unwind cleanly' in caplog.text

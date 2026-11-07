@@ -24,8 +24,8 @@ from sqlalchemy import create_engine, text
 from app.config import settings
 from app.db.sql.audit_events import AuditEventDB
 from app.db.sql.models.audit_event import AuditEvent
-from app.services import retention
 from app.services.identity.service_subjects import ServiceSubjects
+from app.services.retention import Retention
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token, put_in_org, TEST_DB_URL_SYNC
 
 _LOCK = 0x1911_2_5445
@@ -162,7 +162,7 @@ class TestTheRetentionRunner:
         monkeypatch.setattr(settings, 'producer_feed_retention_days', 0)
         _deployment_event(occurred_at=datetime.now(timezone.utc) - timedelta(days=900))
 
-        assert retention.is_configured() is False
+        assert Retention.is_configured() is False
         nothing = {
             'audit_events': 0,
             'producer_events': 0,
@@ -170,7 +170,7 @@ class TestTheRetentionRunner:
             'producer_exports': 0,
             'revocations': 0,
         }
-        assert (await retention.run_once()).model_dump() == nothing
+        assert (await Retention().run_once()).model_dump() == nothing
         assert len(_execute('SELECT 1 AS x FROM audit_events')) == 1
 
     async def test_it_applies_the_window_to_the_deployments_trail(self, monkeypatch):
@@ -179,7 +179,7 @@ class TestTheRetentionRunner:
         _deployment_event(occurred_at=now - timedelta(days=400), route='/old')
         _deployment_event(occurred_at=now - timedelta(days=1), route='/new')
 
-        removed = await retention.run_once()
+        removed = await Retention().run_once()
 
         assert removed.audit_events == 1
         assert [r.route for r in _execute('SELECT route FROM audit_events')] == ['/new']
@@ -197,7 +197,7 @@ class TestTheRetentionRunner:
             _org_event(occurred_at=now - timedelta(days=1), org_id=str(org.id)),
         )
 
-        removed = await retention.run_once()
+        removed = await Retention().run_once()
 
         assert removed.audit_events == 1
         async with org_db(str(org.id)) as session:
@@ -219,7 +219,7 @@ class TestTheRetentionRunner:
             got = held.execute(text('SELECT pg_try_advisory_lock(:k)'), {'k': _LOCK}).scalar()
             assert got, 'could not take the lock to simulate another replica'
 
-            removed = await retention.run_once()
+            removed = await Retention().run_once()
 
             assert removed.model_dump() == {
                 'audit_events': 0,
@@ -246,7 +246,7 @@ class TestTheRetentionRunner:
         monkeypatch.setattr(AuditEventDB(), 'prune', explode)
 
         with pytest.raises(RuntimeError):
-            await retention.run_once()
+            await Retention().run_once()
 
         # Freely takeable again.
         engine = create_engine(TEST_DB_URL_SYNC)
@@ -263,7 +263,8 @@ class TestTheRetentionRunner:
         here it would mean the retention window silently never applies."""
         main = (pathlib.Path(__file__).resolve().parent.parent / 'app/main.py').read_text()
 
-        assert 'retention.start(' in main, 'the retention loop is never started'
-        assert 'await retention.stop(' in main, (
+        assert 'Retention()' in main, 'the retention loop is never built'
+        assert 'retention.start()' in main, 'the retention loop is never started'
+        assert 'await retention.stop()' in main, (
             'the loop is never cancelled on shutdown, which leaks the task and can leave the advisory lock held'
         )

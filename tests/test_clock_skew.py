@@ -32,6 +32,7 @@ import uuid
 import pytest
 
 from app.monitoring import clock_skew
+from app.monitoring.clock_skew import ClockSkew
 from app.monitoring.metrics import CLOCK_SKEW
 
 pytestmark = pytest.mark.anyio
@@ -42,7 +43,7 @@ class TestMeasuringIt:
         """Same host in the test environment, so the honest expectation is
         "near zero" — and a measurement that cannot come back near zero
         would make the alert threshold meaningless."""
-        skew = await clock_skew.measure()
+        skew = await ClockSkew().measure()
         assert skew is not None, 'the skew could not be measured at all'
         assert abs(skew) < 5.0, f'{skew}s against the test database, which shares this clock'
 
@@ -50,7 +51,7 @@ class TestMeasuringIt:
         """The gauge is what an operator sees; measuring without setting
         it would leave the alert permanently absent rather than firing."""
         CLOCK_SKEW.set(9999.0)
-        skew = await clock_skew.sample_once()
+        skew = await ClockSkew().sample_once()
         assert skew is not None
         assert CLOCK_SKEW._value.get() == pytest.approx(skew)  # noqa: SLF001
 
@@ -62,8 +63,8 @@ class TestMeasuringIt:
             raise RuntimeError('no database')
 
         monkeypatch.setattr('app.db.sql.SQLAlchemySessionManager.session_scope', lambda self: explode())
-        assert await clock_skew.measure() is None
-        assert await clock_skew.sample_once() is None
+        assert await ClockSkew().measure() is None
+        assert await ClockSkew().sample_once() is None
 
     async def test_the_threshold_is_the_revocation_margin(self):
         """Not a preference. `withdraw_sessions` rounds the watermark up
@@ -77,10 +78,10 @@ class TestMeasuringIt:
         """The log line is the only thing a single-instance deployment
         without Prometheus will ever see, so it has to name the
         consequence rather than the number alone."""
-        monkeypatch.setattr(clock_skew, 'measure', lambda: _resolved(4.2))
+        monkeypatch.setattr(ClockSkew, 'measure', lambda self: _resolved(4.2))
 
         with caplog.at_level('WARNING'):
-            assert await clock_skew.sample_once() == 4.2
+            assert await ClockSkew().sample_once() == 4.2
 
         messages = ' '.join(r.getMessage() for r in caplog.records)
         assert 'Clock skew' in messages
