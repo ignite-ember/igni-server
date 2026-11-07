@@ -19,6 +19,7 @@ from app.db.redis.oauth_state import OAuthStateDB
 from app.db.sql.user import UserDB
 from app.security.subject import refuse_if_deactivated
 from app.services.auth.jwt_service import JWTService, TokenResponse
+from app.services.identity.account_refusals import AccountRefusals
 
 
 class OAuthTokenResult(BaseModel):
@@ -194,12 +195,13 @@ class OAuthService:
         if not user:
             random_pw = secrets.token_urlsafe(16)
             hashed = bcrypt.hashpw(random_pw.encode(), bcrypt.gensalt()).decode()
-            user = await _user_db.create(
-                email=user_info.email,
-                hashed_password=hashed,
-                full_name=full_name,
-                auth_provider=user_info.provider,
-            )
+            with AccountRefusals():
+                user = await _user_db.create(
+                    user_info.email,
+                    hashed_password=hashed,
+                    full_name=full_name,
+                    auth_provider=user_info.provider,
+                )
             is_new = True
             logger.info(f'Created new OAuth user: {user_info.email}')
 

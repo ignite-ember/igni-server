@@ -101,6 +101,7 @@ class TestTheWatermarkComesFromTheDatabase:
         Postgres stays where the database is. This is the whole reason
         the statement is SQL rather than a Python value bound into it.
         """
+        from app.db.sql.account_sessions import AccountSessionsDB
         from app.db.sql.user import UserDB
 
         user_id = f'skew-{uuid.uuid4().hex[:8]}'
@@ -114,9 +115,9 @@ class TestTheWatermarkComesFromTheDatabase:
                 def now(cls, tz=None):  # type: ignore[override]
                     return real_now + timedelta(hours=1)
 
-            monkeypatch.setattr('app.db.sql.user.datetime', _AheadByAnHour)
+            monkeypatch.setattr('app.db.sql.account_sessions.datetime', _AheadByAnHour)
 
-            watermark = await user_db.withdraw_sessions(user_id)
+            watermark = await AccountSessionsDB().withdraw_sessions(user_id)
 
             drift = abs((watermark - real_now).total_seconds())
             assert drift < 60, (
@@ -130,6 +131,7 @@ class TestTheWatermarkComesFromTheDatabase:
         """The rounding moved into SQL with the clock, and it is what
         closes B5's same-second window. Moving a mechanism is the
         classic way to lose it."""
+        from app.db.sql.account_sessions import AccountSessionsDB
         from app.db.sql.user import UserDB
 
         user_id = f'round-{uuid.uuid4().hex[:8]}'
@@ -137,7 +139,7 @@ class TestTheWatermarkComesFromTheDatabase:
         await user_db.ensure_exists(user_id=user_id, email=f'{user_id}@example.invalid', full_name='Rounded')
         try:
             before = datetime.now(timezone.utc)
-            watermark = await user_db.withdraw_sessions(user_id)
+            watermark = await AccountSessionsDB().withdraw_sessions(user_id)
             assert watermark.microsecond == 0, f'the watermark is sub-second: {watermark!r}'
             assert watermark > before, 'the watermark is not ahead of the request'
         finally:

@@ -32,8 +32,10 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.user import User
+from app.db.sql.schemas.account_errors import LastSuperAdmin
 from app.db.sql.schemas.org_domain import NotACompanyAddress, NotSetUpYet
-from app.db.sql.user import LastSuperAdmin, UserDB
+from app.db.sql.super_admins import SuperAdminDB
+from app.db.sql.user import UserDB
 from app.security.portal_auth import NO_ORGANISATION
 from app.services.auth.otp_service import OTPResult, OTPService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
@@ -356,8 +358,8 @@ class TestSuperAdmins:
         second = await _super_admin(db, 'two@acmecorp.io')
 
         outcomes = await asyncio.gather(
-            UserDB().set_super_admin(str(first.user_id), super_admin=False),
-            UserDB().set_super_admin(str(second.user_id), super_admin=False),
+            SuperAdminDB().set_super_admin(str(first.user_id), super_admin=False),
+            SuperAdminDB().set_super_admin(str(second.user_id), super_admin=False),
             return_exceptions=True,
         )
 

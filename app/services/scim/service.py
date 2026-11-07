@@ -43,6 +43,7 @@ from app.db.sql.org_domains import OrgDomainDB
 from app.db.sql.schemas.org_domain import AdmissionRefused
 from app.db.sql.user import UserDB
 from app.services.auth.person_name import split_full_name
+from app.services.identity.account_refusals import AccountRefusals
 from app.services.portal.member_status import MemberStatus
 
 logger = logging.getLogger(__name__)
@@ -164,12 +165,13 @@ async def provision(payload: ScimUser):
 
     throwaway = bcrypt.hashpw(secrets.token_urlsafe(32).encode(), bcrypt.gensalt()).decode()
     try:
-        user = await _users.create(
-            email=address,
-            hashed_password=throwaway,
-            full_name=full_name or None,
-            auth_provider='scim',
-        )
+        with AccountRefusals():
+            user = await _users.create(
+                address,
+                hashed_password=throwaway,
+                full_name=full_name or None,
+                auth_provider='scim',
+            )
     except AdmissionRefused as exc:
         # The domain was released between the check above and the insert.
         raise _off_every_domain(address) from exc

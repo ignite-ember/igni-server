@@ -10,6 +10,7 @@ from app.db.sql.schemas.org_domain import NotACompanyAddress
 from app.db.sql.user import UserDB
 from app.services.auth.auth_emails import AuthEmails
 from app.services.auth.otp_service import OTPService
+from app.services.identity.account_refusals import AccountRefusals
 from app.services.portal.user_service import UserService
 
 
@@ -60,7 +61,8 @@ class CompanyAddress:
         address = email.strip()
         await self._otp.validate_address_code(address, code)
         try:
-            joined = await self._users.move_to_company_address(account.user_id, address)
+            with AccountRefusals():
+                joined = await self._users.move_to_company_address(account.user_id, address)
         except NotACompanyAddress as exc:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         moved = account.model_copy(update={'email': address, 'org_id': str(joined.id), 'org_role': None})

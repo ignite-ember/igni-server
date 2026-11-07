@@ -27,9 +27,8 @@ install and a mistake for anybody else.
 
 from __future__ import annotations
 
-from fastapi import HTTPException, status
-
 from app.config import settings
+from app.db.sql.schemas.account_errors import PersonalAddress
 
 #: The normalised domain part of an account address.
 #:
@@ -130,25 +129,8 @@ def is_company_address(email: str) -> bool:
 
 
 def refuse_public_mail(email: str) -> None:
-    """Raise unless this address may open an account here.
-
-    422 rather than 400: the address is the wrong *kind* of address,
-    which is a fact about the field rather than about the request, and
-    it is the code every other "this value will not do" answer on the
-    sign-up form already uses.
-
-    The message names the reason. "Invalid email" on a perfectly valid
-    gmail address reads as a bug in the form, and the person retypes
-    it twice before giving up.
-    """
+    """Raise :class:`PersonalAddress` unless this address may open an account here."""
     if not settings.block_public_mail_domains:
         return
     if is_public_mail_domain(email_domain(email)):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=(
-                'Please sign up with your work address. igni shares documents with '
-                'the people at your company, and it works out who they are from the '
-                'domain of your email — which a personal address cannot tell it.'
-            ),
-        )
+        raise PersonalAddress()

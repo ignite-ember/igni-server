@@ -281,14 +281,14 @@ class TestTheDeletionIsAllOrNothing:
         """The user row is deleted last, so making *that* statement fail
         is the way to land mid-deletion. Everything before it must roll
         back with it."""
-        from app.db.sql.user import UserDB
+        from app.db.sql.account_deletion import AccountDeletionDB
 
         user_id = f'u-atomic-{uuid.uuid4().hex[:8]}'
         await create_user(db, user_id=user_id, email=f'{user_id}@example.com')
         org = await create_org(db, owner_user_id=user_id, slug=f'solo-{uuid.uuid4().hex[:6]}', display_name='Solo')
         await db.commit()
 
-        original = UserDB.delete_account
+        original = AccountDeletionDB.remove
 
         async def _fail_at_the_end(self, *, user_id, delete_org_ids, leave_org_ids):
             async with self.session_scope() as session:
@@ -299,13 +299,13 @@ class TestTheDeletionIsAllOrNothing:
                 await session.execute(Organization.__table__.delete().where(Organization.id.in_(delete_org_ids)))
                 raise RuntimeError('the database went away mid-deletion')
 
-        monkeypatch.setattr(UserDB, 'delete_account', _fail_at_the_end)
+        monkeypatch.setattr(AccountDeletionDB, 'remove', _fail_at_the_end)
         token = make_token(user_id, org_id=str(org.id))
         try:
             with pytest.raises(RuntimeError):
                 await client.delete('/portal/me', headers=auth_header(token))
         finally:
-            monkeypatch.setattr(UserDB, 'delete_account', original)
+            monkeypatch.setattr(AccountDeletionDB, 'remove', original)
 
         # Nothing is half-done: the org the transaction tried to remove
         # is still there, and so is the person.

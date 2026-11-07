@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 import jwt
 import pytest
 
+from app.db.sql.account_sessions import AccountSessionsDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.services.auth.jwt_service import JWTService, TokenUse
@@ -248,7 +249,7 @@ class TestTheCliTradesItsSession:
 
     async def test_a_withdrawn_session_gets_nothing(self, client, world):
         session = make_token(world['member'], org_id=world['org'])
-        await UserDB().withdraw_sessions(world['member'])
+        await AccountSessionsDB().withdraw_sessions(world['member'])
 
         response = await _token(client, self._exchange(world, session))
 
@@ -415,7 +416,7 @@ class TestRenewalIsWhereRevocationArrives:
 
     async def test_not_once_deactivated(self, client, world):
         refresh = await self._refresh_token(client, world)
-        await UserDB().set_deactivated(world['member'], deactivated=True)
+        await AccountSessionsDB().set_deactivated(world['member'], deactivated=True)
 
         response = await _token(client, self._renew(world, refresh))
 
@@ -431,7 +432,7 @@ class TestRenewalIsWhereRevocationArrives:
 
     async def test_not_once_their_sessions_are_withdrawn(self, client, world):
         refresh = await self._refresh_token(client, world)
-        await UserDB().withdraw_sessions(world['member'])
+        await AccountSessionsDB().withdraw_sessions(world['member'])
 
         response = await _token(client, self._renew(world, refresh))
 

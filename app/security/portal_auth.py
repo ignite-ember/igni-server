@@ -117,7 +117,7 @@ async def _resolve(
     """
     if settings.portal_auth_bypass:
         await UserDB().ensure_exists(
-            user_id=_bypass_user().user_id,
+            _bypass_user().user_id,
             email=_bypass_user().email or 'demo@demo.invalid',
             full_name=_bypass_user().full_name,
         )

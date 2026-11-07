@@ -39,6 +39,7 @@ from app.db.sql.user import UserDB
 from app.security.subject import refuse_if_deactivated
 from app.services.auth.code_throttle import CodeThrottle
 from app.services.auth.jwt_service import JWTService, TokenResponse
+from app.services.identity.account_refusals import AccountRefusals
 from app.services.secrets import SecretDecryptError
 from app.utils.singleton import SingletonMeta
 
@@ -310,7 +311,8 @@ class OTPService(metaclass=SingletonMeta):
             )
 
         hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
-        await self._users.update_password(user_id=str(user.user_id), hashed_password=hashed)
+        with AccountRefusals():
+            await self._users.update_password(str(user.user_id), hashed)
         return 'Password has been reset successfully. Please sign in with your new password.'
 
 

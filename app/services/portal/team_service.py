@@ -55,7 +55,7 @@ class TeamService:
         self._user_db = users or UserDB()
         self._usage = usage or ChatUsageDB()
         self._organizations = organizations or OrganizationDB()
-        self._sessions = sessions or SessionWithdrawal(users=self._user_db)
+        self._sessions = sessions or SessionWithdrawal()
 
     async def list_members(self, org_id: str) -> TeamMemberList:
         rows, total = await self._db.list_members(org_id)
@@ -249,7 +249,7 @@ class TeamService:
         # The membership and the account together, as SCIM's `active` does:
         # `MemberStatus` says why the account is the half that deprovisions.
         with TeamRefusals():
-            old_status = await MemberStatus(team=self._db, users=self._user_db).set_in_org(
+            old_status = await MemberStatus(team=self._db).set_in_org(
                 current_user.org_id, user_id, active=new_status == 'active'
             )
 

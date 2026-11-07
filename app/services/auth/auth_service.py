@@ -16,6 +16,7 @@ from app.security.membership_sessions import MembershipSessions
 from app.security.subject import refuse_if_deactivated, require_existing_user
 from app.services.auth.jwt_service import JWTService, TokenResponse
 from app.services.auth.otp_service import OTPResult, OTPService
+from app.services.identity.account_refusals import AccountRefusals
 from app.utils.internal_failure import internal_failure
 
 logger = logging.getLogger(__name__)
@@ -101,17 +102,18 @@ class AuthService:
 
         full_name = f'{user_data.first_name} {user_data.last_name}'.strip() or None
         try:
-            user = await _user_db.create(
-                email=str(user_data.email),
-                hashed_password=AuthService.hash_password(user_data.password),
-                full_name=full_name,
-            )
+            with AccountRefusals():
+                user = await _user_db.create(
+                    str(user_data.email),
+                    hashed_password=AuthService.hash_password(user_data.password),
+                    full_name=full_name,
+                )
         except AdmissionRefused as exc:
             # An address this deployment does not take, said in words the person can act on.
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         except HTTPException:
-            # `UserDB.create` raises its own 409 for a duplicate address,
-            # which is the caller's problem and says so. Passed through.
+            # A duplicate or personal address, from `AccountRefusals`: the
+            # caller's problem, and the response says so. Passed through.
             raise
         except Exception as exc:
             # Everything else is ours. This returned `str(exc)` with a
@@ -159,7 +161,8 @@ class AuthService:
         has an account here is not. The two answers this can now give
         are keyed on the former and say nothing about the latter.
         """
-        refuse_public_mail(email)
+        with AccountRefusals():
+            refuse_public_mail(email)
         existing = await _user_db.get_by_email(email)
         result = await OTPService().generate_signup_code(email=email)
 

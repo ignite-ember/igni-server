@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.db.sql.user import UserDB
+from app.db.sql.account_sessions import AccountSessionsDB
 from app.services.cloud.revocations import Revocations
 from app.services.cloud.vm_credentials import VmCredentials
+from app.services.identity.account_refusals import AccountRefusals
 from app.services.identity.api_keys import ApiKeys
 
 
@@ -21,19 +22,20 @@ class SessionWithdrawal:
     def __init__(
         self,
         *,
-        users: UserDB | None = None,
+        sessions: AccountSessionsDB | None = None,
         vm_credentials: VmCredentials | None = None,
         api_keys: ApiKeys | None = None,
         revocations: Revocations | None = None,
     ) -> None:
-        self._users = users or UserDB()
+        self._sessions = sessions or AccountSessionsDB()
         self._vm_credentials = vm_credentials or VmCredentials()
         self._api_keys = api_keys or ApiKeys()
         self._revocations = revocations or Revocations()
 
     async def withdraw(self, user_id: str) -> datetime:
         """Withdraw every session for `user_id`; returns the new watermark."""
-        watermark = await self._users.withdraw_sessions(user_id)
+        with AccountRefusals():
+            watermark = await self._sessions.withdraw_sessions(user_id)
         await self._vm_credentials.revoke_person(user_id)
         await self._api_keys.revoke_person(user_id)
         await self._revocations.sessions_withdrawn(user_id, watermark)

@@ -426,9 +426,9 @@ class TestTheCombinedWindowIsBounded:
 
     def test_the_cost_is_written_where_somebody_would_change_it(self):
         """A number that lives only in a test is a number nobody reads."""
-        from app.db.sql.user import UserDB
+        from app.db.sql.account_sessions import AccountSessionsDB
 
-        doc = UserDB.withdraw_sessions.__doc__ or ''
+        doc = AccountSessionsDB.withdraw_sessions.__doc__ or ''
         assert 'second' in doc
         assert 'refused' in doc, (
             'the docstring no longer says a token minted in the second after the click is '
