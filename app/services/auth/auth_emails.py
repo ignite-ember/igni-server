@@ -63,7 +63,7 @@ class AuthEmails:
             email=email,
         )
 
-    def welcome(self, bg: BackgroundTasks, *, email: str, name: str) -> None:
+    def welcome(self, bg: BackgroundTasks, *, email: str, name: str | None = None) -> None:
         if self._delivery.enabled:
             bg.add_task(self._emails.send_welcome, to_email=email, name=name)
         else:

@@ -38,8 +38,8 @@ class OAuthStateDB:
     The metadata stays an untyped `dict[str, str]` on purpose. Each
     flow puts different things in it — OIDC a nonce and a PKCE
     verifier, the social sign-in path a `returnTo` — so this layer is a
-    keyed store and the shape belongs to each caller. `OidcSignInState`
-    is where the one with security-relevant contents is named.
+    keyed store and the shape belongs to each caller: `OidcSignInState`
+    and `SocialSignInState` name the two.
 
     Redis is opened per operation rather than pooled, matching
     `auth_handoff`, `code_throttle` and the OTP store. Worth changing;

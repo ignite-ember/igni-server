@@ -8,12 +8,13 @@ Google credentials, which is what a deployment offering it would do.
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
+import httpx
 import pytest
 from sqlalchemy import select
 
 from app.config import settings
 from app.db.sql.models.org_membership import OrgMembership
-from app.services.auth.oauth_service import OAuthService, OAuthUserInfo
+from app.services.auth.oauth_service import OAuthExchangeFailed, OAuthProvider, OAuthService, OAuthUserInfo
 from app.services.email.delivery import EmailDelivery
 from app.services.email.service import EmailService
 from tests.conftest import add_invited_member, create_org, create_user
@@ -191,7 +192,7 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
     async def test_a_new_person_is_welcomed_when_mail_can_go(self, client, monkeypatch):
         sent: list[str] = []
 
-        async def send_welcome(self, *, to_email: str) -> None:
+        async def send_welcome(self, *, to_email: str, name: str | None = None) -> None:
             sent.append(to_email)
 
         monkeypatch.setattr(EmailDelivery, 'enabled', property(lambda self: True))
@@ -207,7 +208,7 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         await create_user(db, user_id='known', email='known@test.com')
         sent: list[str] = []
 
-        async def send_welcome(self, *, to_email: str) -> None:
+        async def send_welcome(self, *, to_email: str, name: str | None = None) -> None:
             sent.append(to_email)
 
         monkeypatch.setattr(EmailDelivery, 'enabled', property(lambda self: True))
@@ -226,7 +227,7 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
             return {}
 
         async def broken_exchange(provider, code):
-            raise RuntimeError('the provider refused the code')
+            raise OAuthExchangeFailed(provider) from RuntimeError('upstream said: invalid_grant')
 
         monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(fake_validate_state))
         monkeypatch.setattr(OAuthService, 'exchange_and_get_user', staticmethod(broken_exchange))
@@ -239,6 +240,21 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         query = parse_qs(location.query)
         assert query['error'][0].startswith('OAuth sign-in failed')
         assert 'code' not in query
+        assert 'invalid_grant' not in query['error'][0], 'the upstream reason reached the URL'
+
+    async def test_a_transport_failure_is_an_exchange_failure(self, monkeypatch):
+        """What the callback catches is named by the service, so the
+        router does not need to know which HTTP client it uses."""
+
+        async def unreachable(code):
+            raise httpx.ConnectError('no route to host')
+
+        monkeypatch.setattr(OAuthService, '_google_exchange_and_get_user', staticmethod(unreachable))
+
+        with pytest.raises(OAuthExchangeFailed) as caught:
+            await OAuthService.exchange_and_get_user(OAuthProvider.GOOGLE, 'c')
+
+        assert isinstance(caught.value.__cause__, httpx.ConnectError)
 
     async def test_a_refusal_the_server_raises_is_not_turned_into_a_redirect(self, client, monkeypatch):
         """An HTTPException from the sign-in itself — a person the

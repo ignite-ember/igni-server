@@ -305,10 +305,10 @@ class TestNoRedirectCarriesAToken:
     def test_the_callback_redirects_with_a_code(self, endpoint):
         source = (_ROOT / endpoint).read_text()
 
-        assert '_handoff.issue(' in source, f'{endpoint} does not issue a one-time code'
-        assert (
-            "'token': result.token.access_token" not in source
-        ), f'{endpoint} still puts the token in the redirect query'
+        assert 'handoff.issue(' in source, f'{endpoint} does not issue a one-time code'
+        assert "'token': result.token.access_token" not in source, (
+            f'{endpoint} still puts the token in the redirect query'
+        )
 
     def test_nothing_anywhere_builds_a_token_query_parameter(self):
         """Swept across the endpoints rather than the two known files.

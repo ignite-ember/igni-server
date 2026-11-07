@@ -63,6 +63,18 @@ class OAuthProvider(StrEnum):
     GOOGLE = 'google'
 
 
+class OAuthExchangeFailed(Exception):
+    """The provider could not be reached, refused the code, or answered nonsense.
+
+    The cause is chained for the log. It is not for the person signing
+    in: an upstream error body or a URL is nothing they can act on.
+    """
+
+    def __init__(self, provider: OAuthProvider) -> None:
+        super().__init__(f'The {provider.value} sign-in exchange failed')
+        self.provider = provider
+
+
 class OAuthUserInfo(BaseModel):
     email: str
     first_name: str
@@ -97,10 +109,20 @@ class OAuthService:
 
     @staticmethod
     async def exchange_and_get_user(provider: OAuthProvider, code: str) -> OAuthUserInfo:
-        """Exchange the authorization code for user info."""
-        match provider:
-            case OAuthProvider.GOOGLE:
-                return await OAuthService._google_exchange_and_get_user(code)
+        """Exchange the authorization code for user info.
+
+        Raises `OAuthExchangeFailed` for a transport failure, an error
+        status, or a body that is not the JSON expected (`ValueError`
+        covers a JSON decode error and a pydantic validation error).
+        An `HTTPException` — a provider answer this server refuses —
+        passes through unchanged.
+        """
+        try:
+            match provider:
+                case OAuthProvider.GOOGLE:
+                    return await OAuthService._google_exchange_and_get_user(code)
+        except (httpx.HTTPError, ValueError) as exc:
+            raise OAuthExchangeFailed(provider) from exc
 
     @staticmethod
     def _google_authorize_url(state: str) -> str:
