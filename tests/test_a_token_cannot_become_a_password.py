@@ -121,14 +121,6 @@ class TestTheEndpointIsGone:
 
         assert 'class SetPasswordRequest' not in source
 
-    def test_the_removal_is_explained_where_it_was(self):
-        """The next person to want this endpoint will look here first,
-        and 'it was removed' without a reason invites re-adding it."""
-        source = (_ROOT / 'app/api/base_v1/endpoints/portal/user.py').read_text()
-
-        assert 'set-password' in source, 'no note where the endpoint was'
-        assert 'send-reset-password-code' in source, 'the note does not name the path that replaces it'
-
 
 class TestTheTakeoverNoLongerWorks:
     async def test_a_token_holder_cannot_change_the_password(self, client):

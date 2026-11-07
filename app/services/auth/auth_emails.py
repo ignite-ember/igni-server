@@ -63,6 +63,15 @@ class AuthEmails:
             email=email,
         )
 
+    async def send_company_address_code(self, bg: BackgroundTasks, email: str) -> str:
+        return await self._send_code(
+            bg,
+            issue=self._otp.generate_address_code,
+            mail=self._emails.send_sign_up_code,
+            purpose='company-address',
+            email=email,
+        )
+
     def welcome(self, bg: BackgroundTasks, *, email: str, name: str | None = None) -> None:
         if self._delivery.enabled:
             bg.add_task(self._emails.send_welcome, to_email=email, name=name)
@@ -81,7 +90,7 @@ class AuthEmails:
     ) -> str:
         """Issue a verification code and answer identically however it went.
 
-        The three code endpoints do the same four things in the same
+        The code endpoints do the same four things in the same
         order, and F112 found two ways that mattered to get wrong:
 
         * a **throttled** send must not be distinguishable from a delivered

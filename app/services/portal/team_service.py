@@ -22,10 +22,10 @@ from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.security.account_domains import email_domain
 from app.services.cloud.producer_feed import ProducerFeed
-from app.services.cloud.revocations import Revocations
 from app.services.cloud.vm_credentials import VmCredentials
 from app.services.identity.api_keys import ApiKeys
 from app.services.portal.member_status import MemberStatus
+from app.services.portal.session_withdrawal import SessionWithdrawal
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +48,13 @@ class TeamService:
         users: UserDB | None = None,
         usage: ChatUsageDB | None = None,
         organizations: OrganizationDB | None = None,
+        sessions: SessionWithdrawal | None = None,
     ) -> None:
         self._db = team or TeamDB()
         self._user_db = users or UserDB()
         self._usage = usage or ChatUsageDB()
         self._organizations = organizations or OrganizationDB()
+        self._sessions = sessions or SessionWithdrawal(users=self._user_db)
 
     async def list_members(self, org_id: str) -> TeamMemberList:
         rows, total = await self._db.list_members(org_id)
@@ -275,10 +277,7 @@ class TeamService:
         if not member:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Member not found')
 
-        watermark = await self._user_db.withdraw_sessions(user_id)
-        await VmCredentials().revoke_person(user_id)
-        await ApiKeys().revoke_person(user_id)
-        await Revocations().sessions_withdrawn(user_id, watermark)
+        watermark = await self._sessions.withdraw(user_id)
         logger.info(
             'Sessions withdrawn for %s in org %s by %s, valid after %s',
             user_id,

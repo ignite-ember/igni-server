@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class PortalAccount(BaseModel):
@@ -75,10 +75,18 @@ class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
 
 
-# ``SetPasswordRequest`` was here. Its endpoint was an account-takeover
-# primitive and is gone — see the note in
-# ``app/api/base_v1/endpoints/portal/user.py`` and F110. Worth one line
-# here as well: this schema never applied
-# ``_validate_password_strength``, which every other password field in
-# the application does, so it was also the one way to set a password the
-# policy would reject.
+class DeleteAccountResponse(BaseModel):
+    message: str
+
+
+class CompanyAddressRequest(BaseModel):
+    """An address on a claimed domain, for an account in no organisation."""
+
+    email: EmailStr
+
+
+class CompanyAddressConfirm(BaseModel):
+    """The address and the code that proves it."""
+
+    email: EmailStr
+    code: str

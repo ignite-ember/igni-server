@@ -1641,21 +1641,8 @@
         "title": "CommandResult",
         "type": "object"
       },
-      "CompanyAddress": {
-        "properties": {
-          "email": {
-            "format": "email",
-            "title": "Email",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "title": "CompanyAddress",
-        "type": "object"
-      },
       "CompanyAddressConfirm": {
+        "description": "The address and the code that proves it.",
         "properties": {
           "code": {
             "title": "Code",
@@ -1672,6 +1659,21 @@
           "code"
         ],
         "title": "CompanyAddressConfirm",
+        "type": "object"
+      },
+      "CompanyAddressRequest": {
+        "description": "An address on a claimed domain, for an account in no organisation.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "CompanyAddressRequest",
         "type": "object"
       },
       "CompletionUsage": {
@@ -18089,7 +18091,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CompanyAddress"
+                "$ref": "#/components/schemas/CompanyAddressRequest"
               }
             }
           },
