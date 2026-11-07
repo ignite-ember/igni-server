@@ -1,61 +1,114 @@
-"""What the subject access reads return.
+"""What the subject access reads about a person's account, standing and activity return.
 
-`SubjectAccessDB.things_they_created` returned a `dict[str, Any]` with
-twenty-two keys that never change: one per kind of thing a person can
-author, own, register or decide. A fixed key set is a model, and making
-each group a required field means a query added to the read without a
-field here — or a field here with no query — fails on the first export
-instead of shipping a report that quietly lacks a group.
-
-The rows inside each group stay `Rows` (see its note): the envelope is
-a contract, the rows are an inventory.
+One row model per statement in `SubjectAccessDB`. The rows for what a
+person made, and the `ThingsTheyCreated` envelope that groups them, are
+`subject_access_created.py`.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-#: One table's rows, as the database layer returns them: the column set
-#: of whatever table was asked about. An inventory, not a contract —
-#: typing these would mean a model per table, maintained in step with
-#: every migration, on a path where being out of step means
-#: under-reporting somebody's data.
-Rows = list[dict[str, Any]]
 
+class SubjectRow(BaseModel):
+    """One row of a subject access read: every column its statement selects, and nothing else.
 
-class ThingsTheyCreated(BaseModel):
-    """Everything one person authored, owned, registered or decided in one organisation.
-
-    The field order is the wire order: it matches the order
-    `SubjectAccessDB.things_they_created` reads them in, so the JSON is
-    the same as when this was a dict. Adding a group means adding a
-    field here **and** its query there — every field is required, so
-    forgetting either side fails loudly.
+    A subclass's fields are exactly its statement's columns, in the same
+    order — the order is the export's wire order. Every field is required
+    and extras are refused, so a column added to a statement without a
+    field, or a field with no column, fails on the first export instead
+    of shipping a report that quietly lacks or invents a value.
     """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
 
-    groups: Rows
-    group_entries: Rows
-    group_extensions: Rows
-    apps: Rows
-    app_extensions: Rows
-    vm_profiles: Rows
-    vm_profile_requests: Rows
-    vm_commands: Rows
-    vm_jobs: Rows
-    events: Rows
-    event_attachments: Rows
-    vm_credentials: Rows
-    api_keys: Rows
-    producer_volumes: Rows
-    mcp_approvals: Rows
-    notifications: Rows
-    producer_exports: Rows
-    revocations: Rows
-    legal_holds: Rows
-    app_legal_holds: Rows
-    producer_feed: Rows
-    inference_nodes: Rows
+
+class AccountRow(SubjectRow):
+    """`users`: the account matched on the address."""
+
+    user_id: str
+    email: str
+    full_name: str | None
+    auth_provider: str
+    created_at: datetime
+    updated_at: datetime
+    last_sign_in_at: datetime | None
+    tokens_valid_after: datetime | None
+    deactivated_at: datetime | None
+    is_super_admin: bool
+
+
+class DeploymentRoleRow(SubjectRow):
+    """`user_roles`: where they stand in the deployment."""
+
+    role: str
+    status: str
+    email: str | None
+    full_name: str | None
+    pending_email: str | None
+    assigned_by: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OrganisationMembershipRow(SubjectRow):
+    """`org_memberships`: one organisation they belong to."""
+
+    org_id: str
+    role: str
+    status: str
+    invited_email: str | None
+    invited_by: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OrganisationOwnedRow(SubjectRow):
+    """`organizations`: one organisation they own."""
+
+    id: str
+    slug: str
+    display_name: str
+    created_at: datetime
+
+
+class GroupMembershipRow(SubjectRow):
+    """`org_group_members`: one group they are in."""
+
+    group_id: str
+    added_by_user_id: str | None
+    added_at: datetime
+
+
+class ModelUsageRow(SubjectRow):
+    """`chat_usage`: one call they made to a model."""
+
+    org_id: str | None
+    model: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    duration: float | None
+    stream: int
+    created_at: datetime
+
+
+class AuditEventRow(SubjectRow):
+    """`audit_events`: one request, from either trail.
+
+    The same columns whether the row was found by the actor's id or by
+    their address, so both activity reads return this.
+    """
+
+    occurred_at: datetime
+    method: str
+    route: str
+    target_type: str | None
+    target_id: str | None
+    status_code: int
+    outcome: str
+    client_host: str | None
+    forwarded_for: str | None
+    user_agent: str | None

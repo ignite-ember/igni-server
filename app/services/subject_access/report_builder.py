@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
-from app.db.sql.schemas.subject_access import Rows, ThingsTheyCreated
+from app.db.sql.schemas.subject_access import AccountRow, SubjectRow
+from app.db.sql.schemas.subject_access_created import ThingsTheyCreated
 from app.services.identity.service_subjects import ExportAnswers
 from app.services.subject_access.schemas import (
     ProcessingContext,
@@ -66,7 +68,7 @@ class SubjectAccessReportBuilder:
         self._truncated: dict[str, str] = {}
         self._scope: str | None = None
 
-    def account(self, rows: Rows) -> str | None:
+    def account(self, rows: list[AccountRow]) -> str | None:
         """The account section; the account's user id, or `None` when there is none.
 
         With no account the report says why it goes on: the person may
@@ -78,9 +80,9 @@ class SubjectAccessReportBuilder:
         if not rows:
             self._sections.note = _NO_ACCOUNT
             return None
-        return str(rows[0]['user_id'])
+        return rows[0].user_id
 
-    def section(self, name: Section, *, rows: Rows, cap: int | None = None) -> None:
+    def section(self, name: Section, *, rows: Sequence[SubjectRow], cap: int | None = None) -> None:
         """One read's rows, with the report saying so if they stopped at `cap`.
 
         `cap` must be the cap the query applied: if the two drift, a

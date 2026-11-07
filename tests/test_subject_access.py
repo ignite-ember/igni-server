@@ -35,8 +35,10 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from app.config import settings
-from app.db.sql.schemas.subject_access import ThingsTheyCreated
+from app.db.sql.schemas.subject_access import AccountRow, AuditEventRow, GroupMembershipRow, ModelUsageRow
+from app.db.sql.schemas.subject_access_created import ThingsTheyCreated
 from app.db.sql.subject_access import ACTIVITY_LIMIT, SubjectAccessDB
+from app.db.sql.subject_access_created import CreatedThingsDB
 from app.db.sql.tenant_migrator import TenantMigrator
 from app.db.sql.tenant_names import TenantNames
 from app.services.identity.service_subjects import ExportAnswers
@@ -96,6 +98,14 @@ def _live(sql: str, params: dict | None = None) -> set[str]:
     return found
 
 
+def _export_sources() -> list[str]:
+    """The source of every module that holds export SQL."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent / 'app/db/sql'
+    return [(root / name).read_text() for name in ('subject_access.py', 'subject_access_created.py')]
+
+
 def _export_statements() -> list[tuple[str, set[str], set[str]]]:
     """Every SELECT the export runs: its table, its columns, its match keys.
 
@@ -113,16 +123,14 @@ def _export_statements() -> list[tuple[str, set[str], set[str]]]:
     person with no account is precisely the one who would notice.
     """
     import ast
-    import pathlib
     import re
 
     # The statements moved to the database layer; the classification
     # they are checked against stayed in the service. This reads the
     # queries.
-    source = (pathlib.Path(__file__).resolve().parent.parent / 'app/db/sql/subject_access.py').read_text()
     statements: list[tuple[str, set[str], set[str]]] = []
 
-    for node in ast.walk(ast.parse(source)):
+    for node in (found for source in _export_sources() for found in ast.walk(ast.parse(source))):
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             continue
         if 'SELECT ' not in node.value or ' FROM ' not in node.value:
@@ -316,14 +324,12 @@ class TestTheCoverageRule:
         about the export rather than a description of it, which is worse
         than no list: it reads as assurance.
         """
-        import pathlib
         import re
 
         # The statements moved to the database layer; the classification
         # they are checked against stayed in the service. This reads the
         # queries.
-        source = (pathlib.Path(__file__).resolve().parent.parent / 'app/db/sql/subject_access.py').read_text()
-        queried = set(re.findall(r'FROM (\w+)', source))
+        queried = {table for source in _export_sources() for table in re.findall(r'FROM (\w+)', source)}
         claimed = {col.split('.')[0] for col in ColumnRegistry().columns_with(ColumnVerdict.INCLUDED)}
 
         assert queried, 'no SQL found in the service — has it changed shape?'
@@ -453,7 +459,7 @@ class TestTheExport:
 
         assert report.subject == person['email']
         assert report.sections.account, report.sections
-        assert report.sections.account[0]['email'] == person['email']
+        assert report.sections.account[0].email == person['email']
         assert report.sections.organisation_memberships, report.sections
 
     async def test_the_password_hash_is_never_in_the_report(self, person):
@@ -511,13 +517,13 @@ class TestTheExport:
         report = await SubjectAccessService().export(email=person['email'], org_id=person['org_id'])
 
         # The row itself is theirs and is returned.
-        routes = [row['route'] for row in report.sections.own_activity]
+        routes = [row.route for row in report.sections.own_activity]
         assert '/v1/portal/erasure' in routes, report.sections.own_activity
 
         # What it says about the other person is not.
         blob = json.dumps(report, default=str)
         assert 'v***@example.com' not in blob
-        assert 'detail' not in report.sections.own_activity[0]
+        assert 'detail' not in report.sections.own_activity[0].model_dump()
         # And its absence is declared, not silent.
         assert 'audit_events.detail' in report.withheld
 
@@ -545,9 +551,9 @@ class TestTheExport:
         attempts = report.sections.authentication_attempts
 
         assert attempts, 'the attempt was not returned at all'
-        assert attempts[0]['client_host'] == '10.0.0.7'
-        assert attempts[0]['forwarded_for'] == '203.0.113.9'
-        assert attempts[0]['user_agent'] == 'Mozilla/5.0 (a browser they used)'
+        assert attempts[0].client_host == '10.0.0.7'
+        assert attempts[0].forwarded_for == '203.0.113.9'
+        assert attempts[0].user_agent == 'Mozilla/5.0 (a browser they used)'
 
 
 class TestTheEndpoint:
@@ -629,6 +635,58 @@ _CAPPED_READS = {
 }
 
 
+_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _account(*, email: str = 'someone@example.com') -> AccountRow:
+    return AccountRow(
+        user_id='u-1',
+        email=email,
+        full_name=None,
+        auth_provider='local',
+        created_at=_AT,
+        updated_at=_AT,
+        last_sign_in_at=None,
+        tokens_valid_after=None,
+        deactivated_at=None,
+        is_super_admin=False,
+    )
+
+
+def _audit_events(n: int) -> list[AuditEventRow]:
+    return [
+        AuditEventRow(
+            occurred_at=_AT,
+            method='GET',
+            route=f'/v1/{i}',
+            target_type=None,
+            target_id=None,
+            status_code=200,
+            outcome='allowed',
+            client_host=None,
+            forwarded_for=None,
+            user_agent=None,
+        )
+        for i in range(n)
+    ]
+
+
+def _model_usage(n: int) -> list[ModelUsageRow]:
+    return [
+        ModelUsageRow(
+            org_id='org-1',
+            model='m',
+            input_tokens=1,
+            output_tokens=1,
+            total_tokens=2,
+            duration=None,
+            stream=0,
+            created_at=_AT,
+        )
+        for _ in range(n)
+    ]
+
+
 class _FakeDB:
     """Every read `SubjectAccessDB` offers, answering for one account.
 
@@ -639,35 +697,32 @@ class _FakeDB:
     def __init__(self, *, email: str = 'someone@example.com') -> None:
         self._email = email
 
-    async def account(self, email: str) -> list[dict]:
-        return [{'user_id': 'u-1', 'email': self._email}]
+    async def account(self, email: str) -> list[AccountRow]:
+        return [_account(email=self._email)]
 
-    async def deployment_role(self, user_id: str) -> list[dict]:
+    async def deployment_role(self, user_id: str) -> list:
         return []
 
-    async def organisation_memberships(self, user_id: str) -> list[dict]:
+    async def organisation_memberships(self, user_id: str) -> list:
         return []
 
-    async def organisations_owned(self, user_id: str) -> list[dict]:
+    async def organisations_owned(self, user_id: str) -> list:
         return []
 
-    async def group_memberships(self, org_id: str, *, user_id: str) -> list[dict]:
+    async def group_memberships(self, org_id: str, *, user_id: str) -> list:
         return []
 
-    async def things_they_created(self, *, org_id: str, user_id: str, email: str) -> ThingsTheyCreated:
+    async def things_they_created(self, *, org_id: str, user_id: str) -> ThingsTheyCreated:
         return ThingsTheyCreated.model_validate({name: [] for name in ThingsTheyCreated.model_fields})
 
-    async def model_usage(self, org_id: str, *, user_id: str) -> list[dict]:
-        return self._full('model_usage')
+    async def model_usage(self, org_id: str, *, user_id: str) -> list[ModelUsageRow]:
+        return _model_usage(_CAPPED_READS['model_usage'])
 
-    async def own_activity(self, org_id: str, *, user_id: str) -> list[dict]:
-        return self._full('own_activity')
+    async def own_activity(self, org_id: str, *, user_id: str) -> list[AuditEventRow]:
+        return _audit_events(_CAPPED_READS['own_activity'])
 
-    async def authentication_attempts(self, org_id: str | None, *, email: str) -> list[dict]:
-        return self._full('authentication_attempts')
-
-    def _full(self, read: str) -> list[dict]:
-        return [{'n': n} for n in range(_CAPPED_READS[read])]
+    async def authentication_attempts(self, org_id: str | None, *, email: str) -> list[AuditEventRow]:
+        return _audit_events(_CAPPED_READS['authentication_attempts'])
 
 
 class _FakeServices:
@@ -694,7 +749,7 @@ class TestATruncatedReportSaysSo:
 
     def test_a_full_section_is_declared_truncated(self):
         report = _builder()
-        report.section(Section.OWN_ACTIVITY, rows=[{}] * ACTIVITY_LIMIT, cap=ACTIVITY_LIMIT)
+        report.section(Section.OWN_ACTIVITY, rows=_audit_events(ACTIVITY_LIMIT), cap=ACTIVITY_LIMIT)
 
         truncated = report.build().truncated
         assert truncated is not None
@@ -704,7 +759,7 @@ class TestATruncatedReportSaysSo:
         """Otherwise every export claims truncation and the flag means
         nothing."""
         report = _builder()
-        report.section(Section.OWN_ACTIVITY, rows=[{}, {}, {}], cap=ACTIVITY_LIMIT)
+        report.section(Section.OWN_ACTIVITY, rows=_audit_events(3), cap=ACTIVITY_LIMIT)
 
         assert report.build().truncated is None
 
@@ -740,7 +795,7 @@ class TestTheBuilderOwnsTheSections:
     def test_an_account_answers_its_user_id(self):
         report = _builder()
 
-        assert report.account([{'user_id': 'u-1', 'email': 'someone@example.com'}]) == 'u-1'
+        assert report.account([_account()]) == 'u-1'
         assert report.build().sections.note is None
 
     def test_every_section_name_is_a_field_of_the_sections(self):
@@ -754,7 +809,10 @@ class TestTheBuilderOwnsTheSections:
 
     def test_an_uncapped_section_is_never_truncated(self):
         report = _builder()
-        report.section(Section.GROUP_MEMBERSHIPS, rows=[{}] * ACTIVITY_LIMIT)
+        report.section(
+            Section.GROUP_MEMBERSHIPS,
+            rows=[GroupMembershipRow(group_id='g', added_by_user_id=None, added_at=_AT)] * ACTIVITY_LIMIT,
+        )
 
         assert report.build().truncated is None
 
@@ -770,11 +828,11 @@ class TestThingsTheyCreated:
 
     def test_the_wire_order_is_the_order_the_database_reads_them(self):
         """It was a dict built in this order; the JSON must not change."""
-        source = inspect.getsource(SubjectAccessDB.things_they_created)
+        source = inspect.getsource(CreatedThingsDB.things_they_created)
         read = re.findall(r'^\s+(\w+)=await self\._', source, flags=re.M)
         things = ThingsTheyCreated.model_validate({name: [] for name in ThingsTheyCreated.model_fields})
 
-        assert read, 'no groups parsed from SubjectAccessDB.things_they_created — has it changed shape?'
+        assert read, 'no groups parsed from CreatedThingsDB.things_they_created — has it changed shape?'
         assert list(things.model_dump(mode='json')) == read
 
 
@@ -818,5 +876,5 @@ class TestEachServiceUsesItsOwnDatabase:
         a = await first.export(email='x@example.com')
         b = await second.export(email='x@example.com')
 
-        assert a.sections.account == [{'user_id': 'u-1', 'email': 'first@example.com'}]
-        assert b.sections.account == [{'user_id': 'u-1', 'email': 'second@example.com'}]
+        assert a.sections.account == [_account(email='first@example.com')]
+        assert b.sections.account == [_account(email='second@example.com')]

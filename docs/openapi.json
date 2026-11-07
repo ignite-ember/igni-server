@@ -179,6 +179,99 @@
         "title": "AccessReviewRow",
         "type": "object"
       },
+      "AccountRow": {
+        "additionalProperties": false,
+        "description": "`users`: the account matched on the address.",
+        "properties": {
+          "auth_provider": {
+            "title": "Auth Provider",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deactivated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deactivated At"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "is_super_admin": {
+            "title": "Is Super Admin",
+            "type": "boolean"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sign In At"
+          },
+          "tokens_valid_after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Valid After"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "full_name",
+          "auth_provider",
+          "created_at",
+          "updated_at",
+          "last_sign_in_at",
+          "tokens_valid_after",
+          "deactivated_at",
+          "is_super_admin"
+        ],
+        "title": "AccountRow",
+        "type": "object"
+      },
       "AckEvents": {
         "properties": {
           "event_ids": {
@@ -395,6 +488,114 @@
         "title": "ApiKeyRecord",
         "type": "object"
       },
+      "ApiKeyRow": {
+        "additionalProperties": false,
+        "description": "`api_keys` they hold or revoked.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "revoked_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked By Id"
+          },
+          "revoked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked Reason"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked_at",
+          "revoked_reason",
+          "revoked_by_id"
+        ],
+        "title": "ApiKeyRow",
+        "type": "object"
+      },
+      "AppExtensionRow": {
+        "additionalProperties": false,
+        "description": "`org_app_extensions`: an extension they switched on for an app.",
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "enabled_at": {
+            "format": "date-time",
+            "title": "Enabled At",
+            "type": "string"
+          },
+          "extension_id": {
+            "title": "Extension Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "extension_id",
+          "enabled_at"
+        ],
+        "title": "AppExtensionRow",
+        "type": "object"
+      },
       "AppLegalHoldResponse": {
         "description": "A hold on an app: it and its spaces are not erased while it stands, discarded or not.",
         "properties": {
@@ -428,6 +629,37 @@
           "placed_at"
         ],
         "title": "AppLegalHoldResponse",
+        "type": "object"
+      },
+      "AppLegalHoldRow": {
+        "additionalProperties": false,
+        "description": "`app_legal_holds` they placed.",
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "placed_at": {
+            "format": "date-time",
+            "title": "Placed At",
+            "type": "string"
+          },
+          "placed_by_user_id": {
+            "title": "Placed By User Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "reason",
+          "placed_by_user_id",
+          "placed_at"
+        ],
+        "title": "AppLegalHoldRow",
         "type": "object"
       },
       "ApproveVmProfileRequest": {
@@ -579,6 +811,102 @@
           }
         },
         "title": "AuditEventPage",
+        "type": "object"
+      },
+      "AuditEventRow": {
+        "additionalProperties": false,
+        "description": "`audit_events`: one request, from either trail.\n\nThe same columns whether the row was found by the actor's id or by\ntheir address, so both activity reads return this.",
+        "properties": {
+          "client_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Host"
+          },
+          "forwarded_for": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forwarded For"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "status_code": {
+            "title": "Status Code",
+            "type": "integer"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "target_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Type"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          }
+        },
+        "required": [
+          "occurred_at",
+          "method",
+          "route",
+          "target_type",
+          "target_id",
+          "status_code",
+          "outcome",
+          "client_host",
+          "forwarded_for",
+          "user_agent"
+        ],
+        "title": "AuditEventRow",
         "type": "object"
       },
       "AuditEventView": {
@@ -763,6 +1091,34 @@
         "title": "AuthResponse",
         "type": "object"
       },
+      "AuthenticationScheme": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "primary": {
+            "default": false,
+            "title": "Primary",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "description"
+        ],
+        "title": "AuthenticationScheme",
+        "type": "object"
+      },
       "AuthorizationAsk": {
         "description": "`GET /oauth/request`: who is asking, and the organisations the person may pick.",
         "properties": {
@@ -858,6 +1214,27 @@
           }
         },
         "title": "Body_ack_v1_platform_orgs__org_id__vm_commands__command_id__ack_post",
+        "type": "object"
+      },
+      "BulkSupport": {
+        "properties": {
+          "maxOperations": {
+            "default": 0,
+            "title": "Maxoperations",
+            "type": "integer"
+          },
+          "maxPayloadSize": {
+            "default": 0,
+            "title": "Maxpayloadsize",
+            "type": "integer"
+          },
+          "supported": {
+            "default": false,
+            "title": "Supported",
+            "type": "boolean"
+          }
+        },
+        "title": "BulkSupport",
         "type": "object"
       },
       "CLITokenRequest": {
@@ -2024,6 +2401,82 @@
         "title": "CreatedApiKey",
         "type": "object"
       },
+      "CreatedAppRow": {
+        "additionalProperties": false,
+        "description": "`org_apps` they registered or own.",
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By User Id"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          }
+        },
+        "required": [
+          "app_id",
+          "owner_user_id",
+          "created_by_user_id",
+          "created_at"
+        ],
+        "title": "CreatedAppRow",
+        "type": "object"
+      },
+      "CreatedGroupRow": {
+        "additionalProperties": false,
+        "description": "`org_groups` they created.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "created_at"
+        ],
+        "title": "CreatedGroupRow",
+        "type": "object"
+      },
       "DeleteAccountResponse": {
         "properties": {
           "message": {
@@ -2291,6 +2744,86 @@
           "members"
         ],
         "title": "DeploymentOrg",
+        "type": "object"
+      },
+      "DeploymentRoleRow": {
+        "additionalProperties": false,
+        "description": "`user_roles`: where they stand in the deployment.",
+        "properties": {
+          "assigned_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned By"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "pending_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Email"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "status",
+          "email",
+          "full_name",
+          "pending_email",
+          "assigned_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DeploymentRoleRow",
         "type": "object"
       },
       "DiscardAppRequest": {
@@ -2872,6 +3405,60 @@
           "expires_at"
         ],
         "title": "EventAccepted",
+        "type": "object"
+      },
+      "EventAttachmentRow": {
+        "additionalProperties": false,
+        "description": "`service_attachments` on an event they produced.",
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_id",
+          "filename",
+          "content_type",
+          "size",
+          "sha256",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "EventAttachmentRow",
         "type": "object"
       },
       "EventStatus": {
@@ -3552,6 +4139,22 @@
         "title": "FailedEvents",
         "type": "object"
       },
+      "FilterSupport": {
+        "properties": {
+          "maxResults": {
+            "default": 200,
+            "title": "Maxresults",
+            "type": "integer"
+          },
+          "supported": {
+            "default": true,
+            "title": "Supported",
+            "type": "boolean"
+          }
+        },
+        "title": "FilterSupport",
+        "type": "object"
+      },
       "GrantsComparison": {
         "description": "A new version against the approved one.",
         "properties": {
@@ -3571,6 +4174,37 @@
           "wider"
         ],
         "title": "GrantsComparison",
+        "type": "object"
+      },
+      "GroupEntryRow": {
+        "additionalProperties": false,
+        "description": "`org_group_entries` they created.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entry_name": {
+            "title": "Entry Name",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "group_id",
+          "entry_name",
+          "created_at"
+        ],
+        "title": "GroupEntryRow",
         "type": "object"
       },
       "GroupExtension": {
@@ -3622,6 +4256,65 @@
           "extensions"
         ],
         "title": "GroupExtensionList",
+        "type": "object"
+      },
+      "GroupExtensionRow": {
+        "additionalProperties": false,
+        "description": "`org_group_extensions`: an extension they switched on for a group.",
+        "properties": {
+          "enabled_at": {
+            "format": "date-time",
+            "title": "Enabled At",
+            "type": "string"
+          },
+          "extension_id": {
+            "title": "Extension Id",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "extension_id",
+          "enabled_at"
+        ],
+        "title": "GroupExtensionRow",
+        "type": "object"
+      },
+      "GroupMembershipRow": {
+        "additionalProperties": false,
+        "description": "`org_group_members`: one group they are in.",
+        "properties": {
+          "added_at": {
+            "format": "date-time",
+            "title": "Added At",
+            "type": "string"
+          },
+          "added_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By User Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "added_by_user_id",
+          "added_at"
+        ],
+        "title": "GroupMembershipRow",
         "type": "object"
       },
       "GroupTheme": {
@@ -4042,6 +4735,32 @@
         "title": "ImpactTool",
         "type": "object"
       },
+      "InferenceNodeRow": {
+        "additionalProperties": false,
+        "description": "`inference_nodes` they registered.",
+        "properties": {
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "base_url",
+          "created_at"
+        ],
+        "title": "InferenceNodeRow",
+        "type": "object"
+      },
       "InferenceStatusView": {
         "description": "Every node, its totals, and whether registration is available at all.\n\nThe totals are what answers \"do we need another GPU?\", which is the\nquestion this page exists for. Per-node rows answer the follow-up:\nwhich one.\n\n``registration_enabled`` lets the portal explain an empty registered\nlist correctly: \"nothing has registered\" and \"this deployment does\nnot accept registrations\" look identical otherwise, and they call for\ncompletely different fixes.",
         "properties": {
@@ -4244,6 +4963,7 @@
         "title": "JobScope",
         "type": "object"
       },
+      "JsonValue": {},
       "JwkSet": {
         "description": "What `/.well-known/jwks.json` serves, and what a client registers.",
         "properties": {
@@ -4336,6 +5056,37 @@
           "incarnations"
         ],
         "title": "LegalHoldResponse",
+        "type": "object"
+      },
+      "LegalHoldRow": {
+        "additionalProperties": false,
+        "description": "`legal_holds` on them, or placed by them.",
+        "properties": {
+          "placed_at": {
+            "format": "date-time",
+            "title": "Placed At",
+            "type": "string"
+          },
+          "placed_by_user_id": {
+            "title": "Placed By User Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "reason",
+          "placed_by_user_id",
+          "placed_at"
+        ],
+        "title": "LegalHoldRow",
         "type": "object"
       },
       "LicenceEnvelope": {
@@ -4711,6 +5462,32 @@
         "title": "McpApprovalList",
         "type": "object"
       },
+      "McpApprovalRow": {
+        "additionalProperties": false,
+        "description": "`person_mcp_approvals` they gave.",
+        "properties": {
+          "approved_at": {
+            "format": "date-time",
+            "title": "Approved At",
+            "type": "string"
+          },
+          "server_name": {
+            "title": "Server Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_name",
+          "source",
+          "approved_at"
+        ],
+        "title": "McpApprovalRow",
+        "type": "object"
+      },
       "McpServerRef": {
         "description": "One MCP server, as igni names it: its name and the configuration it came from.",
         "properties": {
@@ -4776,6 +5553,71 @@
           }
         },
         "title": "Meta",
+        "type": "object"
+      },
+      "ModelUsageRow": {
+        "additionalProperties": false,
+        "description": "`chat_usage`: one call they made to a model.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Id"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "stream": {
+            "title": "Stream",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org_id",
+          "model",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "duration",
+          "stream",
+          "created_at"
+        ],
+        "title": "ModelUsageRow",
         "type": "object"
       },
       "Module": {
@@ -6482,6 +7324,98 @@
         "title": "OrganisationChoice",
         "type": "object"
       },
+      "OrganisationMembershipRow": {
+        "additionalProperties": false,
+        "description": "`org_memberships`: one organisation they belong to.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "invited_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited By"
+          },
+          "invited_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited Email"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "role",
+          "status",
+          "invited_email",
+          "invited_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OrganisationMembershipRow",
+        "type": "object"
+      },
+      "OrganisationOwnedRow": {
+        "additionalProperties": false,
+        "description": "`organizations`: one organisation they own.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "display_name",
+          "created_at"
+        ],
+        "title": "OrganisationOwnedRow",
+        "type": "object"
+      },
       "PatchOperation": {
         "properties": {
           "op": {
@@ -7298,6 +8232,181 @@
         "title": "ProducerAssignment",
         "type": "object"
       },
+      "ProducerEventRow": {
+        "additionalProperties": false,
+        "description": "`producer_events` they produced.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "attachment_ids": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "extension_id": {
+            "title": "Extension Id",
+            "type": "string"
+          },
+          "failed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Reason"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "not_handled_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Handled Reason"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "start_run": {
+            "title": "Start Run",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "thread": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "extension_id",
+          "kind",
+          "event_type",
+          "payload",
+          "thread",
+          "text",
+          "title",
+          "start_run",
+          "action",
+          "attachment_ids",
+          "state",
+          "failed_reason",
+          "not_handled_reason",
+          "created_at",
+          "delivered_at"
+        ],
+        "title": "ProducerEventRow",
+        "type": "object"
+      },
+      "ProducerExportRow": {
+        "additionalProperties": false,
+        "description": "`producer_exports` of their data, or ones they asked for.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by_user_id": {
+            "title": "Requested By User Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "requested_by_user_id",
+          "requested_at",
+          "state",
+          "finished_at"
+        ],
+        "title": "ProducerExportRow",
+        "type": "object"
+      },
       "ProducerFeedItem": {
         "description": "One producer whose state changed: what it is now.",
         "properties": {
@@ -7409,6 +8518,129 @@
           "cursor"
         ],
         "title": "ProducerFeedPage",
+        "type": "object"
+      },
+      "ProducerFeedRow": {
+        "additionalProperties": false,
+        "description": "`producer_feed`: what the gateway was last told about their VM.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "changed_at": {
+            "format": "date-time",
+            "title": "Changed At",
+            "type": "string"
+          },
+          "discarded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discarded At"
+          },
+          "discarded_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discarded By User Id"
+          },
+          "erase_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erase At"
+          },
+          "erased": {
+            "title": "Erased",
+            "type": "boolean"
+          },
+          "erasure_done_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erasure Done At"
+          },
+          "legal_hold": {
+            "title": "Legal Hold",
+            "type": "boolean"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "removed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed At"
+          },
+          "seen_removed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen Removed At"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "active",
+          "removed",
+          "removed_at",
+          "erase_at",
+          "changed_at",
+          "seen_removed_at",
+          "erased",
+          "legal_hold",
+          "erasure_done_at",
+          "discarded_by_user_id",
+          "discarded_at"
+        ],
+        "title": "ProducerFeedRow",
         "type": "object"
       },
       "ProducerRef": {
@@ -7588,6 +8820,52 @@
           "volume_max_gib"
         ],
         "title": "ProducerVolume",
+        "type": "object"
+      },
+      "ProducerVolumeRow": {
+        "additionalProperties": false,
+        "description": "`producer_volumes`: their own VM's growth, or growth they caused.",
+        "properties": {
+          "gib": {
+            "title": "Gib",
+            "type": "integer"
+          },
+          "grown_as": {
+            "title": "Grown As",
+            "type": "string"
+          },
+          "grown_at": {
+            "format": "date-time",
+            "title": "Grown At",
+            "type": "string"
+          },
+          "grown_by_id": {
+            "title": "Grown By Id",
+            "type": "string"
+          },
+          "grown_by_kind": {
+            "title": "Grown By Kind",
+            "type": "string"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "gib",
+          "grown_by_kind",
+          "grown_by_id",
+          "grown_as",
+          "grown_at"
+        ],
+        "title": "ProducerVolumeRow",
         "type": "object"
       },
       "PublicJwk": {
@@ -7863,6 +9141,108 @@
         ],
         "title": "Reason",
         "type": "string"
+      },
+      "ReceivedNotificationRow": {
+        "additionalProperties": false,
+        "description": "`notifications` addressed to them.",
+        "properties": {
+          "actor_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Email"
+          },
+          "actor_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor User Id"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "kind",
+          "title",
+          "body",
+          "actor_user_id",
+          "actor_email",
+          "target",
+          "created_at",
+          "delivered_at",
+          "read_at"
+        ],
+        "title": "ReceivedNotificationRow",
+        "type": "object"
       },
       "Redirect": {
         "description": "Where the page sends the person next: the client's redirect URI, carrying the code.",
@@ -8252,6 +9632,32 @@
           "cursor"
         ],
         "title": "RevocationPage",
+        "type": "object"
+      },
+      "RevocationRow": {
+        "additionalProperties": false,
+        "description": "`revocations` of their tokens, here or everywhere.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "reason",
+          "created_at"
+        ],
+        "title": "RevocationRow",
         "type": "object"
       },
       "RoleChangeRequest": {
@@ -8688,6 +10094,45 @@
           }
         },
         "title": "ServiceNotifications",
+        "type": "object"
+      },
+      "ServiceProviderConfig": {
+        "description": "What this implementation supports (RFC 7643 §5). Providers read it first.\n\nThe defaults *are* this server's answer, so the route serves a bare\ninstance. Unsupported features are said plainly rather than left for\na provider to discover by having a run fail.\n\nNo ``documentationUri``. It is optional, and the one URL worth\nputting there is the vendor's — which is a host named in ``app/``\nfor a convenience link, on a product whose rule is that there are\nnone. The operator reads how to configure this where they configure\nit: ``dist.env`` and the chart.",
+        "properties": {
+          "authenticationSchemes": {
+            "items": {
+              "$ref": "#/components/schemas/AuthenticationScheme"
+            },
+            "title": "Authenticationschemes",
+            "type": "array"
+          },
+          "bulk": {
+            "$ref": "#/components/schemas/BulkSupport"
+          },
+          "changePassword": {
+            "$ref": "#/components/schemas/Supported"
+          },
+          "etag": {
+            "$ref": "#/components/schemas/Supported"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/FilterSupport"
+          },
+          "patch": {
+            "$ref": "#/components/schemas/Supported"
+          },
+          "schemas": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Schemas",
+            "type": "array"
+          },
+          "sort": {
+            "$ref": "#/components/schemas/Supported"
+          }
+        },
+        "title": "ServiceProviderConfig",
         "type": "object"
       },
       "ServiceVmProfile": {
@@ -9217,7 +10662,7 @@
       },
       "SubjectAccessReport": {
         "additionalProperties": false,
-        "description": "What an Article 15 request is answered with.\n\nThe one HTTP contract in this product a regulator might read, so\nevery part of it is declared: the context is a `ProcessingContext`\nand the sections a `SubjectAccessSections`. Only the rows inside a\nsection stay untyped — the envelope is a contract; the rows are an\ninventory.",
+        "description": "What an Article 15 request is answered with.\n\nThe one HTTP contract in this product a regulator might read, so\nevery part of it is declared: the context is a `ProcessingContext`\nand the sections a `SubjectAccessSections`, whose rows are the row\nmodels the reads return.",
         "properties": {
           "generated_at": {
             "title": "Generated At",
@@ -9293,14 +10738,13 @@
       },
       "SubjectAccessSections": {
         "additionalProperties": false,
-        "description": "One field per section an export can produce, in the order it produces them.\n\nThe section *names* are a fixed set, so they are a model; the rows\ninside each are `Rows` (see its note). A section the export did not\nproduce is absent from the wire rather than null — the subject is\ntold what was looked at, and `null` would read as \"looked, found\nnothing\", which is what an empty list says.\n\n`extra='forbid'` with `validate_assignment` so a misspelt section\nfails loudly instead of being dropped on the way out.",
+        "description": "One field per section an export can produce, in the order it produces them.\n\nThe section names are a fixed set, and each section's rows are the\nrow model its read returns. A section the export did not\nproduce is absent from the wire rather than null — the subject is\ntold what was looked at, and `null` would read as \"looked, found\nnothing\", which is what an empty list says.\n\n`extra='forbid'` with `validate_assignment` so a misspelt section\nfails loudly instead of being dropped on the way out.",
         "properties": {
           "account": {
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/AccountRow"
                 },
                 "type": "array"
               },
@@ -9314,8 +10758,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/AuditEventRow"
                 },
                 "type": "array"
               },
@@ -9329,8 +10772,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/DeploymentRoleRow"
                 },
                 "type": "array"
               },
@@ -9344,8 +10786,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/GroupMembershipRow"
                 },
                 "type": "array"
               },
@@ -9359,8 +10800,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/ModelUsageRow"
                 },
                 "type": "array"
               },
@@ -9385,8 +10825,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/OrganisationMembershipRow"
                 },
                 "type": "array"
               },
@@ -9400,8 +10839,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/OrganisationOwnedRow"
                 },
                 "type": "array"
               },
@@ -9415,8 +10853,7 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/AuditEventRow"
                 },
                 "type": "array"
               },
@@ -9494,6 +10931,20 @@
           "user_id"
         ],
         "title": "SuperAdmin",
+        "type": "object"
+      },
+      "Supported": {
+        "description": "RFC 7643 §5's ``{\"supported\": …}`` for a feature with no settings.",
+        "properties": {
+          "supported": {
+            "title": "Supported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "supported"
+        ],
+        "title": "Supported",
         "type": "object"
       },
       "SwitchedOff": {
@@ -9636,180 +11087,158 @@
       },
       "ThingsTheyCreated": {
         "additionalProperties": false,
-        "description": "Everything one person authored, owned, registered or decided in one organisation.\n\nThe field order is the wire order: it matches the order\n`SubjectAccessDB.things_they_created` reads them in, so the JSON is\nthe same as when this was a dict. Adding a group means adding a\nfield here **and** its query there — every field is required, so\nforgetting either side fails loudly.",
+        "description": "Everything one person authored, owned, registered or decided in one organisation.\n\nThe field order is the wire order and matches the order\n`SubjectAccessDB.things_they_created` reads them in. Adding a group\nmeans adding a field here **and** its query there — every field is\nrequired, so forgetting either side fails loudly.",
         "properties": {
           "api_keys": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ApiKeyRow"
             },
             "title": "Api Keys",
             "type": "array"
           },
           "app_extensions": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/AppExtensionRow"
             },
             "title": "App Extensions",
             "type": "array"
           },
           "app_legal_holds": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/AppLegalHoldRow"
             },
             "title": "App Legal Holds",
             "type": "array"
           },
           "apps": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/CreatedAppRow"
             },
             "title": "Apps",
             "type": "array"
           },
           "event_attachments": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/EventAttachmentRow"
             },
             "title": "Event Attachments",
             "type": "array"
           },
           "events": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ProducerEventRow"
             },
             "title": "Events",
             "type": "array"
           },
           "group_entries": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/GroupEntryRow"
             },
             "title": "Group Entries",
             "type": "array"
           },
           "group_extensions": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/GroupExtensionRow"
             },
             "title": "Group Extensions",
             "type": "array"
           },
           "groups": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/CreatedGroupRow"
             },
             "title": "Groups",
             "type": "array"
           },
           "inference_nodes": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/InferenceNodeRow"
             },
             "title": "Inference Nodes",
             "type": "array"
           },
           "legal_holds": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/LegalHoldRow"
             },
             "title": "Legal Holds",
             "type": "array"
           },
           "mcp_approvals": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/McpApprovalRow"
             },
             "title": "Mcp Approvals",
             "type": "array"
           },
           "notifications": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ReceivedNotificationRow"
             },
             "title": "Notifications",
             "type": "array"
           },
           "producer_exports": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ProducerExportRow"
             },
             "title": "Producer Exports",
             "type": "array"
           },
           "producer_feed": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ProducerFeedRow"
             },
             "title": "Producer Feed",
             "type": "array"
           },
           "producer_volumes": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ProducerVolumeRow"
             },
             "title": "Producer Volumes",
             "type": "array"
           },
           "revocations": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/RevocationRow"
             },
             "title": "Revocations",
             "type": "array"
           },
           "vm_commands": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/VmCommandRow"
             },
             "title": "Vm Commands",
             "type": "array"
           },
           "vm_credentials": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/VmCredentialRow"
             },
             "title": "Vm Credentials",
             "type": "array"
           },
           "vm_jobs": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/VmJobRow"
             },
             "title": "Vm Jobs",
             "type": "array"
           },
           "vm_profile_requests": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/VmProfileRequestRow"
             },
             "title": "Vm Profile Requests",
             "type": "array"
           },
           "vm_profiles": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/VmProfileRow"
             },
             "title": "Vm Profiles",
             "type": "array"
@@ -10443,6 +11872,124 @@
         "title": "VmCommandRecord",
         "type": "object"
       },
+      "VmCommandRow": {
+        "additionalProperties": false,
+        "description": "`vm_commands` they asked for, or that ran in their own VM.",
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "requested_as": {
+            "title": "Requested As",
+            "type": "string"
+          },
+          "requested_by_id": {
+            "title": "Requested By Id",
+            "type": "string"
+          },
+          "requested_by_kind": {
+            "title": "Requested By Kind",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "producer_kind",
+          "producer_id",
+          "command",
+          "requested_by_kind",
+          "requested_by_id",
+          "requested_as",
+          "state",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "exit_code",
+          "output",
+          "error"
+        ],
+        "title": "VmCommandRow",
+        "type": "object"
+      },
       "VmCredentialList": {
         "properties": {
           "credentials": {
@@ -10530,6 +12077,92 @@
         "title": "VmCredentialRecord",
         "type": "object"
       },
+      "VmCredentialRow": {
+        "additionalProperties": false,
+        "description": "`vm_credentials` for their VM, made by them, or revoked by them.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_id": {
+            "title": "Created By Id",
+            "type": "string"
+          },
+          "created_by_kind": {
+            "title": "Created By Kind",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "revoked_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked By Id"
+          },
+          "revoked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked Reason"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "created_by_kind",
+          "created_by_id",
+          "created_at",
+          "last_used_at",
+          "revoked_at",
+          "revoked_reason",
+          "revoked_by_id"
+        ],
+        "title": "VmCredentialRow",
+        "type": "object"
+      },
       "VmJobList": {
         "properties": {
           "jobs": {
@@ -10609,6 +12242,50 @@
           "cancelled_at"
         ],
         "title": "VmJobRecord",
+        "type": "object"
+      },
+      "VmJobRow": {
+        "additionalProperties": false,
+        "description": "`vm_jobs` they asked for or cancelled.",
+        "properties": {
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "requested_as": {
+            "title": "Requested As",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "command",
+          "requested_as",
+          "created_at",
+          "cancelled_at"
+        ],
+        "title": "VmJobRow",
         "type": "object"
       },
       "VmPackages": {
@@ -10765,6 +12442,56 @@
           "requested_at"
         ],
         "title": "VmProfileRequestRecord",
+        "type": "object"
+      },
+      "VmProfileRequestRow": {
+        "additionalProperties": false,
+        "description": "`vm_profile_requests` they decided.",
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_kind": {
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "state",
+          "decided_at",
+          "reason"
+        ],
+        "title": "VmProfileRequestRow",
         "type": "object"
       },
       "VmProfileRequestSettings": {
@@ -11001,6 +12728,38 @@
           "updated_at"
         ],
         "title": "VmProfileResponse",
+        "type": "object"
+      },
+      "VmProfileRow": {
+        "additionalProperties": false,
+        "description": "`vm_profiles` they created or last changed.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "VmProfileRow",
         "type": "object"
       },
       "VmProfileSettings": {
@@ -11425,9 +13184,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Service Provider Config Scim V2 Serviceproviderconfig Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ServiceProviderConfig"
                 }
               }
             },
@@ -18569,7 +20326,7 @@
     },
     "/v1/portal/organizations/{org_id}/domains/{domain}": {
       "delete": {
-        "description": "Release a domain. Super admins only; 409 while any member's address is on it.",
+        "description": "Release a domain. Super admins only; 404 if not theirs, 409 while any member's address is on it.",
         "operationId": "remove_domain_v1_portal_organizations__org_id__domains__domain__delete",
         "parameters": [
           {

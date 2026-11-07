@@ -13,7 +13,16 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.db.sql.schemas.subject_access import Rows, ThingsTheyCreated
+from app.db.sql.schemas.subject_access import (
+    AccountRow,
+    AuditEventRow,
+    DeploymentRoleRow,
+    GroupMembershipRow,
+    ModelUsageRow,
+    OrganisationMembershipRow,
+    OrganisationOwnedRow,
+)
+from app.db.sql.schemas.subject_access_created import ThingsTheyCreated
 from app.services.identity.service_subjects import ServiceSections
 
 
@@ -118,8 +127,8 @@ def _absent(value: object) -> bool:
 class SubjectAccessSections(BaseModel):
     """One field per section an export can produce, in the order it produces them.
 
-    The section *names* are a fixed set, so they are a model; the rows
-    inside each are `Rows` (see its note). A section the export did not
+    The section names are a fixed set, and each section's rows are the
+    row model its read returns. A section the export did not
     produce is absent from the wire rather than null — the subject is
     told what was looked at, and `null` would read as "looked, found
     nothing", which is what an empty list says.
@@ -130,20 +139,20 @@ class SubjectAccessSections(BaseModel):
 
     model_config = ConfigDict(extra='forbid', validate_assignment=True)
 
-    account: Rows | None = Field(default=None, exclude_if=_absent)
+    account: list[AccountRow] | None = Field(default=None, exclude_if=_absent)
     #: Present only when no account exists for the address.
     note: str | None = Field(default=None, exclude_if=_absent)
-    deployment_role: Rows | None = Field(default=None, exclude_if=_absent)
-    organisation_memberships: Rows | None = Field(default=None, exclude_if=_absent)
-    organisations_owned: Rows | None = Field(default=None, exclude_if=_absent)
-    group_memberships: Rows | None = Field(default=None, exclude_if=_absent)
-    model_usage: Rows | None = Field(default=None, exclude_if=_absent)
-    own_activity: Rows | None = Field(default=None, exclude_if=_absent)
+    deployment_role: list[DeploymentRoleRow] | None = Field(default=None, exclude_if=_absent)
+    organisation_memberships: list[OrganisationMembershipRow] | None = Field(default=None, exclude_if=_absent)
+    organisations_owned: list[OrganisationOwnedRow] | None = Field(default=None, exclude_if=_absent)
+    group_memberships: list[GroupMembershipRow] | None = Field(default=None, exclude_if=_absent)
+    model_usage: list[ModelUsageRow] | None = Field(default=None, exclude_if=_absent)
+    own_activity: list[AuditEventRow] | None = Field(default=None, exclude_if=_absent)
     #: Grouped by kind of thing, as `SubjectAccessDB.things_they_created` returns it.
     things_they_created: ThingsTheyCreated | None = Field(default=None, exclude_if=_absent)
     #: Each registered service's own sections, under the service's name.
     services: ServiceSections | None = Field(default=None, exclude_if=_absent)
-    authentication_attempts: Rows | None = Field(default=None, exclude_if=_absent)
+    authentication_attempts: list[AuditEventRow] | None = Field(default=None, exclude_if=_absent)
 
     def present_count(self) -> int:
         """How many sections the export produced — what the audit trail records."""
@@ -158,9 +167,8 @@ class SubjectAccessReport(BaseModel):
 
     The one HTTP contract in this product a regulator might read, so
     every part of it is declared: the context is a `ProcessingContext`
-    and the sections a `SubjectAccessSections`. Only the rows inside a
-    section stay untyped — the envelope is a contract; the rows are an
-    inventory.
+    and the sections a `SubjectAccessSections`, whose rows are the row
+    models the reads return.
     """
 
     model_config = ConfigDict(extra='forbid')

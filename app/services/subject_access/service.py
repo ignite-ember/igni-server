@@ -56,7 +56,7 @@ class SubjectAccessService:
             report.section(Section.ORGANISATION_MEMBERSHIPS, rows=await db.organisation_memberships(user_id))
             report.section(Section.ORGANISATIONS_OWNED, rows=await db.organisations_owned(user_id))
             if org_id is not None:
-                await self._org_sections(report, org_id=org_id, user_id=user_id, email=email)
+                await self._org_sections(report, org_id=org_id, user_id=user_id)
 
         # Keyed on the address, which catches the authentication
         # attempts made before any account existed.
@@ -69,14 +69,14 @@ class SubjectAccessService:
         report.scoped_to(org_id)
         return report.build()
 
-    async def _org_sections(self, report: SubjectAccessReportBuilder, *, org_id: str, user_id: str, email: str) -> None:
+    async def _org_sections(self, report: SubjectAccessReportBuilder, *, org_id: str, user_id: str) -> None:
         """The organisation's own records: in its own database, and read
         only for the organisation whose administrator is asking."""
         db = self._db
         report.section(Section.GROUP_MEMBERSHIPS, rows=await db.group_memberships(org_id, user_id=user_id))
         report.section(Section.MODEL_USAGE, rows=await db.model_usage(org_id, user_id=user_id), cap=ACTIVITY_LIMIT)
         report.section(Section.OWN_ACTIVITY, rows=await db.own_activity(org_id, user_id=user_id), cap=ACTIVITY_LIMIT)
-        report.things_they_created(await db.things_they_created(org_id=org_id, user_id=user_id, email=email))
+        report.things_they_created(await db.things_they_created(org_id=org_id, user_id=user_id))
         # The registered services' own records about this person in
         # this organisation, each under the service's name.
         report.services_answered(await self._services.export(user_id, org_id=org_id))

@@ -64,6 +64,6 @@ in their head, and the schema grows.
 * `schemas.py` — the report, its parts, the `Section` names and its errors.
 
 The reads themselves are `app/db/sql/subject_access.py`; what they
-return — `Rows` and `ThingsTheyCreated` — is
-`app/db/sql/schemas/subject_access.py`.
+return — one row model per statement, and `ThingsTheyCreated` — is
+`app/db/sql/schemas/subject_access.py` and `subject_access_created.py`.
 """
