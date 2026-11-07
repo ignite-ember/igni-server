@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from app.db.sql.bind_chunks import chunks
 from app.db.sql.models.producer_event import (
     DELIVERED,
     DROPPED,
@@ -19,7 +20,6 @@ from app.db.sql.models.producer_event import (
     ProducerEvent,
 )
 from app.db.sql.models.service_attachment import ServiceAttachment
-from app.db.sql.producer_feed import chunks
 from app.db.sql.tenancy import TenantData
 
 #: An event handed to the gateway and not acknowledged within this is

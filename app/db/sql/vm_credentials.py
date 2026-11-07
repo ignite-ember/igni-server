@@ -8,8 +8,8 @@ from enum import StrEnum
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from app.db.sql.bind_chunks import chunks
 from app.db.sql.models.vm_credential import VmCredential
-from app.db.sql.producer_feed import chunks
 from app.db.sql.tenancy import TenantData
 
 #: How many rotated-away secrets are remembered for reuse detection.

@@ -150,7 +150,7 @@ class TestLegalHolds:
 
         assert placed.status_code == 200, placed.text
         assert held['erase_at'] is None
-        assert (held['removed'], held['incarnation']) == (True, first['incarnation'])
+        assert (held['removed'], held['incarnation'], held['legal_hold']) == (True, first['incarnation'], False)
         [entry] = listed['holds']
         assert (entry['user_id'], entry['reason']) == (ada, 'Litigation 2026-17')
         assert entry['placed_by_user_id'] == acme.admin_id

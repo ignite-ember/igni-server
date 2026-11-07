@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from app.api.base_v1.schema.vm_profiles import PlatformVmCapsBody
 from app.db.sql.models.app_space import SPACE
+from app.db.sql.models.producer_feed import PERSON
 from app.db.sql.models.producer_volume import ProducerVolumeSize
 from app.db.sql.models.registered_client import APP
 from app.db.sql.models.vm_profile import VmProfile
-from app.db.sql.producer_feed import PERSON, ProducerFeedDB
+from app.db.sql.producer_feed import ProducerFeedDB
 from app.db.sql.producer_feed_tenant import ProducerFeedTenantDB
 from app.db.sql.producer_volumes import ProducerVolumesDB
 from app.db.sql.retention import RetentionDB

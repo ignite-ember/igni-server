@@ -8,8 +8,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.sql import SQLAlchemySessionManager
+from app.db.sql.bind_chunks import chunks
 from app.db.sql.models.retention import AppLegalHold, LegalHold, OrgRetention, PlatformRetention
-from app.db.sql.producer_feed import chunks
 from app.utils.singleton import SingletonMeta
 
 

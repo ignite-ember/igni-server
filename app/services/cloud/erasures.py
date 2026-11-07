@@ -24,8 +24,8 @@ from fastapi import HTTPException, status
 
 from app.api.base_v1.schema.retention import DiscardedMember, ErasureDoneBody, ErasureList, ErasureRecord
 from app.db.sql.audit_events import AuditEventDB, AuditRecord
-from app.db.sql.models.producer_feed import ProducerFeedEntry
-from app.db.sql.producer_feed import PERSON, ProducerFeedDB
+from app.db.sql.models.producer_feed import PERSON, ProducerFeedEntry
+from app.db.sql.producer_feed import ProducerFeedDB
 from app.db.sql.retention import RetentionDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
