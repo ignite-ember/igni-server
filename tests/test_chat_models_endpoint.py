@@ -16,7 +16,6 @@ def _cfg(key_id: str, model: str, base_url: str = 'http://gpu-01.internal:8000/v
         api_key=None,
         base_url=base_url,
         model=model,
-        pools=['chat'],
     )
 
 
@@ -26,14 +25,13 @@ class _FakePool:
     def __init__(self, configs: list[InferenceBackend]) -> None:
         self._configs = configs
 
-    async def list_available_models(self, pool: str) -> list[tuple[str, str]]:
+    async def list_available_models(self) -> list[tuple[str, str]]:
         seen: dict[tuple[str, str], None] = {}
         for c in self._configs:
-            if pool in c.pools:
-                # Every id the node answers to, so a LoRA adapter is
-                # advertised as its own selectable model.
-                for name in c.models:
-                    seen.setdefault((name, c.base_url), None)
+            # Every id the node answers to, so a LoRA adapter is
+            # advertised as its own selectable model.
+            for name in c.models:
+                seen.setdefault((name, c.base_url), None)
         return list(seen.keys())
 
 
@@ -65,12 +63,12 @@ class TestListChatModels:
             ]
         )
 
-        def fake_get_chat_pool(_self):
+        def fake_get_pool(_self):
             return pool
 
         with patch(
-            'app.services.ai.pool_manager.PoolManager.get_chat_pool',
-            new=fake_get_chat_pool,
+            'app.services.ai.pool_manager.PoolManager.get_pool',
+            new=fake_get_pool,
         ):
             resp = await client.get('/chat/models', headers=auth_header(token))
 
@@ -89,12 +87,12 @@ class TestListChatModels:
         org = await create_org(db, owner_user_id='u-empty', slug='empty-org', display_name='Empty')
         token = make_token('u-empty', org_id=str(org.id))
 
-        def fake_get_chat_pool(_self):
+        def fake_get_pool(_self):
             return _FakePool([])
 
         with patch(
-            'app.services.ai.pool_manager.PoolManager.get_chat_pool',
-            new=fake_get_chat_pool,
+            'app.services.ai.pool_manager.PoolManager.get_pool',
+            new=fake_get_pool,
         ):
             resp = await client.get('/chat/models', headers=auth_header(token))
 

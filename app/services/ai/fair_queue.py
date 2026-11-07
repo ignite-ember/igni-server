@@ -46,7 +46,7 @@ class QueueTimeout(Exception):
     """Waited the longest a request may."""
 
 
-#: Takes a lease for one waiter: `pool.acquire(user_id, 'chat', model=...)`.
+#: Takes a lease for one waiter: `pool.acquire(user_id, model=...)`.
 Acquire = Callable[[str, str | None], Awaitable[BackendLease]]
 
 

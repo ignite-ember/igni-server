@@ -113,11 +113,11 @@ class TestRegistering:
         assert "igni's own address" in response.json()['detail']['error_description']
 
     async def test_another_port_on_this_machine_is_its_own_origin(self, client, monkeypatch):
-        """How the local stack runs: artifacts.localhost:8100 beside igni.
+        """How a local stack runs: a service on its own port beside igni.
         `*.localhost` is this machine, so plain http is allowed even outside dev."""
         monkeypatch.setattr(settings, 'app_env', 'prod')
         response = await client.post(
-            '/clients', json=RegisteredService().registration(client_uri='http://artifacts.localhost:8100')
+            '/clients', json=RegisteredService().registration(client_uri='http://my-service.localhost:8100')
         )
 
         assert response.status_code == 201, response.text

@@ -1,4 +1,3 @@
-import logging
 from logging.config import fileConfig
 
 from sqlalchemy import create_engine, engine_from_config, pool, text
@@ -8,7 +7,6 @@ from alembic import context
 
 from app.config import settings
 from app.db.sql.models import Base, load_all_models
-from app.logging_context import TaskContextFilter
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -42,15 +40,6 @@ config = context.config
 # harmless anywhere that keeps serving afterwards, or in a test session.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
-
-# Ensure the task_prefix filter is installed so %(task_prefix)s doesn't raise.
-# In the app/celery containers this is done by main.py/celery_app.py,
-# but the migrate container runs alembic directly.
-# Must be added to HANDLERS (not the logger) AFTER fileConfig(), because:
-# 1. fileConfig() replaces handlers, so filters must be added after it
-# 2. Child loggers propagate directly to handlers, bypassing logger-level filters
-for _handler in logging.getLogger().handlers:
-    _handler.addFilter(TaskContextFilter())
 
 # add your model's MetaData object here
 # for 'autogenerate' support

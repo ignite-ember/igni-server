@@ -4004,26 +4004,41 @@
         "type": "object"
       },
       "InferenceStatusView": {
-        "description": "Both pools, plus whether registration is available at all.\n\n``registration_enabled`` lets the portal explain an empty registered\nlist correctly: \"nothing has registered\" and \"this deployment does\nnot accept registrations\" look identical otherwise, and they call for\ncompletely different fixes.",
+        "description": "Every node, its totals, and whether registration is available at all.\n\nThe totals are what answers \"do we need another GPU?\", which is the\nquestion this page exists for. Per-node rows answer the follow-up:\nwhich one.\n\n``registration_enabled`` lets the portal explain an empty registered\nlist correctly: \"nothing has registered\" and \"this deployment does\nnot accept registrations\" look identical otherwise, and they call for\ncompletely different fixes.",
         "properties": {
           "heartbeat_interval_seconds": {
             "title": "Heartbeat Interval Seconds",
             "type": "integer"
           },
-          "pools": {
+          "nodes": {
             "items": {
-              "$ref": "#/components/schemas/PoolStatusView"
+              "$ref": "#/components/schemas/NodeStatusView"
             },
-            "title": "Pools",
+            "title": "Nodes",
             "type": "array"
           },
           "registration_enabled": {
             "title": "Registration Enabled",
             "type": "boolean"
+          },
+          "total_capacity": {
+            "title": "Total Capacity",
+            "type": "integer"
+          },
+          "total_in_flight": {
+            "title": "Total In Flight",
+            "type": "integer"
+          },
+          "utilization": {
+            "title": "Utilization",
+            "type": "number"
           }
         },
         "required": [
-          "pools",
+          "nodes",
+          "total_in_flight",
+          "total_capacity",
+          "utilization",
           "registration_enabled",
           "heartbeat_interval_seconds"
         ],
@@ -5115,21 +5130,6 @@
             "description": "Whether the model accepts image input",
             "title": "Multimodal",
             "type": "boolean"
-          },
-          "pools": {
-            "default": [
-              "chat"
-            ],
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "minItems": 1,
-            "title": "Pools",
-            "type": "array"
           }
         },
         "required": [
@@ -5228,17 +5228,6 @@
             "title": "Multimodal",
             "type": "boolean"
           },
-          "pools": {
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "title": "Pools",
-            "type": "array"
-          },
           "registered_at": {
             "anyOf": [
               {
@@ -5263,7 +5252,6 @@
           "id",
           "base_url",
           "models",
-          "pools",
           "multimodal",
           "source",
           "in_flight",
@@ -6687,21 +6675,6 @@
             "pattern": "^[A-Za-z0-9._-]+$",
             "title": "Node Id",
             "type": "string"
-          },
-          "pools": {
-            "default": [
-              "chat"
-            ],
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "minItems": 1,
-            "title": "Pools",
-            "type": "array"
           }
         },
         "required": [
@@ -6785,25 +6758,6 @@
               }
             ],
             "title": "Multimodal"
-          },
-          "pools": {
-            "anyOf": [
-              {
-                "items": {
-                  "enum": [
-                    "chat",
-                    "codeindex"
-                  ],
-                  "type": "string"
-                },
-                "minItems": 1,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pools"
           }
         },
         "title": "PinnedNodeUpdate",
@@ -6842,17 +6796,6 @@
           "node_id": {
             "title": "Node Id",
             "type": "string"
-          },
-          "pools": {
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "title": "Pools",
-            "type": "array"
           }
         },
         "required": [
@@ -6860,7 +6803,6 @@
           "base_url",
           "models",
           "max_concurrent",
-          "pools",
           "multimodal",
           "enabled",
           "has_api_key"
@@ -6987,47 +6929,6 @@
           "max_vcpus"
         ],
         "title": "PlatformVmCapsResponse",
-        "type": "object"
-      },
-      "PoolStatusView": {
-        "description": "One pool's nodes and its totals.\n\nThe totals are what answers \"do we need another GPU?\", which is the\nquestion this page exists for. Per-node rows answer the follow-up:\nwhich one.",
-        "properties": {
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/NodeStatusView"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
-          "pool": {
-            "enum": [
-              "chat",
-              "codeindex"
-            ],
-            "title": "Pool",
-            "type": "string"
-          },
-          "total_capacity": {
-            "title": "Total Capacity",
-            "type": "integer"
-          },
-          "total_in_flight": {
-            "title": "Total In Flight",
-            "type": "integer"
-          },
-          "utilization": {
-            "title": "Utilization",
-            "type": "number"
-          }
-        },
-        "required": [
-          "pool",
-          "nodes",
-          "total_in_flight",
-          "total_capacity",
-          "utilization"
-        ],
-        "title": "PoolStatusView",
         "type": "object"
       },
       "Position": {
@@ -16694,7 +16595,7 @@
     },
     "/v1/portal/inference": {
       "get": {
-        "description": "Live inference node statistics and health for both pools.",
+        "description": "Live inference node statistics and health.",
         "operationId": "get_inference_status_v1_portal_inference_get",
         "responses": {
           "200": {
@@ -16721,7 +16622,7 @@
     },
     "/v1/portal/inference/models": {
       "get": {
-        "description": "Model ids the chat pool serves, for choosing a group default.",
+        "description": "Model ids the inference nodes serve, for choosing a group default.",
         "operationId": "list_models_v1_portal_inference_models_get",
         "responses": {
           "200": {

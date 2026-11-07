@@ -84,7 +84,6 @@ def deployment(monkeypatch: pytest.MonkeyPatch, peers: Peers) -> Iterator[None]:
             'base_url': f'{peers.node.url}/v1',
             'model': StubModelNode.MODEL,
             'max_concurrent': 4,
-            'pools': ['chat', 'codeindex'],
         }
     ]
     monkeypatch.setattr(settings, 'inference_backends', json.dumps(backends))

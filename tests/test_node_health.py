@@ -32,7 +32,6 @@ def _backend(node_id='gpu-01', api_key=None, max_concurrent=64) -> InferenceBack
         models=['igni-1.0-27b'],
         api_key=api_key,
         max_concurrent=max_concurrent,
-        pools=['chat'],
     )
 
 

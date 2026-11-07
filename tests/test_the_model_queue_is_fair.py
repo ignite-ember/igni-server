@@ -28,7 +28,7 @@ class OneSlot:
 
     async def acquire(self, user_id: str, model: str | None) -> BackendLease:
         if self.in_use >= 1:
-            raise NoBackendAvailableError('chat')
+            raise NoBackendAvailableError()
         self.in_use += 1
         self.served += 1
         return BackendLease(

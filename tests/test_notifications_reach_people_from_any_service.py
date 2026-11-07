@@ -24,8 +24,8 @@ import uuid
 
 import pytest
 
-from app.services.comment_notifier import CommentNotifier
 from app.services.notifications import NotificationStream
+from app.services.notifications.listeners import Listeners
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import ExtensionBundle, RegisteredService
 
@@ -446,12 +446,10 @@ class TestTheStream:
     async def test_a_repeat_wakes_nobody(self, notify, ada):
         note = _note(ada['user_id'], event_key='comment:once')
         await notify(note)
-        queue = CommentNotifier().subscribe(ada['user_id'])
+        queue = Listeners().subscribe(ada['user_id'])
         try:
             await notify(note)
             await asyncio.sleep(0)
             assert queue.empty(), 'a notification that was not written still woke somebody'
         finally:
-            CommentNotifier().unsubscribe(ada['user_id'], queue)
-
-
+            Listeners().unsubscribe(ada['user_id'], queue)

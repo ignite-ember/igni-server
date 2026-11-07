@@ -45,6 +45,7 @@ from app.config import settings
 from app.db.sql.chat_usage import ChatUsageDB
 from app.security.producer import Producers
 from app.services.ai.backend_pool import InferenceBackendPool
+from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.fair_queue import FairQueue, QueueFull, QueueTimeout
 from app.services.ai.pool_manager import PoolManager
 from app.services.ai.provider_quirks import (
@@ -56,7 +57,6 @@ from app.services.ai.request_shape import describe as describe_chat_request
 from app.services.ai.schemas import (
     BackendLease,
     ModelNotAvailableError,
-    NoBackendConfiguredError,
 )
 from app.services.ai.sse_keepalive import lines_with_keepalive
 from app.services.ai.token_estimate import TokenEstimator
@@ -224,9 +224,9 @@ async def _resolve_models_for() -> list[tuple[str, str]]:
     was ``_resolve_models_for(org_id)``, the docstring said "available
     for this caller", and the endpoint below advertised "org override or
     global pool" — while the body called
-    ``pool.list_available_models('chat')`` and ignored the argument
+    ``pool.list_available_models()`` and ignored the argument
     entirely. There is no per-org model override anywhere in this
-    codebase: pools are global per type.
+    codebase: the pool is global.
 
     So three things read as though access were scoped when it was not,
     and the cache held up to 10,000 identical entries keyed on an
@@ -235,8 +235,7 @@ async def _resolve_models_for() -> list[tuple[str, str]]:
     asked for and inventing one to justify a signature is the wrong way
     round. F111.
     """
-    pool = PoolManager().get_chat_pool()
-    pairs: list[tuple[str, str]] = await pool.list_available_models('chat')
+    pairs: list[tuple[str, str]] = await PoolManager().get_pool().list_available_models()
     return pairs
 
 
@@ -294,7 +293,7 @@ async def chat_completions(
         user_id, org_id = await AuthService.resolve_user_org(token, org_id=header_org_id)
         app_id = None
 
-    pool = PoolManager().get_chat_pool()
+    pool = PoolManager().get_pool()
     # An explicit choice wins; otherwise the group's, if it pinned one.
     # A legal team routed to a legal-review adapter should not have to
     # remember its name, and should not silently get the general model
@@ -302,7 +301,7 @@ async def chat_completions(
     requested_model = body.model or (None if producer is not None else await GroupsService.model_for_user(user_id))
 
     async def acquire(who: str, model: str | None) -> BackendLease:
-        return await pool.acquire(who, 'chat', model=model)
+        return await pool.acquire(who, model=model)
 
     # Every node full: wait in turn — fairly between organisations, then
     # producers — rather than being refused (docs/service-identity.md §19).
@@ -328,9 +327,10 @@ async def chat_completions(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-    except NoBackendConfiguredError as exc:
-        # A deployment problem, not a load problem — retrying will not
-        # help, so say so with a 503 rather than a 429 with Retry-After.
+    except BackendConfigError as exc:
+        # No node configured, or a configuration that does not parse: a
+        # deployment problem, not a load problem — retrying will not help,
+        # so say so with a 503 rather than a 429 with Retry-After.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
@@ -570,9 +570,7 @@ async def _non_stream_response(
                     # another, or a retry loop inflates its gauge — the
                     # same reason the streaming path releases first.
                     await ctx.pool.release(ctx.lease)
-                    ai = await ctx.pool.acquire(
-                        ctx.user_id, 'chat', exclude_backend_id=failed_backend_id, model=ctx.model
-                    )
+                    ai = await ctx.pool.acquire(ctx.user_id, exclude_backend_id=failed_backend_id, model=ctx.model)
                 except Exception as acquire_exc:  # noqa: BLE001 — nothing left to try
                     # The original failure is the one worth reporting:
                     # it says what went wrong, where "could not find
@@ -850,9 +848,7 @@ async def _stream_response(
                     # Hand the failed node's slot back before taking
                     # another, or a retry loop inflates its gauge.
                     await ctx.pool.release(ctx.lease)
-                    ai = await ctx.pool.acquire(
-                        ctx.user_id, 'chat', exclude_backend_id=failed_backend_id, model=ctx.model
-                    )
+                    ai = await ctx.pool.acquire(ctx.user_id, exclude_backend_id=failed_backend_id, model=ctx.model)
                     current_url = f'{ai.base_url.rstrip("/")}/chat/completions'
                     current_headers = _auth_headers(ai)
                     ctx.switch_to(ai, body)

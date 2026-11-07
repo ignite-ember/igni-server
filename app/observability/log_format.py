@@ -23,11 +23,6 @@ unexpected `extra` does not appear in the output. LG-5 already had to
 remove commit messages and author emails from accepted-webhook logs; this
 is the same problem at the level of the format rather than the call site.
 
-**The task context becomes fields rather than a prefix.** The text format
-renders it as `[repo|evt:12|abc1234] `, which is compact for a person and
-opaque to a query. As `repo`, `event_id` and `commit` it is filterable,
-which is the entire point of the exercise.
-
 **Timestamps are UTC, with milliseconds, in ISO 8601 with a `Z`.** The
 text format learned this the hard way — it printed a literal `.%f` for
 every line of its first production boot, because `datefmt` goes to
@@ -40,11 +35,9 @@ import datetime as _datetime
 import json
 import logging
 
-from app.logging_context import task_context_fields, TaskContextFilter
-
 # Everything the formatter will emit, and nothing else. A caller's
 # `extra=` cannot introduce a field here.
-_FIELDS = ('ts', 'level', 'logger', 'message', 'repo', 'event_id', 'commit', 'exception')
+_FIELDS = ('ts', 'level', 'logger', 'message', 'exception')
 
 
 class JsonFormatter(logging.Formatter):
@@ -64,8 +57,6 @@ class JsonFormatter(logging.Formatter):
             'message': record.getMessage(),
         }
 
-        payload.update(task_context_fields())
-
         if record.exc_info:
             # As one string rather than a nested structure. A traceback is
             # read by a person, and every log system in use can display a
@@ -82,34 +73,20 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure(level: str, *, as_json: bool) -> None:
-    """Install the root handler, with the filter it needs.
+    """Install the root handler.
 
     `force=True` because uvicorn configures logging on the
     way in, and the last caller wins — this being called from `app.main`
     at import puts it after uvicorn's and before any of ours.
-
-    **The filter is installed here, not by the caller.** The text format
-    interpolates `%(task_prefix)s`, which nothing on a `LogRecord`
-    provides — `TaskContextFilter` adds it. When those two lived apart,
-    with the handler configured in this module and the filter added by a
-    loop in `app.main`, a second entry point calling `configure()` got a
-    handler that raised `ValueError: Formatting field not found in
-    record: 'task_prefix'` on every line it tried to emit. Found by a
-    test that built a bare record and asked the real handler to format
-    it.
-
-    On the handler rather than the logger, because child loggers
-    propagate straight to handlers and bypass logger-level filters.
     """
     handler = logging.StreamHandler()
-    handler.addFilter(TaskContextFilter())
 
     if as_json:
         handler.setFormatter(JsonFormatter())
     else:
         handler.setFormatter(
             logging.Formatter(
-                fmt='%(asctime)s.%(msecs)03d | %(levelname)s:%(name)s:%(task_prefix)s%(message)s',
+                fmt='%(asctime)s.%(msecs)03d | %(levelname)s:%(name)s:%(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S',
             )
         )

@@ -22,32 +22,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.services.ai.node_drain import NodeDrain
 
-# Which pool a backend serves. Interactive chat and batch indexing are
-# separated so a 5,000-file indexing run cannot starve developers waiting
-# on a completion — point them at different node sets and neither can
-# monopolise the other's GPUs. On a single-node deployment a backend
-# simply serves both.
-PoolType = Literal['chat', 'codeindex']
-VALID_POOL_TYPES: tuple[PoolType, ...] = ('chat', 'codeindex')
-
-
-def pools_from_storage(raw: object) -> list[PoolType]:
-    """Read the comma-joined ``inference_nodes.pools`` column.
-
-    One parser. There were two: the registry filtered against
-    `VALID_POOL_TYPES` and produced `list[PoolType]`, while
-    `PinnedNodeView.of` kept whatever split out and typed it
-    `list[str]` — so the admin view silently lost the validation the
-    status view kept, and an unrecognised pool reached the portal as a
-    pool.
-
-    Unknown values are dropped rather than raising: this reads a column,
-    and a row written by a future version that knows a third pool type
-    must not make the node unreadable by this one.
-    """
-    return [pool for pool in str(raw or '').split(',') if pool in VALID_POOL_TYPES]  # type: ignore[misc]
-
-
 # How long a lease may be held before the pool assumes its holder died.
 # Generous, because a large summarisation request against a loaded node
 # legitimately takes minutes — the cost of setting this too low is
@@ -89,11 +63,8 @@ class InferenceBackend(BaseModel):
     # the node where we can no longer see or balance it.
     max_concurrent: int = Field(default=64, gt=0)
 
-    pools: list[PoolType] = ['chat']
-
-    # Whether the model accepts image input. Only meaningful for chat —
-    # the indexing pipeline is text-only — and surfaced so the chat
-    # router can skip a text-only node when the request carries images.
+    # Whether the model accepts image input, so the chat router can skip a
+    # text-only node when the request carries images.
     multimodal: bool = False
 
     @model_validator(mode='before')
@@ -258,7 +229,6 @@ class BackendStatus(BaseModel):
     id: str
     base_url: str
     models: list[str]
-    pools: list[PoolType]
     multimodal: bool
     source: BackendSource
     in_flight: int
@@ -302,46 +272,32 @@ class BackendLease(BaseModel):
 
 
 class NoBackendAvailableError(Exception):
-    """Every backend serving this pool is at its concurrency limit.
+    """Every backend is at its concurrency limit.
 
-    Distinct from "no backend is configured" (a deployment problem) —
-    this one is transient and the caller should retry rather than fail
+    Distinct from nothing being configured (the provider's
+    ``BackendConfigError``, a deployment problem) — this one is transient and the caller should retry rather than fail
     the run.
     """
 
-    def __init__(self, pool: str) -> None:
-        self.pool = pool
-        super().__init__(f'Every inference backend for pool {pool!r} is at capacity')
-
-
-class NoBackendConfiguredError(Exception):
-    """Nothing serves this pool at all.
-
-    A configuration error, not a load problem. Retrying will not help.
-    """
-
-    def __init__(self, pool: str) -> None:
-        self.pool = pool
-        super().__init__(f'No inference backend is configured for pool {pool!r}')
+    def __init__(self) -> None:
+        super().__init__('Every inference backend is at capacity')
 
 
 class AllBackendsDrainedError(Exception):
-    """Everything serving this pool has been taken out of rotation.
+    """Every backend has been taken out of rotation.
 
-    Distinct from both of the above, because the fix is neither "add a
-    node" nor "wait": somebody switched these off from the portal and can
+    Distinct from both nothing being configured and every node being
+    busy, because the fix is neither "add a node" nor "wait": somebody switched these off from the portal and can
     switch them back. Saying "no backend is configured" to an
     administrator who drained the last one is how a two-second fix
     becomes a support ticket.
     """
 
-    def __init__(self, pool: str, drained: list[str]) -> None:
-        self.pool = pool
+    def __init__(self, drained: list[str]) -> None:
         self.drained = drained
         listed = ', '.join(sorted(drained))
         super().__init__(
-            f'Every inference backend for pool {pool!r} has been drained ({listed}). '
-            f'Resume one from the portal, under Inference.'
+            f'Every inference backend has been drained ({listed}). Resume one from the portal, under Inference.'
         )
 
 

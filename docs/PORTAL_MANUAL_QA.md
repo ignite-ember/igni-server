@@ -11,7 +11,7 @@ real backend services.
 | 1. Signup → Welcome → Dashboard | partial (no verification email) | ✅ required |
 | 2. Org switching & management | ✅ | optional |
 | 3. Team page (invites) | partial (DB only, no email) | ✅ required |
-| 4. Settings → AI key pools | ✅ | optional |
+| 4. Inference | ✅ | optional |
 | 5. Cross-cutting | ✅ | optional |
 | 6. Regression sweep | local for fast iteration; stage before release | both |
 
@@ -92,28 +92,16 @@ portal any more: they moved to the public site's own repository
 
 ---
 
-## 4. Settings → AI key pools — local
+## 4. Inference — local
 
-**Blankslate (unconfigured pool)**
-- [ ] Chat pool + CodeIndex pool both shown
-- [ ] Copy mentions "Using the default chat/codeindex pool"
-- [ ] Admin sees "Add key" button
-- [ ] Member sees "Admin role required" message; no Add key button
+Needs at least one vLLM node, pinned in the portal or registered.
 
-**Add key dialog**
-- [ ] Submit with empty fields → field-by-field validation errors
-- [ ] Submit valid entry → pool flips to configured state, table appears
-- [ ] API key field is masked (type=password)
-
-**Configured pool**
-- [ ] Table shows: Identifier, Model, masked API key (`sk-...xxxx`), Base URL
-- [ ] Admin sees Remove icon per row
-- [ ] Member: Remove icon hidden
-- [ ] Remove → confirmation dialog → row disappears
-
-**Smoke against backend**
-- [ ] Added key actually overrides the default pool for that org
-  (verify via a `/chat` request using a model your key supports)
+- [ ] "Capacity in use" shows in-flight of capacity, and "no nodes" with none
+- [ ] Each row shows the node, its load, and its model (or "N models")
+- [ ] Expanding a row shows address, models, source and health
+- [ ] A pinned node offers Edit; a configured or registered one says where to change it
+- [ ] Stop serving takes a node out of rotation; Resume puts it back
+- [ ] Member: the page is not in the sidebar
 
 ---
 
@@ -137,7 +125,7 @@ portal any more: they moved to the public site's own repository
 3. Team: invite a fresh email
    - Local: confirm DB + backend log
    - Stage: confirm email lands
-4. Settings: add a key, remove the key
+4. Inference: stop serving a node, resume it
 5. Sign out → log back in → state restored
 
 ---
@@ -155,7 +143,7 @@ re-clicked manually unless visual polish matters. The automated suites
 already cover:
 
 - Invite form validation + 409 handling
-- AIPoolCard blankslate/configured/member-gated states
+- Inference page states (no nodes, drained, unhealthy, pinned vs registered)
 - Sidebar admin-gating (Rename/Delete visible only to admins)
 - Welcome page commands + navigation buttons
 - Visual regression (desktop + mobile snapshots)

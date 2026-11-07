@@ -84,10 +84,7 @@ downgrade-one:
 
 # Docker commands - Containers folder (for isolated environments)
 DOCKER_COMPOSE_DIR := containers
-# `make up ARTIFACTS=1` also builds igni Artifacts from a sibling
-# checkout (../igni__artifacts), which only people with that private
-# repository have. See containers/docker-compose.artifacts.yml.
-COMPOSE_FILES := -f docker-compose.local.yml $(if $(ARTIFACTS),-f docker-compose.artifacts.yml)
+COMPOSE_FILES := -f docker-compose.local.yml
 # The root .env the Quick start makes, for the compose files' ${...}
 # values (a SECRET_ENCRYPTION_KEY of your own, a LOG_LEVEL). Compose
 # would otherwise read containers/.env, which nothing tells you to make.

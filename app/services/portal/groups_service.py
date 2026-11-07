@@ -68,7 +68,7 @@ async def _refuse_unserved_model(model: str | None) -> None:
         return
 
     try:
-        pairs = await PoolManager().get_chat_pool().list_available_models('chat')
+        pairs = await PoolManager().get_pool().list_available_models()
     except Exception as exc:  # noqa: BLE001 — a broken pool must not block group edits
         logger.warning('Could not check group model %r against the pool: %s', model, exc)
         return

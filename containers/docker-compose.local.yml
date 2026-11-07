@@ -132,9 +132,7 @@ services:
 
   # The local edge for igni's own host — what the Helm ingress's first
   # rule is in production. Everything on :7777 goes to the API. Nothing
-  # here routes to another service: igni__artifacts has its own name
-  # (see docker-compose.artifacts.yml), as it has its own host in
-  # production.
+  # here routes to another service: every service has its own host.
   # See gateway/nginx.conf.
   gateway:
     container_name: ${IGNI_STACK:-igni}__gateway

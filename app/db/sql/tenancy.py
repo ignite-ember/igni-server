@@ -69,28 +69,9 @@ _TENANT_LOCK = 0x54454E414E54
 #: Where the tenant migration tree lives.
 _TENANT_MIGRATIONS = Path(__file__).resolve().parents[3] / 'alembic_tenant'
 
-#: The services that derive a Redis database from a tenant number, in a
-#: fixed order. Never reorder: the index is part of every deployment.
-REDIS_SERVICES = ('igni-server', 'code-index', 'artifacts')
-
-#: The first Redis database index used by tenants. 0–15 are the shared
-#: planes' and whatever else a deployment already uses them for.
-REDIS_TENANT_BASE = 16
-
 
 class OrganisationDetached(LookupError):
     """The organisation was deleted. Its data is kept; nothing routes to it."""
-
-
-def redis_database(number: int, service: str) -> int:
-    """The Redis database a service uses for one organisation.
-
-    One formula for every service, so they never collide: a block of
-    `len(REDIS_SERVICES)` indexes per organisation, above the shared ones.
-    Redis must be configured with enough databases (`databases 64` allows
-    sixteen organisations).
-    """
-    return REDIS_TENANT_BASE + len(REDIS_SERVICES) * (number - 1) + REDIS_SERVICES.index(service)
 
 
 def _duplicate(exc: ProgrammingError) -> bool:

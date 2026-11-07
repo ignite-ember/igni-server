@@ -62,24 +62,16 @@ import type {
   InferenceStatus,
   NodeProbeResult,
   NodeStatus,
-  PoolStatus,
-  PoolType,
   UserMe,
 } from "../types";
 import "./InferencePage.css";
 import { countOf } from "../utils/plural";
-import { POOL_TITLES, poolLabels } from "./pools";
 
 // Node counts change on a human timescale — someone starts a cluster —
 // but in-flight counts change constantly, and a stale number is worse
 // than no number on a page whose whole job is "how busy is it right
 // now".
 const REFRESH_MS = 10_000;
-
-const POOL_DESCRIPTIONS: Record<string, string> = {
-  chat: "Developers waiting on a completion.",
-  codeindex: "Batch repository indexing.",
-};
 
 // ``unknown`` deliberately shares amber with ``degraded``. A fourth
 // colour meaning "we haven't looked yet" is not information an operator
@@ -165,7 +157,6 @@ function NodeDialog({ onClose }: { onClose: () => void }) {
   const [probe, setProbe] = useState<NodeProbeResult | null>(null);
   const [nodeId, setNodeId] = useState("");
   const [models, setModels] = useState<string[]>([]);
-  const [pools, setPools] = useState<PoolType[]>(["chat"]);
   const [maxConcurrent, setMaxConcurrent] = useState(64);
   const [multimodal, setMultimodal] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -204,7 +195,6 @@ function NodeDialog({ onClose }: { onClose: () => void }) {
           models,
           api_key: apiKey || undefined,
           max_concurrent: maxConcurrent,
-          pools,
           multimodal,
         })
         .then((r) => r.data),
@@ -228,7 +218,7 @@ function NodeDialog({ onClose }: { onClose: () => void }) {
     const next = list.includes(value)
       ? list.filter((v) => v !== value)
       : [...list, value];
-    // A node serving no pool, or routed to for no model, is an entry that
+    // A node routed to for no model is an entry that
     // sits in the list doing nothing.
     if (atLeastOne && next.length === 0) return;
     setter(next);
@@ -365,28 +355,6 @@ function NodeDialog({ onClose }: { onClose: () => void }) {
             Must be unique across every source. Used to track this node&apos;s
             load.
           </FormControl.Caption>
-        </FormControl>
-
-        <FormControl>
-          <FormControl.Label>Serves</FormControl.Label>
-          <FormControl.Caption>
-            Which kind of work is routed here. Separating them stops a large
-            indexing run saturating the GPUs developers are waiting on; a node
-            can do both, and on a single-node install it should.
-          </FormControl.Caption>
-          <Stack gap="none" padding="none">
-            {(["chat", "codeindex"] as PoolType[]).map((pool) => (
-              <FormControl key={pool}>
-                <Checkbox
-                  checked={pools.includes(pool)}
-                  onChange={() => toggle(pools, pool, setPools)}
-                />
-                <FormControl.Label>
-                  {POOL_TITLES[pool]} — {POOL_DESCRIPTIONS[pool]}
-                </FormControl.Label>
-              </FormControl>
-            ))}
-          </Stack>
         </FormControl>
 
         <FormControl>
@@ -602,10 +570,10 @@ function NodeRow({
         </span>
 
         {/* Last, because it is the least changeable thing on the row:
-            what a node is *for* is a setting, where everything to its
-            left is state. */}
-        <Text size="small" className="inference-muted inference-node-pools">
-          {poolLabels(node.pools).join(" · ")}
+            what a node serves is a setting, where everything to its left
+            is state. */}
+        <Text size="small" className="inference-muted inference-node-models" title={node.models.join(", ")}>
+          {node.models.length === 1 ? node.models[0] : countOf(node.models.length, "model")}
         </Text>
       </Details.Summary>
 
@@ -798,24 +766,6 @@ function NodeRow({
               <Text size="small">{SOURCE_DETAIL[node.source]}</Text>
             </Fact>
 
-            {/* Read-only, for every node however it arrived. Editing a
-                node is a page of its own (`EditNodePage`): it has seven
-                fields, and "what it serves" without "how many at once"
-                is not the common case. This was two checkboxes that
-                PATCHed on change with no Save, which made a
-                half-applied edit both possible and invisible. */}
-            <Fact term="Serves">
-              <Text size="small">
-                {poolLabels(node.pools).join(", ")}
-                {node.source !== "pinned" && (
-                  <Text size="small" className="inference-muted">
-                    {" "}
-                    — set where this node is defined
-                  </Text>
-                )}
-              </Text>
-            </Fact>
-
             {node.multimodal && (
               <Fact term="Images">
                 <Text size="small">accepted</Text>
@@ -852,40 +802,15 @@ function NodeRow({
   );
 }
 
-/**
- * One GPU, however many pools it serves.
- *
- * The API answers per pool, because routing is per pool. The page is
- * about hardware, so the pools are folded back together here: a node
- * serving chat *and* indexing is one machine with one concurrency limit
- * and one KV cache, and rendering it twice — as it used to — presented
- * one GPU as two.
- *
- * Load is summed across pools for the same reason. Each pool keeps its
- * own lease gauge, so the node's real occupancy is the total.
- */
-function mergeByNode(pools: PoolStatus[]): NodeStatus[] {
-  const merged = new Map<string, NodeStatus>();
-
-  for (const pool of pools) {
-    for (const node of pool.nodes) {
-      const existing = merged.get(node.id);
-      if (!existing) {
-        merged.set(node.id, { ...node, pools: [...node.pools] });
-        continue;
-      }
-      existing.in_flight += node.in_flight;
-    }
-  }
-
-  return [...merged.values()].sort((a, b) => a.id.localeCompare(b.id));
+/** Every node, in a stable order. */
+function nodesOf(status: InferenceStatus): NodeStatus[] {
+  return [...status.nodes].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** A number the page exists to deliver, in the portal's card idiom. */
 function FleetSummary({ status }: { status: InferenceStatus }) {
-  const nodes = mergeByNode(status.pools);
+  const nodes = nodesOf(status);
   const unwell = nodes.filter((n) => n.health.state !== "healthy");
-  const byPool = new Map(status.pools.map((p) => [p.pool, p]));
 
   return (
     <Stack direction="horizontal" gap="normal" wrap="wrap">
@@ -901,21 +826,15 @@ function FleetSummary({ status }: { status: InferenceStatus }) {
             : `${nodes.reduce((total, n) => total + n.max_concurrent, 0)} concurrent in total`
         }
       />
-      {(["chat", "codeindex"] as PoolType[]).map((pool) => {
-        const p = byPool.get(pool);
-        return (
-          <StatCard
-            key={pool}
-            label={`${POOL_TITLES[pool]} capacity`}
-            value={p && p.total_capacity > 0 ? percent(p.utilization) : "—"}
-            sub={
-              p && p.total_capacity > 0
-                ? `${p.total_in_flight} of ${p.total_capacity} concurrent`
-                : "no nodes"
-            }
-          />
-        );
-      })}
+      <StatCard
+        label="Capacity in use"
+        value={status.total_capacity > 0 ? percent(status.utilization) : "—"}
+        sub={
+          status.total_capacity > 0
+            ? `${status.total_in_flight} of ${status.total_capacity} concurrent`
+            : "no nodes"
+        }
+      />
       <StatCard
         label="Needs attention"
         value={String(unwell.length)}
@@ -939,7 +858,7 @@ function FleetList({
   canManage: boolean;
 }) {
   const queryClient = useQueryClient();
-  const nodes = mergeByNode(status.pools);
+  const nodes = nodesOf(status);
 
   const remove = useMutation({
     mutationFn: (nodeId: string) =>
@@ -1018,9 +937,7 @@ function FleetList({
           }}
         >
           <Text size="medium">
-            It stops receiving{" "}
-            {poolLabels(confirmRemove.pools).join(" and ")}{" "}
-            requests immediately.{" "}
+            It stops receiving requests immediately.{" "}
             {confirmRemove.in_flight > 0
               ? `${countOf(confirmRemove.in_flight, "request")} already in flight will finish.`
               : "Nothing is in flight."}{" "}

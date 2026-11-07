@@ -103,19 +103,17 @@ async def lifespan(app: FastAPI):
     await clock_skew.sample_once()  # once at startup, so a bad clock is in the boot log
     clock_skew.start(_clock_skew_tasks)
 
-    # AI key pools (chat + codeindex)
+    # The inference nodes chat is routed across.
     try:
-        manager = PoolManager()
-        await manager.get_chat_pool().log_pool_summary()
-        await manager.get_codeindex_pool().log_pool_summary()
+        await PoolManager().get_pool().log_pool_summary()
     except Exception as e:
-        logger.warning(f'AI key pool init failed: {e}')
+        logger.warning(f'Inference pool init failed: {e}')
 
     yield
 
     # after app - cleanup
     try:
-        await PoolManager().close_all_pools()
+        await PoolManager().close()
     except Exception:  # noqa: BLE001 — shutdown is not a place to raise
         # Logged rather than passed over. These pools hold upstream
         # connections, and a close that failed is the only warning

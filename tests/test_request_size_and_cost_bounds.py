@@ -178,19 +178,18 @@ class TestTheBodyLimitIsWiredIn:
         Getting as far as the inference-backend lookup is the proof: the
         middleware passed the body on, FastAPI parsed it, and the endpoint
         ran. The test environment configures no backend, so that is where
-        it stops — and stopping *there* rather than at a 413 is the result
-        being asserted.
+        it stops — a 503 saying so, rather than a 413, is the result being
+        asserted.
         """
-        from app.services.ai.backend_provider import BackendConfigError
-
         content = 'A' * (settings.max_request_body_bytes - 4096)
 
-        with pytest.raises(BackendConfigError):
-            await client.post(
-                _CHAT,
-                content=json.dumps(_body(content)),
-                headers={**caller, 'Content-Type': 'application/json'},
-            )
+        response = await client.post(
+            _CHAT,
+            content=json.dumps(_body(content)),
+            headers={**caller, 'Content-Type': 'application/json'},
+        )
+
+        assert response.status_code == 503, response.text
 
 
 class TestTheProxyAgreesWithTheApi:

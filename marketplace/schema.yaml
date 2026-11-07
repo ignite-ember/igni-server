@@ -157,8 +157,8 @@ properties:
     title: Server URL
     description: >-
       This server's https:// address, e.g. https://igni.example.com. It is
-      the issuer of every token, and the URL CodeIndex and Artifacts are
-      deployed with, beside their own. Leave empty to use https://<ingress hostname>
+      the issuer of every token, and the URL a registered service is
+      deployed with, beside its own. Leave empty to use https://<ingress hostname>
       when an Ingress is created; otherwise the deploy refuses without it.
     default: ''
   urls.portalBase:
@@ -261,34 +261,6 @@ properties:
     title: SSO button label
     description: What the sign-in button says. People recognise their provider's name.
     default: SSO
-
-  # ── Documents (igni__artifacts) ───────────────────────────────────
-
-  artifacts.enabled:
-    type: boolean
-    title: Publish igni__artifacts on its own hostname
-    description: >-
-      The document service is deployed separately, with its own image and
-      database. Turn this on once it runs in this namespace, to publish it
-      on the hostname below — its own, never a path on this server's: a
-      service's URL is its identity, the audience of the tokens issued for
-      it. Nothing secret is shared with it: it registers itself with this
-      server and a super admin approves it on the portal's Services page.
-    default: false
-  artifacts.host:
-    type: string
-    title: Document service hostname
-    description: >-
-      Its own hostname, e.g. artifacts.example.com — not igni's. Required
-      if the document service is published. Deploy the service with the
-      ConfigMap <name>-artifacts-env, which sets its PUBLIC_BASE_URL to
-      https:// on this host.
-    default: ''
-  artifacts.serviceName:
-    type: string
-    title: Document service name
-    description: The Kubernetes Service igni__artifacts runs behind, in this namespace.
-    default: ''
 
   # ── Email ─────────────────────────────────────────────────────────
 

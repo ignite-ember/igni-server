@@ -4,7 +4,7 @@ F102. F101 gave a deployment numbers to alert on. This is the rest of what
 "see whatever you want" needs, and none of it sends anything anywhere:
 
 * `LOG_FORMAT=json` — one object per line, so a shipper can filter on the
-  level, the module and which repository a task was working on, instead of
+  level and the module, instead of
   a regular expression over a rendered string;
 * `GET /v1/portal/audit-events/export` — the audit trail as JSON Lines,
   oldest first, resumable. LG-7's gap named "no SIEM integration", and the
@@ -82,33 +82,6 @@ class TestTheJsonFormatIsQueryable:
         """Otherwise every parameterised line arrives as a format string
         with the values in a field nobody joins back up."""
         assert _emit(msg='took %s ms for %s', args=(12, 'repo'))['message'] == 'took 12 ms for repo'
-
-    def test_the_task_context_becomes_fields(self):
-        """`[repo|evt:12|abc1234]` is compact for a person and opaque to a
-        query. This is the difference between "show me everything about
-        this repository" being a filter and being a regex."""
-        from app.logging_context import clear_task_context, set_task_context
-
-        set_task_context(repo_name='acme/api', event_id=42, commit_sha='abcdef1234567890')
-        try:
-            payload = _emit()
-        finally:
-            clear_task_context()
-
-        assert payload['repo'] == 'acme/api'
-        assert payload['event_id'] == '42'
-        assert payload['commit'] == 'abcdef1', 'the commit should be the short sha, not the whole thing'
-
-    def test_empty_context_fields_are_omitted(self):
-        """A field that is blank on 99% of lines costs an index and
-        answers no question."""
-        from app.logging_context import clear_task_context
-
-        clear_task_context()
-        payload = _emit()
-
-        assert 'repo' not in payload
-        assert 'commit' not in payload
 
     def test_an_exception_arrives_as_one_string(self):
         try:
