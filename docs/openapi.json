@@ -6992,6 +6992,59 @@
         "title": "PriorityView",
         "type": "object"
       },
+      "ProcessingContext": {
+        "additionalProperties": false,
+        "description": "The half of Article 15 that is not rows.\n\nPurposes, categories, recipients, retention and source, built by\n`ProcessingDescription` from what the deployment is configured to do.",
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "controller": {
+            "title": "Controller",
+            "type": "string"
+          },
+          "purposes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Purposes",
+            "type": "array"
+          },
+          "recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention"
+          },
+          "rights": {
+            "title": "Rights",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "controller",
+          "purposes",
+          "categories",
+          "recipients",
+          "retention",
+          "source",
+          "rights"
+        ],
+        "title": "ProcessingContext",
+        "type": "object"
+      },
       "ProducerAssignment": {
         "properties": {
           "id": {
@@ -7738,6 +7791,26 @@
           }
         },
         "title": "ResolveRequest",
+        "type": "object"
+      },
+      "Retention": {
+        "additionalProperties": false,
+        "description": "How long the deployment keeps what it holds.",
+        "properties": {
+          "audit_events": {
+            "title": "Audit Events",
+            "type": "string"
+          },
+          "everything else": {
+            "title": "Everything Else",
+            "type": "string"
+          }
+        },
+        "required": [
+          "audit_events",
+          "everything else"
+        ],
+        "title": "Retention",
         "type": "object"
       },
       "RetentionCapsBody": {
@@ -8798,14 +8871,15 @@
         "type": "object"
       },
       "SubjectAccessReport": {
-        "description": "What an Article 15 request is answered with.\n\nThe envelope has a fixed key set and was a `dict[str, Any]` built\nup by assignment, returned straight out of an endpoint annotated\nthe same way — so the one HTTP contract in this product that a\nregulator might read was described nowhere.\n\n`sections` stays an untyped map on purpose, and that is the part\nworth stating: the section *names* are chosen as the export runs\nand each one holds rows shaped by the table it came from. Typing\nthose would mean a model per table, maintained in step with every\nmigration, on a path where being out of step means under-\nreporting somebody's data. The envelope is a contract; the\nsections are an inventory.",
+        "additionalProperties": false,
+        "description": "What an Article 15 request is answered with.\n\nThe one HTTP contract in this product a regulator might read, so\nevery part of it is declared: the context is a `ProcessingContext`\nand the sections a `SubjectAccessSections`. Only the rows inside a\nsection stay untyped — the envelope is a contract; the rows are an\ninventory.",
         "properties": {
           "generated_at": {
             "title": "Generated At",
             "type": "string"
           },
           "processing": {
-            "title": "Processing"
+            "$ref": "#/components/schemas/ProcessingContext"
           },
           "scope": {
             "anyOf": [
@@ -8819,9 +8893,7 @@
             "title": "Scope"
           },
           "sections": {
-            "additionalProperties": true,
-            "title": "Sections",
-            "type": "object"
+            "$ref": "#/components/schemas/SubjectAccessSections"
           },
           "subject": {
             "title": "Subject",
@@ -8872,6 +8944,178 @@
           "email"
         ],
         "title": "SubjectAccessRequest",
+        "type": "object"
+      },
+      "SubjectAccessSections": {
+        "additionalProperties": false,
+        "description": "One field per section an export can produce, in the order it produces them.\n\nThe section *names* are a fixed set, so they are a model; the rows\ninside each are `Rows` (see its note). A section the export did not\nproduce is absent from the wire rather than null — the subject is\ntold what was looked at, and `null` would read as \"looked, found\nnothing\", which is what an empty list says.\n\n`extra='forbid'` with `validate_assignment` so a misspelt section\nfails loudly instead of being dropped on the way out.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account"
+          },
+          "authentication_attempts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authentication Attempts"
+          },
+          "deployment_role": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Role"
+          },
+          "group_memberships": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Memberships"
+          },
+          "model_usage": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Usage"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "organisation_memberships": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisation Memberships"
+          },
+          "organisations_owned": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisations Owned"
+          },
+          "own_activity": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Activity"
+          },
+          "services": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Services"
+          },
+          "things_they_created": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Things They Created"
+          }
+        },
+        "title": "SubjectAccessSections",
         "type": "object"
       },
       "SuperAdmin": {

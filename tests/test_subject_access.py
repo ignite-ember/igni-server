@@ -24,22 +24,32 @@ as the schema grows:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import inspect
 import json
 import uuid
 
+from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine, text
 
+from app.db.sql.subject_access import ACTIVITY_LIMIT, SubjectAccessDB
 from app.db.sql.tenant_migrator import TenantMigrator
 from app.db.sql.tenant_names import TenantNames
-from app.services.subject_access import (
-    _ACTIVITY_LIMIT,
-    _note_if_capped,
-    describe_processing,
-    NOT_PERSONAL_COLUMNS,
-    PERSONAL_DATA_COLUMNS,
-    SubjectAccessService,
+from app.services.identity.service_subjects import ExportAnswers
+from app.services.subject_access.classification import ColumnRegistry
+from app.services.subject_access.not_personal_columns import NOT_PERSONAL_COLUMNS
+from app.services.subject_access.personal_columns import PERSONAL_DATA_COLUMNS
+from app.services.subject_access.processing import ProcessingDescription
+from app.services.subject_access.report_builder import SubjectAccessReportBuilder
+from app.services.subject_access.schemas import (
+    ColumnClassification,
+    ColumnVerdict,
+    InvalidSubjectAddress,
+    SubjectAccessReport,
+    SubjectAccessSections,
 )
+from app.services.subject_access.service import SubjectAccessService
 from tests.conftest import (
     add_member,
     audit_rows,
@@ -160,7 +170,7 @@ class TestTheCoverageRule:
 
         assert len(live) > 20, f'only found {len(live)} person-referencing columns'
 
-        known = set(PERSONAL_DATA_COLUMNS) | NOT_PERSONAL_COLUMNS
+        known = ColumnRegistry().known_columns()
         unaccounted = sorted(live - known)
         assert not unaccounted, (
             'these columns reference a person and the subject access export does not '
@@ -185,7 +195,7 @@ class TestTheCoverageRule:
         misses entirely, because nothing about `full_name` looks like an
         identifier.
         """
-        known = set(PERSONAL_DATA_COLUMNS) | NOT_PERSONAL_COLUMNS
+        known = ColumnRegistry().known_columns()
         tables = {col.split('.')[0] for col in known}
         assert len(tables) >= 12, f'only {len(tables)} tables classified — has the map shrunk?'
 
@@ -239,9 +249,7 @@ class TestTheCoverageRule:
             identity.setdefault(table, set()).update(matched)
 
         required: dict[str, set[str]] = {}
-        for column, verdict in PERSONAL_DATA_COLUMNS.items():
-            if verdict != 'included':
-                continue
+        for column in ColumnRegistry().columns_with(ColumnVerdict.INCLUDED):
             table, name = column.split('.')
             required.setdefault(table, set()).add(name)
 
@@ -272,7 +280,7 @@ class TestTheCoverageRule:
 
         report = asyncio.run(SubjectAccessService().export(email='nobody-here@example.com', org_id=None))
 
-        withheld = {col for col, verdict in PERSONAL_DATA_COLUMNS.items() if verdict == 'withheld'}
+        withheld = ColumnRegistry().columns_with(ColumnVerdict.WITHHELD)
         assert withheld, 'nothing is withheld — has the map changed shape?'
 
         unexplained = sorted(withheld - set(report.withheld))
@@ -289,7 +297,7 @@ class TestTheCoverageRule:
             WHERE c.table_schema = 'public'
             """)
 
-        gone = sorted((set(PERSONAL_DATA_COLUMNS) | NOT_PERSONAL_COLUMNS) - live)
+        gone = sorted(ColumnRegistry().known_columns() - live)
         assert not gone, (
             f'the classification names columns that no longer exist: {gone}. A dropped '
             'table leaves entries behind that read as coverage of something real.'
@@ -313,7 +321,7 @@ class TestTheCoverageRule:
         # queries.
         source = (pathlib.Path(__file__).resolve().parent.parent / 'app/db/sql/subject_access.py').read_text()
         queried = set(re.findall(r'FROM (\w+)', source))
-        claimed = {col.split('.')[0] for col, verdict in PERSONAL_DATA_COLUMNS.items() if verdict == 'included'}
+        claimed = {col.split('.')[0] for col in ColumnRegistry().columns_with(ColumnVerdict.INCLUDED)}
 
         assert queried, 'no SQL found in the service — has it changed shape?'
         missing = sorted(claimed - queried)
@@ -325,19 +333,51 @@ class TestTheCoverageRule:
     def test_credentials_are_marked_withheld_not_included(self):
         """The two that must never be exported, asserted by name so a
         careless edit to the list is caught rather than shipped."""
-        assert PERSONAL_DATA_COLUMNS['users.hashed_password'] == 'withheld'
-        assert PERSONAL_DATA_COLUMNS['user_roles.email_verification_token'] == 'withheld'
+        assert PERSONAL_DATA_COLUMNS['users.hashed_password'].verdict is ColumnVerdict.WITHHELD
+        assert PERSONAL_DATA_COLUMNS['user_roles.email_verification_token'].verdict is ColumnVerdict.WITHHELD
+
+    def test_the_withheld_reasons_are_the_ones_the_subject_is_given(self):
+        """Legal text, pinned by count and key. Moving the reasons onto
+        their columns must not lose or invent one."""
+        reasons = ColumnRegistry().withheld_reasons()
+
+        assert len(reasons) == 18, sorted(reasons)
+        assert set(reasons) == ColumnRegistry().columns_with(ColumnVerdict.WITHHELD)
+        assert reasons['users.hashed_password'].startswith('A password hash, excluded deliberately.')
+
+
+class TestAColumnClassification:
+    """A reason when, and only when, the column is withheld."""
+
+    def test_a_withheld_column_without_a_reason_is_rejected(self):
+        with pytest.raises(ValidationError):
+            ColumnClassification(verdict=ColumnVerdict.WITHHELD)
+
+    def test_an_included_column_with_a_reason_is_rejected(self):
+        with pytest.raises(ValidationError):
+            ColumnClassification(verdict=ColumnVerdict.INCLUDED, reason='because')
+
+    def test_the_verdict_compares_equal_to_its_word(self):
+        """`tools/generate_records_of_processing.py` compares to the bare
+        word; a plain `Enum` would empty its tables in silence."""
+        assert ColumnVerdict.INCLUDED == 'included'
 
 
 class TestTheArticle15Context:
     """Rows alone answer half the article."""
 
     def test_it_states_purposes_categories_recipients_retention_and_source(self):
-        processing = describe_processing()
+        processing = ProcessingDescription().describe()
 
         for required in ('purposes', 'categories', 'recipients', 'retention', 'source'):
-            assert processing.get(required), f'the report has no {required}'
-        assert 'self-hosted' in processing['controller']
+            assert getattr(processing, required), f'the report has no {required}'
+        assert 'self-hosted' in processing.controller
+
+    def test_retention_keeps_its_wire_spelling(self):
+        """`everything else`, with the space, as it always went out."""
+        retention = ProcessingDescription().describe().model_dump(by_alias=True)['retention']
+
+        assert set(retention) == {'audit_events', 'everything else'}
 
     def test_recipients_reflect_what_is_configured(self, monkeypatch):
         """Generated, not boilerplate. A deployment with no relay and no
@@ -348,7 +388,7 @@ class TestTheArticle15Context:
         monkeypatch.setattr(settings, 'email_enabled', False)
         monkeypatch.setattr(settings, 'smtp_host', '')
 
-        recipients = describe_processing()['recipients']
+        recipients = ProcessingDescription().describe().recipients
 
         assert len(recipients) == 1
         assert 'none' in recipients[0].lower()
@@ -359,7 +399,7 @@ class TestTheArticle15Context:
         monkeypatch.setattr(settings, 'email_enabled', True)
         monkeypatch.setattr(settings, 'smtp_host', 'mail.corp.internal')
 
-        recipients = describe_processing()['recipients']
+        recipients = ProcessingDescription().describe().recipients
 
         assert any('mail.corp.internal' in r for r in recipients), recipients
 
@@ -374,7 +414,7 @@ class TestTheArticle15Context:
         monkeypatch.setattr(settings, 'smtp_host', '')
         monkeypatch.setattr(settings, 'ses_region', 'eu-west-1')
 
-        recipients = describe_processing()['recipients']
+        recipients = ProcessingDescription().describe().recipients
 
         assert any('Amazon SES in eu-west-1' in r for r in recipients), recipients
         assert not any('none' in r.lower() for r in recipients), recipients
@@ -383,10 +423,10 @@ class TestTheArticle15Context:
         from app.config import settings
 
         monkeypatch.setattr(settings, 'audit_retention_days', 0)
-        assert 'indefinitely' in describe_processing()['retention']['audit_events']
+        assert 'indefinitely' in ProcessingDescription().describe().retention.audit_events
 
         monkeypatch.setattr(settings, 'audit_retention_days', 365)
-        assert '365 days' == describe_processing()['retention']['audit_events']
+        assert '365 days' == ProcessingDescription().describe().retention.audit_events
 
 
 class TestTheExport:
@@ -402,9 +442,9 @@ class TestTheExport:
         report = await SubjectAccessService().export(email=person['email'])
 
         assert report.subject == person['email']
-        assert report.sections['account'], report.sections
-        assert report.sections['account'][0]['email'] == person['email']
-        assert report.sections['organisation_memberships'], report.sections
+        assert report.sections.account, report.sections
+        assert report.sections.account[0]['email'] == person['email']
+        assert report.sections.organisation_memberships, report.sections
 
     async def test_the_password_hash_is_never_in_the_report(self, person):
         _execute(
@@ -424,13 +464,13 @@ class TestTheExport:
         false answer."""
         report = await SubjectAccessService().export(email='never-here@example.com')
 
-        assert report.sections['account'] == []
-        assert 'No user account exists' in report.sections['note']
+        assert report.sections.account == []
+        assert 'No user account exists' in report.sections.note
         assert report.processing, 'the Article 15 context is missing'
 
     async def test_it_refuses_something_that_is_not_an_address(self):
         for bad in ('', 'jane', 'not-an-email'):
-            with pytest.raises(ValueError):
+            with pytest.raises(InvalidSubjectAddress):
                 await SubjectAccessService().export(email=bad)
 
     async def test_an_audit_detail_naming_somebody_else_is_not_returned(self, person):
@@ -461,13 +501,13 @@ class TestTheExport:
         report = await SubjectAccessService().export(email=person['email'], org_id=person['org_id'])
 
         # The row itself is theirs and is returned.
-        routes = [row['route'] for row in report.sections['own_activity']]
-        assert '/v1/portal/erasure' in routes, report.sections['own_activity']
+        routes = [row['route'] for row in report.sections.own_activity]
+        assert '/v1/portal/erasure' in routes, report.sections.own_activity
 
         # What it says about the other person is not.
         blob = json.dumps(report, default=str)
         assert 'v***@example.com' not in blob
-        assert 'detail' not in report.sections['own_activity'][0]
+        assert 'detail' not in report.sections.own_activity[0]
         # And its absence is declared, not silent.
         assert 'audit_events.detail' in report.withheld
 
@@ -492,7 +532,7 @@ class TestTheExport:
         )
 
         report = await SubjectAccessService().export(email=email)
-        attempts = report.sections['authentication_attempts']
+        attempts = report.sections.authentication_attempts
 
         assert attempts, 'the attempt was not returned at all'
         assert attempts[0]['client_host'] == '10.0.0.7'
@@ -519,6 +559,9 @@ class TestTheEndpoint:
         body = response.json()
         assert body['subject'] == 'anybody@example.com'
         assert body['processing']['purposes']
+        assert set(body['processing']['retention']) == {'audit_events', 'everything else'}
+        # Sections the export did not produce are absent, not null.
+        assert set(body['sections']) == {'account', 'note', 'authentication_attempts'}, body['sections']
 
     async def test_a_plain_member_cannot(self, client, db):
         member = await create_user(db, email=f'p-{uuid.uuid4().hex[:6]}@example.com')
@@ -567,50 +610,107 @@ class TestTheEndpoint:
         assert 'Query(' not in source, 'the address must arrive in the body, not the URL'
 
 
+#: The `SubjectAccessDB` reads that take a cap, found from their
+#: signatures rather than written down a second time.
+_CAPPED_READS = {
+    name: inspect.signature(method).parameters['limit'].default
+    for name, method in inspect.getmembers(SubjectAccessDB, inspect.iscoroutinefunction)
+    if not name.startswith('_') and 'limit' in inspect.signature(method).parameters
+}
+
+
+class _FakeDB:
+    """Every read `SubjectAccessDB` offers, answering for one account.
+
+    Each capped read returns exactly its cap, so every one of them should
+    be reported truncated.
+    """
+
+    def __init__(self, *, email: str = 'someone@example.com') -> None:
+        self._email = email
+
+    async def account(self, email: str) -> list[dict]:
+        return [{'user_id': 'u-1', 'email': self._email}]
+
+    async def deployment_role(self, user_id: str) -> list[dict]:
+        return []
+
+    async def organisation_memberships(self, user_id: str) -> list[dict]:
+        return []
+
+    async def organisations_owned(self, user_id: str) -> list[dict]:
+        return []
+
+    async def group_memberships(self, org_id: str, *, user_id: str) -> list[dict]:
+        return []
+
+    async def things_they_created(self, *, org_id: str, user_id: str, email: str) -> dict:
+        return {}
+
+    async def model_usage(self, org_id: str, *, user_id: str) -> list[dict]:
+        return self._full('model_usage')
+
+    async def own_activity(self, org_id: str, *, user_id: str) -> list[dict]:
+        return self._full('own_activity')
+
+    async def authentication_attempts(self, org_id: str | None, *, email: str) -> list[dict]:
+        return self._full('authentication_attempts')
+
+    def _full(self, read: str) -> list[dict]:
+        return [{'n': n} for n in range(_CAPPED_READS[read])]
+
+
+class _FakeServices:
+    def __init__(self, *, missing: list[str] | None = None) -> None:
+        self._missing = missing or []
+
+    async def export(self, user_id: str, *, org_id: str) -> ExportAnswers:
+        return ExportAnswers(missing=self._missing)
+
+
+def _builder() -> SubjectAccessReportBuilder:
+    return SubjectAccessReportBuilder(
+        subject='someone@example.com',
+        generated_at=datetime.now(timezone.utc),
+        processing=ProcessingDescription().describe(),
+        withheld={},
+    )
+
+
 class TestATruncatedReportSaysSo:
     """`no silent caps`. This export is capped per section, and a cap that
     is not reported turns an incomplete legal answer into one that reads
     as complete — worse than refusing."""
 
     def test_a_full_section_is_declared_truncated(self):
-        report: dict = {}
-        _note_if_capped(report, 'own_activity', list(range(_ACTIVITY_LIMIT)), _ACTIVITY_LIMIT)
+        report = _builder()
+        report.capped('own_activity', [{}] * ACTIVITY_LIMIT, cap=ACTIVITY_LIMIT)
 
-        # A plain dict here, not the model: `_note_if_capped` is the
-        # internal builder helper and runs while the report is still
-        # being assembled.
-        assert 'own_activity' in report['truncated']
-        assert 'There are more' in report['truncated']['own_activity']
+        truncated = report.build().truncated
+        assert truncated is not None
+        assert 'There are more' in truncated['own_activity']
 
     def test_a_short_section_is_not(self):
         """Otherwise every export claims truncation and the flag means
         nothing."""
-        report: dict = {}
-        _note_if_capped(report, 'own_activity', [1, 2, 3], _ACTIVITY_LIMIT)
+        report = _builder()
+        report.capped('own_activity', [{}, {}, {}], cap=ACTIVITY_LIMIT)
 
-        assert 'truncated' not in report
+        assert report.build().truncated is None
 
-    def test_every_capped_query_reports_its_cap(self):
-        """The rule, not the four call sites. A fifth section added later
-        with a `LIMIT` and no disclosure fails here."""
-        import pathlib
-        import re
+    async def test_every_capped_query_reports_its_cap(self):
+        """The rule, not the call sites. A read added later with a `limit`
+        and no disclosure fails here — and so does a service whose cap
+        has drifted from the query's."""
+        assert _CAPPED_READS, 'no SubjectAccessDB read takes a limit — has its shape changed?'
 
-        # The statements moved to the database layer; the classification
-        # they are checked against stayed in the service. This reads the
-        # queries.
-        source = (pathlib.Path(__file__).resolve().parent.parent / 'app/db/sql/subject_access.py').read_text()
+        report = await SubjectAccessService(db=_FakeDB(), services=_FakeServices()).export(
+            email='someone@example.com', org_id='org-1'
+        )
 
-        # `LIMIT 1000` or `LIMIT :lim` — the cap is a bound parameter
-        # now, and a query that carries one still owes a disclosure.
-        capped = len(re.findall(r'LIMIT (?:\d+|:\w+)', source))
-        service = (pathlib.Path(__file__).resolve().parent.parent / 'app/services/subject_access.py').read_text()
-        disclosed = len(re.findall(r'_note_if_capped\(', service)) - 1  # minus the definition
-
-        assert capped == disclosed, (
-            f'{capped} queries carry a LIMIT but only {disclosed} sections report being '
-            'truncated. A section that silently stops at its cap tells the subject they '
-            'have all their data when they do not.'
+        assert set(report.truncated or {}) == set(_CAPPED_READS), (
+            'every read that carries a cap must report hitting it. A section that silently '
+            'stops at its cap tells the subject they have all their data when they do not.'
         )
 
 
@@ -619,49 +719,40 @@ class TestTheEnvelopeCarriesEverythingTheExportSets:
     not declare.
 
     On an Article 15 answer that is not a typing detail. The first
-    version of this model listed `subject`, `generated_at`,
-    `processing`, `withheld` and `sections`, and would have silently
-    dropped `truncated` — the key whose entire job is to say the
-    answer is incomplete. Reporting a capped section as complete is
-    the failure the cap mechanism exists to prevent, and the model
-    would have reintroduced it on the way out.
-
-    So this asserts the model carries every top-level key the builder
-    can set, discovered from the builder rather than written down
-    twice.
+    version of this model would have silently dropped `truncated` — the
+    key whose entire job is to say the answer is incomplete. So the
+    envelope and its sections refuse anything undeclared, and an export
+    that sets every optional part is shown to carry each one out.
     """
 
-    def test_every_key_the_builder_sets_survives_validation(self):
-        import ast
-        import pathlib
+    def test_the_envelope_and_its_sections_refuse_undeclared_fields(self):
+        assert SubjectAccessReport.model_config.get('extra') == 'forbid'
+        assert SubjectAccessSections.model_config.get('extra') == 'forbid'
+        with pytest.raises(ValueError):
+            SubjectAccessSections().own_actvity = []  # type: ignore[attr-defined]
 
-        from app.services.subject_access import SubjectAccessReport
+    async def test_truncated_and_scope_survive_to_the_wire(self):
+        report = await SubjectAccessService(db=_FakeDB(), services=_FakeServices(missing=['CodeIndex'])).export(
+            email='someone@example.com', org_id='org-1'
+        )
 
-        source = pathlib.Path(__file__).resolve().parents[1] / 'app/services/subject_access.py'
-        tree = ast.parse(source.read_text())
+        wire = report.model_dump(mode='json')
+        assert 'There are more' in wire['truncated']['own_activity']
+        assert 'CodeIndex did not answer' in wire['truncated']['CodeIndex']
+        assert 'organisation org-1' in wire['scope']
 
-        # `report['x'] = ...`, `report.setdefault('x', ...)`, and the
-        # literal the report starts as.
-        assigned: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == 'report':
-                if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
-                    assigned.add(node.slice.value)
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == 'setdefault'
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == 'report'
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-            ):
-                assigned.add(node.args[0].value)
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == 'report':
-                if isinstance(node.value, ast.Dict):
-                    assigned |= {k.value for k in node.value.keys if isinstance(k, ast.Constant)}
 
-        assert assigned, 'found no report keys — this check would be vacuous'
-        declared = set(SubjectAccessReport.model_fields)
-        missing = sorted(assigned - declared - {'sections'})
-        assert not missing, f'{missing} are set on the report and would be dropped by the response model'
+class TestEachServiceUsesItsOwnDatabase:
+    """`SubjectAccessService` was a `SingletonMeta` singleton, so the
+    `db` passed to every construction after the first was silently
+    ignored and a test's fake could read another test's database."""
+
+    async def test_two_services_read_two_databases(self):
+        first = SubjectAccessService(db=_FakeDB(email='first@example.com'), services=_FakeServices())
+        second = SubjectAccessService(db=_FakeDB(email='second@example.com'), services=_FakeServices())
+
+        a = await first.export(email='x@example.com')
+        b = await second.export(email='x@example.com')
+
+        assert a.sections.account == [{'user_id': 'u-1', 'email': 'first@example.com'}]
+        assert b.sections.account == [{'user_id': 'u-1', 'email': 'second@example.com'}]

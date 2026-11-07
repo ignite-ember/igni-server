@@ -530,7 +530,7 @@ are in `shared-<db>.dump`.
 * `POST /v1/portal/subject-access` with `{"email": "..."}` returns one
   person's data as JSON, with purposes, categories, recipients, retention
   and source. Password hashes and verification tokens are withheld and named
-  as withheld (`app/services/subject_access.py`).
+  as withheld (`app/services/subject_access/personal_columns.py`).
 * `POST /v1/portal/orgs/{org_id}/producers/person/{user_id}/exports` queues an
   export of a removed member's data while it waits for erasure, downloaded
   as `.tar.gz` from `GET /v1/portal/orgs/{org_id}/exports/{export_id}/download`.

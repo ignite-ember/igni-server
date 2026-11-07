@@ -36,13 +36,21 @@ from pydantic import BaseModel, EmailStr, Field
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.middlewares.audit import set_audit_detail
 from app.security.portal_auth import require_admin
-from app.services.subject_access import SubjectAccessReport, SubjectAccessService
+from app.services.subject_access.schemas import SubjectAccessReport
+from app.services.subject_access.service import SubjectAccessService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_service = SubjectAccessService()
+
+def subject_access_service() -> SubjectAccessService:
+    """One service per request.
+
+    A provider rather than `Depends(SubjectAccessService)`: FastAPI would
+    read the constructor's keyword arguments as query parameters.
+    """
+    return SubjectAccessService()
 
 
 class SubjectAccessAudit(BaseModel):
@@ -83,10 +91,11 @@ async def subject_access(
     request: Request,
     body: SubjectAccessRequest = Body(...),
     current_user: PortalUser = Depends(require_admin),
+    service: SubjectAccessService = Depends(subject_access_service),
 ) -> SubjectAccessReport:
     email = str(body.email)
 
-    report = await _service.export(email=email, org_id=current_user.org_id)
+    report = await service.export(email=email, org_id=current_user.org_id)
 
     # Added to the audit record F90 writes for this request. Masked and
     # counted: the audit trail is retained, so an export of somebody's
@@ -96,8 +105,8 @@ async def subject_access(
         {
             'subject_access': SubjectAccessAudit(
                 subject=_mask(email),
-                sections=len(report.sections),
-                has_account=bool(report.sections.get('account')),
+                sections=report.sections.present_count(),
+                has_account=report.sections.has_account(),
             ).model_dump()
         },
     )
@@ -105,7 +114,7 @@ async def subject_access(
         'Subject access export by %s for %s (%d sections)',
         current_user.user_id,
         _mask(email),
-        len(report.sections),
+        report.sections.present_count(),
     )
 
     return report

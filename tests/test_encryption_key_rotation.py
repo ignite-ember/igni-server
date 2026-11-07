@@ -450,7 +450,7 @@ class TestEveryCredentialColumnIsEncrypted:
         dead = [column for (_t, column), why in _SECRET_NAMED_BUT_NOT_A_SECRET.items() if why == 'a dead column']
         for path in (_ROOT / 'app').rglob('*.py'):
             relative = str(path.relative_to(_ROOT))
-            if relative.startswith('app/db/sql/models/') or relative == 'app/services/subject_access.py':
+            if relative.startswith(('app/db/sql/models/', 'app/services/subject_access/')):
                 continue
             text_ = path.read_text()
             for column in dead:

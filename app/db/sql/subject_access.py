@@ -1,14 +1,14 @@
 """Every read behind a subject access request.
 
-GDPR Article 15. `app/services/subject_access.py` ran all of this
+GDPR Article 15. `app/services/subject_access/` ran all of this
 itself — thirty hand-written statements and a `rows()` closure over a
-session it opened — which is the invariant that put that file in D and
+session it opened — which is the invariant that put that module in D and
 the reason it was the worst-graded module in the codebase.
 
 ## Why the SQL is still hand-written
 
 It is not ORM, and deliberately. An export has to answer for **columns**,
-not for entities: `app/services/subject_access.py` carries a
+not for entities: `app/services/subject_access/personal_columns.py` carries a
 classification of every column in the schema as included, withheld or
 dead, and a test compares that classification against the live database.
 Selecting named columns keeps the two in step — a new column is absent
@@ -124,7 +124,7 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             u=user_id,
         )
 
-    async def group_memberships(self, org_id: str, user_id: str) -> list[dict[str, Any]]:
+    async def group_memberships(self, org_id: str, *, user_id: str) -> list[dict[str, Any]]:
         return await self._org_rows(
             org_id,
             'SELECT group_id, added_by_user_id, added_at FROM org_group_members WHERE user_id = :u',
@@ -133,7 +133,7 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
 
     # ── What they did ─────────────────────────────────────────────────
 
-    async def model_usage(self, org_id: str, user_id: str, *, limit: int = ACTIVITY_LIMIT) -> list[dict[str, Any]]:
+    async def model_usage(self, org_id: str, *, user_id: str, limit: int = ACTIVITY_LIMIT) -> list[dict[str, Any]]:
         return await self._org_rows(
             org_id,
             'SELECT org_id, model, input_tokens, output_tokens, total_tokens, duration, '
@@ -143,7 +143,7 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             lim=limit,
         )
 
-    async def own_activity(self, org_id: str, user_id: str, *, limit: int = ACTIVITY_LIMIT) -> list[dict[str, Any]]:
+    async def own_activity(self, org_id: str, *, user_id: str, limit: int = ACTIVITY_LIMIT) -> list[dict[str, Any]]:
         return await self._both_trails(
             org_id,
             'SELECT occurred_at, method, route, target_type, target_id, status_code, '
@@ -154,7 +154,7 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         )
 
     async def authentication_attempts(
-        self, org_id: str | None, email: str, *, limit: int = ACTIVITY_LIMIT
+        self, org_id: str | None, *, email: str, limit: int = ACTIVITY_LIMIT
     ) -> list[dict[str, Any]]:
         """Audit events keyed on the address, not the account.
 
