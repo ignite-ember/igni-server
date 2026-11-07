@@ -23,6 +23,10 @@ from app.security.org_authority import OrgAuthority
 from app.services.cloud.producer_feed import ProducerFeed
 
 
+class ErasureRefused(Exception):
+    """A legal hold covers the person; the message says where, in words for the operator."""
+
+
 class LegalHolds:
     def __init__(self) -> None:
         self._db = RetentionDB()
@@ -93,13 +97,10 @@ class LegalHolds:
         await ProducerFeed().reschedule(authority.org_id, user_id, held=False)
 
     async def refuse_erasure_if_held(self, user_id: str) -> None:
-        """A personal erasure request overrides retention — but not a legal hold."""
+        """A personal erasure request overrides retention — but not a legal hold. `ErasureRefused` if one stands."""
         held_in = await self._db.holding(user_id)
         if held_in:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    'This person is under a legal hold in organisation(s) '
-                    f'{", ".join(sorted(held_in))}; nothing of theirs can be erased until it is released'
-                ),
+            raise ErasureRefused(
+                'This person is under a legal hold in organisation(s) '
+                f'{", ".join(sorted(held_in))}; nothing of theirs can be erased until it is released'
             )

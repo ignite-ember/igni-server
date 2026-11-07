@@ -45,6 +45,7 @@ from app.config import settings
 from app.monitoring import metrics as monitoring
 from app.services.auth.auth_service import AuthService
 from app.services.auth.code_throttle import COOLDOWN_SECONDS, PER_ADDRESS_HOURLY
+from app.utils.email_mask import mask_email
 from tests.conftest import TEST_DB_URL_SYNC
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -185,9 +186,9 @@ class TestTheSendsAreLimited:
         for _ in range(10):
             await client.post('/send-sign-in-code', json={'email': email})
 
-        assert (
-            await _stored_code('signin', email) == original
-        ), 'a flood of anonymous requests rotated the code out from under the user'
+        assert await _stored_code('signin', email) == original, (
+            'a flood of anonymous requests rotated the code out from under the user'
+        )
 
     async def test_a_throttled_send_is_indistinguishable_from_a_sent_one(self, client):
         """A 429 would say "somebody asked for a code for this address
@@ -293,10 +294,8 @@ class TestNothingCanBypassTheThrottle:
     def test_the_log_line_masks_the_address(self):
         """It goes to logs F102 made shippable, and an operator needs the
         domain rather than the mailbox."""
-        from app.services.auth.code_throttle import _mask
-
-        assert _mask('jane.doe@example.com') == 'j***@example.com'
-        assert 'jane.doe' not in _mask('jane.doe@example.com')
+        assert mask_email('jane.doe@example.com') == 'j***@example.com'
+        assert 'jane.doe' not in mask_email('jane.doe@example.com')
 
     def test_refusals_are_counted(self):
         """So sustained abuse is visible without reading logs. The alert

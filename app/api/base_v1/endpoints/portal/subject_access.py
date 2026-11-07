@@ -38,6 +38,7 @@ from app.middlewares.audit import set_audit_detail
 from app.security.portal_auth import require_admin
 from app.services.subject_access.schemas import SubjectAccessReport
 from app.services.subject_access.service import SubjectAccessService
+from app.utils.email_mask import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +73,6 @@ class SubjectAccessRequest(BaseModel):
     email: EmailStr = Field(description='The address the request concerns.')
 
 
-def _mask(email: str) -> str:
-    local, _, domain = email.partition('@')
-    return f'{local[:1]}***@{domain}' if domain else '***'
-
-
 @router.post(
     '/subject-access',
     response_model=SubjectAccessReport,
@@ -104,7 +100,7 @@ async def subject_access(
         request,
         {
             'subject_access': SubjectAccessAudit(
-                subject=_mask(email),
+                subject=mask_email(email),
                 sections=report.sections.present_count(),
                 has_account=report.sections.has_account(),
             ).model_dump()
@@ -113,7 +109,7 @@ async def subject_access(
     logger.info(
         'Subject access export by %s for %s (%d sections)',
         current_user.user_id,
-        _mask(email),
+        mask_email(email),
         report.sections.present_count(),
     )
 
