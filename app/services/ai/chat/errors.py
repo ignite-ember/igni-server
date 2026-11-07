@@ -1,7 +1,7 @@
 """Why a chat request was refused, in terms the router turns into HTTP.
 
-Services raise these and never `HTTPException`; the router translates
-`ChatRefused` in one place.
+Services raise these and never `HTTPException`; `ChatRefusals`
+(`app/services/ai/chat/refusals.py`) translates `ChatRefused` in one place.
 """
 
 from __future__ import annotations

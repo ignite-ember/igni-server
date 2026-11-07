@@ -5555,6 +5555,63 @@
         "title": "NotificationTarget",
         "type": "object"
       },
+      "OpenAIError": {
+        "description": "The `error` object an OpenAI SDK parses; four keys fixed by somebody else's published API.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Param"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "type"
+        ],
+        "title": "OpenAIError",
+        "type": "object"
+      },
+      "OpenAIErrorBody": {
+        "description": "The whole response body: the envelope, plus FastAPI's own `detail`.\n\n`detail` is kept so nothing that reads it today has to change. It is\n`Any` because it is whatever was raised — the one field here with no\nknowable shape.",
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OpenAIError"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "OpenAIErrorBody",
+        "type": "object"
+      },
       "OrgAppList": {
         "properties": {
           "apps": {
@@ -12496,7 +12553,7 @@
     },
     "/v1/chat/completions": {
       "post": {
-        "description": "OpenAI-compatible chat completion (proxied via AI key pool)",
+        "description": "OpenAI-compatible chat completion, proxied to the organisation's inference nodes",
         "operationId": "chat_completions_v1_chat_completions_post",
         "requestBody": {
           "content": {
@@ -12519,18 +12576,85 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Missing, invalid or expired token, or a session that has been withdrawn"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "Not a member of the named organisation"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "No inference node serves the model"
           },
           "429": {
-            "description": "All keys for this pool are at capacity"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "Every node is at capacity and the queue is full, or the wait timed out; see Retry-After"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "A node's own 4xx (other than the above) passes through: the model refused the request"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "No node produced a usable answer"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "No inference node is configured"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "The node stopped sending, or timed out, before the answer was complete"
           }
         },
         "security": [

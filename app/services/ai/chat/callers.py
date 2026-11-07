@@ -34,12 +34,26 @@ class ChatCallerResolver:
                 app_id=producer.app_id or producer.id,
                 is_machine=True,
             )
-        user_id, org_id = await self.resolve_user_org(token=token, org_id=request.headers.get('x-org-id'))
-        return ChatCaller(user_id=user_id, org_id=org_id)
+        return await self._person(token=token, org_id=self._org_header(request))
 
-    async def resolve_user_org(self, *, token: str, org_id: str | None) -> tuple[str, str | None]:
-        """A person's `(user_id, org_id)`, asserting current membership."""
-        return await self._auth.resolve_user_org(token, org_id=org_id)
+    async def assert_current_member(self, *, request: Request, token: str) -> None:
+        """Refuse anyone who is not a current member of the organisation they name.
+
+        The model list is deployment-wide, not per-org filtered, so nothing
+        here is used: the call only asserts current membership, so that the
+        list needs a current member rather than anybody holding a token.
+        """
+        await self._person(token=token, org_id=self._org_header(request))
+
+    async def _person(self, *, token: str, org_id: str | None) -> ChatCaller:
+        """A person, asserting current membership of *org_id*."""
+        user_id, resolved_org_id = await self._auth.resolve_user_org(token, org_id=org_id)
+        return ChatCaller(user_id=user_id, org_id=resolved_org_id)
+
+    @staticmethod
+    def _org_header(request: Request) -> str | None:
+        """The organisation the caller names, if any."""
+        return request.headers.get('x-org-id')
 
     async def preferred_model(self, *, caller: ChatCaller, requested: str | None) -> str | None:
         """An explicit choice wins; otherwise a person's group's pin, if it set one."""

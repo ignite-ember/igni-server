@@ -234,7 +234,13 @@ class TestTheModelListingClaimsNothingItDoesNotDo:
         source = (_ROOT / 'app/api/base_v1/endpoints/client/chat.py').read_text()
         listing = source[source.index('async def list_chat_models') : source.index('async def chat_completions')]
 
-        assert 'resolve_user_org' in listing
+        assert 'assert_current_member' in listing
+
+        callers = (_ROOT / 'app/services/ai/chat/callers.py').read_text()
+        check = callers[callers.index('async def assert_current_member') : callers.index('async def _person')]
+        assert 'self._person(' in check
+        person = callers[callers.index('async def _person') : callers.index('def _org_header')]
+        assert 'self._auth.resolve_user_org(' in person
 
 
 pytestmark = pytest.mark.anyio

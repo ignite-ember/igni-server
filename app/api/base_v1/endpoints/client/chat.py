@@ -1,33 +1,53 @@
-"""OpenAI-compatible ``/chat/completions`` and ``/chat/models``, proxied to the customer's nodes.
+"""OpenAI-compatible ``/chat/completions`` and ``/chat/models``, proxied to the organisation's inference nodes.
 
-Resolves the caller, admits the request to a node (or refuses it), and
-delegates to the chat proxy in ``services/ai/chat``. Every refusal comes
-back in the envelope an OpenAI SDK reads (``openai_errors``).
+Resolves the caller, hands the request to `ChatProxy`, and turns its
+answer into a response. A refusal becomes HTTP through `ChatRefusals`,
+and comes back in the envelope an OpenAI SDK reads (``openai_errors``).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from typing import Any, assert_never
+
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import Response
-from fastapi.security import OAuth2PasswordBearer
 
 from app.api.base_v1.endpoints.client.client_connection import ClientConnection
 from app.api.base_v1.endpoints.client.openai_errors import OpenAICompatibleRoute
 from app.api.base_v1.endpoints.client.sse_response import StreamThatEnds
 from app.api.base_v1.schema.chat import ChatCompletionRequest, ChatCompletionResponse, ChatModelsResponse
-from app.services.ai.chat.errors import ChatRefused
-from app.services.ai.chat.schemas import UpstreamChatRequest
+from app.api.base_v1.schema.openai_error import OpenAIErrorBody
+from app.security.auth import oauth2_scheme
+from app.services.ai.chat.answers import CallerLeft, CompletedAnswer, StreamedAnswer
+from app.services.ai.chat.refusals import ChatRefusals
 from app.services.ai.chat.services import chat_services, ChatServices
 
 router = APIRouter(route_class=OpenAICompatibleRoute)
 
-_oauth2 = OAuth2PasswordBearer(tokenUrl='token')
-
-
-def _refusal(exc: ChatRefused) -> HTTPException:
-    """A refusal as HTTP; the only place a `Retry-After` header is made."""
-    headers = {'Retry-After': str(exc.retry_after)} if exc.retry_after is not None else None
-    return HTTPException(status_code=exc.status_code, detail=exc.detail, headers=headers)
+#: The refusals a completion can answer with, each in the OpenAI envelope. A node's
+#: 4xx is passed through as is, so any 4xx can reach the caller.
+_REFUSALS: dict[int | str, dict[str, Any]] = {
+    status.HTTP_401_UNAUTHORIZED: {
+        'model': OpenAIErrorBody,
+        'description': 'Missing, invalid or expired token, or a session that has been withdrawn',
+    },
+    status.HTTP_403_FORBIDDEN: {'model': OpenAIErrorBody, 'description': 'Not a member of the named organisation'},
+    status.HTTP_404_NOT_FOUND: {'model': OpenAIErrorBody, 'description': 'No inference node serves the model'},
+    status.HTTP_429_TOO_MANY_REQUESTS: {
+        'model': OpenAIErrorBody,
+        'description': 'Every node is at capacity and the queue is full, or the wait timed out; see Retry-After',
+    },
+    status.HTTP_502_BAD_GATEWAY: {'model': OpenAIErrorBody, 'description': 'No node produced a usable answer'},
+    status.HTTP_503_SERVICE_UNAVAILABLE: {'model': OpenAIErrorBody, 'description': 'No inference node is configured'},
+    status.HTTP_504_GATEWAY_TIMEOUT: {
+        'model': OpenAIErrorBody,
+        'description': 'The node stopped sending, or timed out, before the answer was complete',
+    },
+    '4XX': {
+        'model': OpenAIErrorBody,
+        'description': "A node's own 4xx (other than the above) passes through: the model refused the request",
+    },
+}
 
 
 @router.get(
@@ -38,11 +58,10 @@ def _refusal(exc: ChatRefused) -> HTTPException:
 )
 async def list_chat_models(
     request: Request,
-    token: str = Depends(_oauth2),
+    token: str = Depends(oauth2_scheme),
     services: ChatServices = Depends(chat_services),
 ) -> ChatModelsResponse:
-    # Asserts a *current* member, though nothing per-org filters the list.
-    await services.callers.resolve_user_org(token=token, org_id=request.headers.get('x-org-id'))
+    await services.callers.assert_current_member(request=request, token=token)
     return ChatModelsResponse(models=await services.catalog.models())
 
 
@@ -50,29 +69,25 @@ async def list_chat_models(
     '/chat/completions',
     response_model=ChatCompletionResponse,
     status_code=status.HTTP_200_OK,
-    description='OpenAI-compatible chat completion (proxied via AI key pool)',
-    responses={429: {'description': 'All keys for this pool are at capacity'}},
+    description="OpenAI-compatible chat completion, proxied to the organisation's inference nodes",
+    responses=_REFUSALS,
 )
 async def chat_completions(
     body: ChatCompletionRequest,
     request: Request,
-    token: str = Depends(_oauth2),
+    token: str = Depends(oauth2_scheme),
     services: ChatServices = Depends(chat_services),
 ) -> ChatCompletionResponse | Response:
     connection = ClientConnection(request)
     caller = await services.callers.resolve(request=request, token=token)
-    model = await services.callers.preferred_model(caller=caller, requested=body.model)
-    try:
-        lease = await connection.unless_it_closes(services.admission().admit(caller=caller, model=model))
-        if lease is None:
+    with ChatRefusals():
+        answer = await services.proxy.answer(caller=caller, body=body, presence=connection)
+    match answer:
+        case StreamedAnswer(stream=stream):
+            return StreamThatEnds(stream.frames(), tails=services.tails)
+        case CompletedAnswer(response=response):
+            return response
+        case CallerLeft():
             return connection.closed_response()
-        upstream_request = UpstreamChatRequest.for_upstream(body, model=model or lease.model)
-        ctx = services.context(caller=caller, lease=lease, request=upstream_request)
-        if body.stream:
-            return StreamThatEnds(services.streamer.open(ctx).frames(), tails=services.tails)
-        answer = await connection.unless_it_closes(services.completions.complete(ctx))
-    except ChatRefused as exc:
-        raise _refusal(exc) from exc
-    if answer is None:
-        return connection.closed_response()
-    return answer
+        case _:
+            assert_never(answer)
