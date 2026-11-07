@@ -1940,6 +1940,7 @@
         "type": "object"
       },
       "CreateOrgResponse": {
+        "description": "An organisation as its admin sees it after creating or changing it.",
         "properties": {
           "display_name": {
             "title": "Display Name",

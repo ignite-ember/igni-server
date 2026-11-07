@@ -84,7 +84,7 @@ class TestCreateOrganization:
 
 
 class TestTheDerivedSlugIsStillAValidSlug:
-    """The derive path never went through `_validate_slug`.
+    """The derive path never went through the slug check (`OrgSlug.checked`).
 
     So the 3-32-character, no-edge-hyphen rule held only for slugs
     somebody typed, and a display name with nothing alphanumeric in it
