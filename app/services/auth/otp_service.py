@@ -312,3 +312,8 @@ class OTPService(metaclass=SingletonMeta):
         hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
         await self._users.update_password(user_id=str(user.user_id), hashed_password=hashed)
         return 'Password has been reset successfully. Please sign in with your new password.'
+
+
+def otp_service() -> OTPService:
+    """The FastAPI dependency; tests replace it through `app.dependency_overrides`."""
+    return OTPService()

@@ -1,6 +1,8 @@
 import re
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.services.auth.jwt_service import TokenResponse
 
 
 def _validate_password_strength(password: str) -> str:
@@ -87,3 +89,30 @@ class AuthResponse(BaseModel):
     """
 
     message: str
+
+
+class CLITokenRequest(BaseModel):
+    org_id: str
+
+
+class CLITokenResponse(TokenResponse):
+    """The org-scoped token, plus a code safe to put in a URL.
+
+    Two fields because there are two consumers with opposite
+    constraints. A caller that already has this response has the token
+    in a POST body, which is where a credential belongs. The **browser**
+    doing the desktop handoff has to get it to a local HTTP server by
+    navigating there, and a token in a navigation lands in history.
+
+    So the browser gets `handoff_code` — the same single-use,
+    30-second, `GETDEL`-redeemed code F107 built for the sign-in
+    redirect — and exchanges it at `POST /v1/auth/exchange`. F124.
+    """
+
+    handoff_code: str = Field(
+        description=(
+            'Single-use code for the local callback. Valid for 30 seconds, redeemable once at '
+            'POST /v1/auth/exchange. Use this rather than the token when the value has to travel '
+            'through a URL.'
+        )
+    )
