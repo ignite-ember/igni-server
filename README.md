@@ -16,9 +16,10 @@ plug into igni server through the published service-identity and
 extension interfaces described below, and need a licence file from
 Ignite Ember.
 
-The desktop app, CLI and IDE clients are in
-[ignite-ember/igni](https://github.com/ignite-ember/igni), also
-Apache-2.0. Repository integration (GitHub, GitLab, webhooks) belongs to
+igni itself is three repositories, also Apache-2.0: the backend and CLI in
+[igni-core](https://github.com/ignite-ember/igni-core), the desktop app and
+web UI in [igni-app](https://github.com/ignite-ember/igni-app), and the SDKs
+in [igni-sdk](https://github.com/ignite-ember/igni-sdk). Repository integration (GitHub, GitLab, webhooks) belongs to
 CodeIndex.
 
 **Ignite Ember hosts nothing.** There is no hosted tier and no
