@@ -538,6 +538,14 @@ jobs:
           ref: ${{ env.IGNI_CLI_REF }}
           path: igni
 
+      # igni's SDKs, which the journey's services are built with; beside
+      # the server, where the script looks for them (IGNI_SDK defaults to
+      # ../igni-sdk).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ignite-ember/igni-sdk
+          path: igni-sdk
+
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
