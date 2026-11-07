@@ -522,8 +522,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      # The CLI branch this server branch goes with: igni's main, since
-      # its extension work merged there (ignite-ember/igni#42).
+      # The CLI branch this server branch goes with: igni-core's main
+      # (the backend and CLI, split out of ignite-ember/igni).
       IGNI_CLI_REF: main
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -534,7 +534,7 @@ jobs:
       # the script looks for it (IGNI_CLI defaults to ../igni).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ignite-ember/igni
+          repository: ignite-ember/igni-core
           ref: ${{ env.IGNI_CLI_REF }}
           path: igni
 
