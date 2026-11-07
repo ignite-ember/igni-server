@@ -37,7 +37,7 @@
     "monaco-editor": "^0.57.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-dropzone": "^14.3.5",
+    "react-dropzone": "^20.1.4",
     "react-is": "^19.3.1",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.5",
