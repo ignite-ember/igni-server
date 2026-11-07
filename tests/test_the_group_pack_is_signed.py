@@ -203,12 +203,12 @@ class TestThePackIsTheSessionsOrganisations:
 
     async def test_another_organisation_yields_no_group(self, two_members_in_a_group):
         from app.services.portal.default_group import DefaultGroup
-        from app.services.portal.groups_service import GroupsService
+        from app.services.portal.group_pack_service import GroupPackService
 
         alice = two_members_in_a_group['alice']
         elsewhere = str(uuid.uuid4())
 
         assert await DefaultGroup.ensure_for_user(alice, elsewhere) is None
-        assert await GroupsService.get_my_group_pack(alice, elsewhere) is None
-        mine = await GroupsService.get_my_group_pack(alice, two_members_in_a_group['org_id'])
+        assert await GroupPackService().get_my_group_pack(user_id=alice, org_id=elsewhere) is None
+        mine = await GroupPackService().get_my_group_pack(user_id=alice, org_id=two_members_in_a_group['org_id'])
         assert mine is not None and mine.group_id == two_members_in_a_group['group_id']

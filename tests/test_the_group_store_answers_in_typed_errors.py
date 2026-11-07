@@ -20,7 +20,9 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.base_v1.schema.portal.groups import GroupTheme, UpdateEntryRequest, UpdateGroupRequest
+from app.api.base_v1.schema.portal.group_entries import UpdateEntryRequest
+from app.api.base_v1.schema.portal.group_theme import GroupTheme
+from app.api.base_v1.schema.portal.groups import UpdateGroupRequest
 from app.db.sql.group_entries import GroupEntriesDB
 from app.db.sql.group_extensions import GroupExtensionsDB
 from app.db.sql.group_members import GroupMembersDB
@@ -43,7 +45,6 @@ from app.db.sql.schemas.group import (
 )
 from app.db.sql.tenancy import TenantSessions
 from app.services.portal.group_refusals import GroupRefusals
-from app.services.portal.groups_service import _entry_patch, _group_patch
 from app.utils.singleton import SingletonMeta
 from tests.conftest import create_org, create_user
 
@@ -190,16 +191,16 @@ class TestPartialEdits:
     """Absent leaves a field alone; an empty string clears the ones that can be cleared."""
 
     def test_an_absent_field_is_not_in_the_group_patch(self):
-        assert _group_patch(UpdateGroupRequest(name='Legal')).model_fields_set == {'name'}
+        assert UpdateGroupRequest(name='Legal').to_patch().model_fields_set == {'name'}
 
     def test_an_empty_default_model_clears_it(self):
-        patch = _group_patch(UpdateGroupRequest(default_model=''))
+        patch = UpdateGroupRequest(default_model='').to_patch()
 
         assert patch.model_fields_set == {'default_model'}
         assert patch.default_model is None
 
     def test_a_theme_that_overrides_nothing_clears_it(self):
-        patch = _group_patch(UpdateGroupRequest(theme=GroupTheme()))
+        patch = UpdateGroupRequest(theme=GroupTheme()).to_patch()
 
         assert patch.model_fields_set == {'theme'}
         assert patch.theme is None
@@ -211,8 +212,8 @@ class TestPartialEdits:
             GroupPatch(description=None)
 
     def test_an_entry_patch_carries_only_what_was_sent(self):
-        assert _entry_patch(UpdateEntryRequest(enabled=False)).model_fields_set == {'enabled'}
-        cleared = _entry_patch(UpdateEntryRequest(model=''))
+        assert UpdateEntryRequest(enabled=False).to_patch().model_fields_set == {'enabled'}
+        cleared = UpdateEntryRequest(model='').to_patch()
         assert cleared.model_fields_set == {'model'}
         assert cleared.model is None
 

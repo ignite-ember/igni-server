@@ -114,7 +114,7 @@ class TestTheServerRefusesThem:
         by the rule protecting it."""
         import re
 
-        from app.api.base_v1.schema.portal.groups import ENTRY_NAME_PATTERN
+        from app.api.base_v1.schema.portal.group_entries import ENTRY_NAME_PATTERN
         from app.services.portal.default_group import seed_entries
 
         for _kind, name, _content in seed_entries():

@@ -263,7 +263,7 @@ async def test_under_uvicorn_a_client_timeout_leaves_the_model_queue(monkeypatch
     pool = _NoRoom()
     monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
     monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
-    monkeypatch.setattr(chat_module.GroupsService, 'model_for_user', AsyncMock(return_value=None))
+    monkeypatch.setattr(chat_module.GroupModelService, 'model_for_user', AsyncMock(return_value=None))
     monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_pool=lambda: pool))
     monkeypatch.setattr(chat_module.settings, 'chat_queue_max_wait_seconds', 30)
 
@@ -322,7 +322,7 @@ async def test_under_uvicorn_a_client_that_gives_up_leaves_a_499_in_the_access_l
     pool = _NoRoom() if where == 'waiting for a node' else _OneNode()
     monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
     monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
-    monkeypatch.setattr(chat_module.GroupsService, 'model_for_user', AsyncMock(return_value=None))
+    monkeypatch.setattr(chat_module.GroupModelService, 'model_for_user', AsyncMock(return_value=None))
     monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_pool=lambda: pool))
     monkeypatch.setattr(chat_module.settings, 'chat_queue_max_wait_seconds', 30)
     work = _Work(30)

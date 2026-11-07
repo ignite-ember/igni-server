@@ -70,7 +70,7 @@ from app.services.ai.upstream import (
     worth_another_node as _worth_another_node,
 )
 from app.services.auth.auth_service import AuthService
-from app.services.portal.groups_service import GroupsService
+from app.services.portal.group_model_service import GroupModelService
 from app.utils.cache import async_ttl_cache
 
 logger = logging.getLogger(__name__)
@@ -298,7 +298,9 @@ async def chat_completions(
     # A legal team routed to a legal-review adapter should not have to
     # remember its name, and should not silently get the general model
     # when they forget.
-    requested_model = body.model or (None if producer is not None else await GroupsService.model_for_user(user_id))
+    requested_model = body.model or (
+        None if producer is not None else await GroupModelService().model_for_user(user_id)
+    )
 
     async def acquire(who: str, model: str | None) -> BackendLease:
         return await pool.acquire(who, model=model)

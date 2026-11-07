@@ -21,7 +21,7 @@ would do:
 
 import pytest
 
-from app.services.portal.groups_service import GroupsService
+from app.services.portal.group_model_service import GroupModelService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 MODELS = [('igni-1.0-27b', 'http://gpu-01:8000/v1'), ('legal-reviewer', 'http://gpu-01:8000/v1')]
@@ -136,13 +136,13 @@ class TestRouting:
         ).json()
         await client.post(f'/portal/groups/{group["id"]}/members', json={'user_id': 'lawyer-1'}, headers=headers)
 
-        assert await GroupsService.model_for_user('lawyer-1') == 'legal-reviewer'
+        assert await GroupModelService().model_for_user('lawyer-1') == 'legal-reviewer'
 
     async def test_someone_in_no_group_gets_nothing(self, client, admin, db):
         """Which leaves the deployment default — whatever the chosen node
         advertises first."""
         await create_user(db, user_id='nomad-1', email='nomad@test.com')
-        assert await GroupsService.model_for_user('nomad-1') is None
+        assert await GroupModelService().model_for_user('nomad-1') is None
 
     async def test_a_group_with_no_model_changes_nothing(self, client, admin, db):
         headers, org_id = admin
@@ -152,7 +152,7 @@ class TestRouting:
         group = (await client.post('/portal/groups', json={'name': 'Eng'}, headers=headers)).json()
         await client.post(f'/portal/groups/{group["id"]}/members', json={'user_id': 'dev-1'}, headers=headers)
 
-        assert await GroupsService.model_for_user('dev-1') is None
+        assert await GroupModelService().model_for_user('dev-1') is None
 
     async def test_a_failed_lookup_costs_the_default_not_the_request(self, monkeypatch):
         """Consulted on every chat request that names no model, so it must
@@ -164,7 +164,7 @@ class TestRouting:
         # The *active* variant is what `model_for_user` calls (B8);
         # patching the other left this passing without exercising anything.
         monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
-        assert await GroupsService.model_for_user('anyone') is None
+        assert await GroupModelService().model_for_user('anyone') is None
 
 
 class TestPerAgentModel:

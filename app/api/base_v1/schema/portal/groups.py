@@ -1,93 +1,26 @@
-"""Pydantic schemas for portal group management."""
+"""Pydantic schemas for portal group management.
+
+A group's theme lives in `group_theme`, and its entries in `group_entries`.
+"""
+
+from __future__ import annotations
 
 from datetime import datetime
 import hashlib
 import json
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-# ------------------------------------------------------------------
-# Shared / base
-# ------------------------------------------------------------------
-
-
-class EntryKind(str):
-    AGENTS = 'agents'
-    MCPS = 'mcps'
-    PLUGINS = 'plugins'
-    SETTINGS = 'settings'
-
+from app.api.base_v1.schema.portal.group_entries import OrgGroupPackEntry
+from app.api.base_v1.schema.portal.group_theme import GroupTheme
+from app.db.sql.models.org_group import OrgGroup
+from app.db.sql.models.org_group_member import OrgGroupMember
+from app.db.sql.schemas.group import GroupPatch
 
 # ------------------------------------------------------------------
 # Groups
 # ------------------------------------------------------------------
-
-
-#: A CSS hex colour: ``#rgb``, ``#rrggbb`` or ``#rrggbbaa``.
-#:
-#: Narrow on purpose. These values end up as CSS custom properties in
-#: every client the group's people run, and the widest useful grammar is
-#: also the one with room to hide in — ``rgb()`` takes nested
-#: expressions, and named colours would have to be enumerated to be
-#: checked at all. Hex covers what a colour picker emits.
-#:
-#: The client re-validates against the same grammar rather than trusting
-#: what it is handed, for the reason :data:`ENTRY_NAME_PATTERN` gives
-#: below: it can be pointed at a server somebody else runs.
-HEX_COLOUR_PATTERN = r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$'
-
-#: The image types a brand mark may be.
-#:
-#: SVG is here, and it is the one worth a sentence: an SVG document can
-#: carry script, so the client renders a brand mark as ``<img src=...>``
-#: and never inlines it as markup. Script does not run in an ``<img>``.
-BRAND_MARK_MIME_PATTERN = r'^data:image/(?:png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$'
-
-#: 64 KB of base64, so ~48 KB of image.
-#:
-#: The pack this rides on is polled by every running session, and a
-#: brand mark is a logo — anything near this cap is a photograph that
-#: should have been an SVG or a smaller PNG.
-MAX_BRAND_MARK_BYTES = 64 * 1024
-
-
-class GroupTheme(BaseModel):
-    """Brand overrides for a group's people.
-
-    Every field is optional: a theme that sets only ``accent`` leaves
-    the rest of igni's palette alone. The client maps these onto the
-    CSS custom properties its stylesheet already defines for both light
-    and dark, so the user's palette choice keeps working — the group
-    brands the product, it does not pick light or dark for anybody.
-    """
-
-    model_config = ConfigDict(extra='forbid')
-
-    accent: str | None = Field(None, pattern=HEX_COLOUR_PATTERN, description='Primary brand colour (hex)')
-    danger: str | None = Field(None, pattern=HEX_COLOUR_PATTERN, description='Error/danger colour (hex)')
-    success: str | None = Field(None, pattern=HEX_COLOUR_PATTERN, description='Success colour (hex)')
-    brand_name: str | None = Field(
-        None,
-        max_length=40,
-        description='Replaces the "igni" wordmark in the client header',
-    )
-    brand_mark: str | None = Field(
-        None,
-        pattern=BRAND_MARK_MIME_PATTERN,
-        description=(
-            'Logo as a base64 data: URI (png, jpeg, webp or svg+xml). Not a URL — the '
-            "desktop client's CSP allows img-src from data: only, so a remote URL would "
-            'never load.'
-        ),
-    )
-
-    @model_validator(mode='after')
-    def _mark_within_size_budget(self) -> 'GroupTheme':
-        if self.brand_mark and len(self.brand_mark.encode()) > MAX_BRAND_MARK_BYTES:
-            raise ValueError(
-                f'brand_mark is {len(self.brand_mark.encode())} bytes, over the {MAX_BRAND_MARK_BYTES} byte limit'
-            )
-        return self
 
 
 class OrgGroupResponse(BaseModel):
@@ -113,12 +46,33 @@ class OrgGroupResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @classmethod
+    def of(cls, group: OrgGroup) -> Self:
+        """A stored group as the portal sees it, its theme parsed."""
+        return cls(
+            id=group.id,
+            org_id=group.org_id,
+            name=group.name,
+            description=group.description,
+            default_model=group.default_model,
+            theme=GroupTheme.from_column(group.theme),
+            is_default=bool(group.is_default),
+            created_by_user_id=group.created_by_user_id,
+            created_at=group.created_at,
+            updated_at=group.updated_at,
+        )
+
 
 class OrgGroupDetail(OrgGroupResponse):
     """Group with member and entry counts."""
 
     member_count: int = 0
     entry_count: int = 0
+
+    @classmethod
+    def of(cls, group: OrgGroup, *, member_count: int = 0, entry_count: int = 0) -> Self:
+        """A stored group with how many people and entries it holds."""
+        return super().of(group).model_copy(update={'member_count': member_count, 'entry_count': entry_count})
 
 
 class OrgGroupList(BaseModel):
@@ -175,6 +129,27 @@ class UpdateGroupRequest(BaseModel):
     default_model: str | None = None
     theme: GroupTheme | None = None
 
+    def to_patch(self) -> GroupPatch:
+        """The edit this request asks for: only the fields it supplies.
+
+        The one place a `GroupPatch` is built from a request, because a
+        field set to None on it is a clear, and a None standing for "not
+        in the request" would wipe what was stored. An empty
+        `default_model` is the explicit clear. A theme that overrides
+        nothing is the theme's clear: `GroupTheme.to_column` returns None
+        for it, and NULL is "no branding".
+        """
+        patch = GroupPatch()
+        if self.name is not None:
+            patch.name = self.name
+        if self.description is not None:
+            patch.description = self.description
+        if self.default_model is not None:
+            patch.default_model = self.default_model or None
+        if self.theme is not None:
+            patch.theme = self.theme.to_column()
+        return patch
+
 
 # ------------------------------------------------------------------
 # Members
@@ -194,6 +169,19 @@ class OrgGroupMemberResponse(BaseModel):
     # Resolved from users table
     email: str | None = None
     full_name: str | None = None
+
+    @classmethod
+    def of(cls, member: OrgGroupMember, *, email: str | None, full_name: str | None) -> OrgGroupMemberResponse:
+        """A stored placement, with who the person is."""
+        return cls(
+            id=member.id,
+            group_id=member.group_id,
+            user_id=member.user_id,
+            added_by_user_id=member.added_by_user_id,
+            added_at=member.added_at,
+            email=email,
+            full_name=full_name,
+        )
 
 
 class OrgGroupMemberList(BaseModel):
@@ -229,160 +217,6 @@ class OrgGroupMembershipList(BaseModel):
 
 
 # ------------------------------------------------------------------
-# Entrys
-# ------------------------------------------------------------------
-
-
-class OrgGroupEntryResponse(BaseModel):
-    """A single entry entry for a group."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    group_id: str
-    kind: str  # agents | mcps | plugins | settings
-    entry_name: str
-    content: str
-    content_type: str  # markdown | yaml | json
-    enabled: bool = True
-    # Plugin install source — mirrors the trio the GroupPolicy
-    # cache consumes. For ``kind == "plugins"`` entries,
-    # ``source_url`` set means "git-clone this on the runner"
-    # instead of writing the YAML content. All three are
-    # optional; non-plugin rows usually leave them null.
-    source_url: str | None = None
-    source_ref: str | None = None
-    source_subdir: str | None = None
-    # Agents only: which model this one runs against. Null falls back to
-    # the group's default, then the deployment's.
-    model: str | None = None
-    created_by_user_id: str
-    created_at: datetime
-    updated_at: datetime
-
-
-class AgentToolsResponse(BaseModel):
-    """What an agent may name in its ``tools:`` frontmatter.
-
-    The portal warns against this list as somebody types. Fetched
-    rather than bundled: a copy in the frontend would be a third place
-    to keep in step, and the first to fall behind.
-    """
-
-    tools: list[str]
-
-
-class OrgGroupEntryList(BaseModel):
-    """List of entries for a group.
-
-    ``warnings`` carries anything worth saying about what was just
-    written — a mistyped tool name, say. Advisory: the write succeeded,
-    and these are things the admin would want to know before somebody
-    hits them at runtime.
-    """
-
-    entries: list[OrgGroupEntryResponse]
-    total: int
-    warnings: list[str] = []
-
-
-#: Ceiling on an entry's content, in bytes.
-#:
-#: ``content`` was the one field on these requests with no bound, while
-#: ``entry_name``, ``source_url`` and the rest all had one — and it is the
-#: field that matters most, because an entry does not just sit in
-#: Postgres: it is served in the group pack to every client and written
-#: to disk on every developer's machine. One request, N machines.
-#:
-#: 32 MB was accepted before this. The largest entry the default seed
-#: ships is an agent prompt at just under 20 KB, and all 29 of them
-#: together come to 262 KB — so this is roughly thirteen times the
-#: biggest real entry, and generous for anything anybody writes by hand.
-MAX_ENTRY_CONTENT_BYTES = 256 * 1024
-
-
-#: An entry name has to be a plain filename.
-#:
-#: The client turns it into a path — ``group-policy/<kind>/<name>.md`` —
-#: and ``Path`` accepts a separator without complaint, so a name like
-#: ``../../../../../../tmp/x`` wrote outside the cache directory on every
-#: machine that synced the pack. For ``scripts`` the file is written mode
-#: 0700, which makes it an executable dropped wherever the user can write.
-#:
-#: The client refuses these itself as well — it must, since it can be
-#: pointed at a server somebody else runs — but a name that cannot be
-#: materialised has no business being stored either, and refusing at the
-#: portal is where an admin finds out while they are still looking at the
-#: form.
-#:
-#: Letters, digits, dot, underscore and hyphen. A leading dot is allowed
-#: (``.mcp.json``-style names exist) but a name that is only dots is not —
-#: expressed as "must contain at least one non-dot character" rather than
-#: with a negative lookahead, because pydantic's regex engine has none.
-ENTRY_NAME_PATTERN = r'^[A-Za-z0-9._-]*[A-Za-z0-9_-][A-Za-z0-9._-]*$'
-
-
-class CreateEntryRequest(BaseModel):
-    """Request to create a new entry."""
-
-    kind: str = Field(..., description='Entry kind: agents | mcps | plugins | settings')
-    entry_name: str = Field(
-        ...,
-        min_length=1,
-        max_length=120,
-        pattern=ENTRY_NAME_PATTERN,
-        description='Unique name within the group. A plain filename: letters, digits, dot, underscore, hyphen.',
-    )
-    content: str = Field(
-        ...,
-        max_length=MAX_ENTRY_CONTENT_BYTES,
-        description='Raw file content',
-    )
-    content_type: str = Field(..., description='Content type hint: markdown | yaml | json')
-    enabled: bool = Field(True, description='Whether the entry is active')
-    # Plugin install source — same trio as the wire response. See
-    # OrgGroupEntryResponse.source_url for the contract.
-    source_url: str | None = Field(None, max_length=2048)
-    source_ref: str | None = Field(None, max_length=512)
-    source_subdir: str | None = Field(None, max_length=1024)
-    # Agents only: which model this one runs against. Absent falls back
-    # to the group's default, then the deployment's.
-    model: str | None = Field(None, description='Model or LoRA adapter this agent uses')
-
-    @model_validator(mode='after')
-    def _source_fields_are_complete(self) -> 'CreateEntryRequest':
-        """Reject half-filled plugin source specs (ref/subdir without URL).
-
-        Mirrors the Pydantic rule in
-        ``ember_code.core.config.group_policy.GroupPolicyEntryEntry``
-        so the FE catches the same mistake before hitting the wire.
-        Empty strings are treated as absent — wire formats commonly
-        serialize "no value" as ``""``, so ``is None`` alone would
-        let ``""`` + ``"main"`` slip past.
-        """
-        url_present = bool(self.source_url and self.source_url.strip())
-        ref_present = bool(self.source_ref and self.source_ref.strip())
-        subdir_present = bool(self.source_subdir and self.source_subdir.strip())
-
-        if (ref_present or subdir_present) and not url_present:
-            raise ValueError('source_ref / source_subdir require source_url to be set')
-        return self
-
-
-class UpdateEntryRequest(BaseModel):
-    """Request to update an entry.
-
-    ``model`` follows the usual partial-update rule — absent leaves it
-    alone — with an empty string as the explicit clear, since ``None``
-    already means "not supplied".
-    """
-
-    content: str | None = Field(None, max_length=MAX_ENTRY_CONTENT_BYTES)
-    enabled: bool | None = None
-    model: str | None = None
-
-
-# ------------------------------------------------------------------
 # CLI pack (consumed by igni CLI)
 # ------------------------------------------------------------------
 
@@ -393,28 +227,6 @@ class OrgGroupSummary(BaseModel):
     id: str
     org_id: str
     name: str
-
-
-class OrgGroupPackEntry(BaseModel):
-    """One entry entry in the group pack."""
-
-    kind: str
-    entry_name: str
-    content: str
-    content_type: str
-    enabled: bool
-    # Agents only: which model this one runs against. Null means the
-    # group's default, then the deployment's.
-    model: str | None = None
-    # Plugin install source trio — populated only for ``kind == "plugins"``
-    # entries the admin attached a git source to. The CLI's
-    # :class:`GroupPolicyCache` uses ``source_url`` to decide between
-    # writing YAML vs invoking :class:`PluginInstaller`. Mirrors the trio
-    # on :class:`OrgGroupEntryResponse`; nullable on the wire so
-    # non-plugin kinds and old rows round-trip unchanged.
-    source_url: str | None = None
-    source_ref: str | None = None
-    source_subdir: str | None = None
 
 
 class OrgGroupPack(BaseModel):

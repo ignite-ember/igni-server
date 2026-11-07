@@ -5,15 +5,18 @@ import hashlib
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from app.api.base_v1.schema.portal.group_entries import (
+    AgentToolsResponse,
+    CreateEntryRequest,
+    OrgGroupEntryList,
+    UpdateEntryRequest,
+)
 from app.api.base_v1.schema.portal.groups import (
     AddMemberRequest,
-    AgentToolsResponse,
     CopyGroupRequest,
-    CreateEntryRequest,
     CreateGroupRequest,
     GroupExtensionList,
     OrgGroupDetail,
-    OrgGroupEntryList,
     OrgGroupList,
     OrgGroupMemberList,
     OrgGroupMembershipList,
@@ -21,14 +24,18 @@ from app.api.base_v1.schema.portal.groups import (
     OrgGroupSummary,
     SetGroupExtension,
     SignedOrgGroupPack,
-    UpdateEntryRequest,
     UpdateGroupRequest,
 )
 from app.api.base_v1.schema.portal.user import PortalAccount, PortalUser
 from app.security.portal_auth import get_current_account, get_current_portal_user, require_admin
 from app.services.portal.agent_tools import KNOWN_TOOLS
+from app.services.portal.entry_warnings import EntryWarnings
+from app.services.portal.group_entries_service import GroupEntriesService
 from app.services.portal.group_extensions import GroupExtensions
+from app.services.portal.group_members_service import GroupMembersService
+from app.services.portal.group_pack_service import GroupPackService
 from app.services.portal.group_pack_signature import GroupPackSigner
+from app.services.portal.group_refusals import GroupRefusals
 from app.services.portal.groups_service import GroupsService
 
 router = APIRouter()
@@ -53,12 +60,13 @@ async def list_groups(
     creating one — reads open, writes admin-only. The result is scoped to
     ``current_user.org_id``, so a member only ever sees their own org.
     """
-    return await GroupsService.list_groups(
-        org_id=current_user.org_id,
-        offset=offset,
-        limit=limit,
-        seed_default_for_user_id=current_user.user_id,
-    )
+    with GroupRefusals():
+        return await GroupsService().list_groups(
+            org_id=current_user.org_id,
+            offset=offset,
+            limit=limit,
+            seed_default_for_user_id=current_user.user_id,
+        )
 
 
 @router.post('/groups', response_model=OrgGroupResponse, status_code=status.HTTP_201_CREATED)
@@ -67,7 +75,10 @@ async def create_group(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupResponse:
     """Create a new group. Admin-only."""
-    return await GroupsService.create_group(body=body, current_user=current_user)
+    with GroupRefusals():
+        return await GroupsService().create_group(
+            org_id=current_user.org_id, body=body, by_user_id=current_user.user_id
+        )
 
 
 @router.get('/groups/{group_id}', response_model=OrgGroupDetail, status_code=status.HTTP_200_OK)
@@ -76,7 +87,10 @@ async def get_group(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupDetail:
     """Get a single group with member and entry counts. Admin-only."""
-    return await GroupsService.get_group(group_id=group_id, org_id=current_user.org_id, by_user_id=current_user.user_id)
+    with GroupRefusals():
+        return await GroupsService().get_group(
+            org_id=current_user.org_id, group_id=group_id, by_user_id=current_user.user_id
+        )
 
 
 @router.patch('/groups/{group_id}', response_model=OrgGroupResponse, status_code=status.HTTP_200_OK)
@@ -86,11 +100,8 @@ async def update_group(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupResponse:
     """Update a group's name or description. Admin-only."""
-    return await GroupsService.update_group(
-        group_id=group_id,
-        body=body,
-        current_user=current_user,
-    )
+    with GroupRefusals():
+        return await GroupsService().update_group(org_id=current_user.org_id, group_id=group_id, body=body)
 
 
 @router.delete('/groups/{group_id}', status_code=status.HTTP_204_NO_CONTENT)
@@ -99,7 +110,10 @@ async def delete_group(
     current_user: PortalUser = Depends(require_admin),
 ) -> None:
     """Delete a group and its entries. Its people go back to the Default group. Admin-only."""
-    await GroupsService.delete_group(group_id=group_id, current_user=current_user)
+    with GroupRefusals():
+        await GroupsService().delete_group(
+            org_id=current_user.org_id, group_id=group_id, by_user_id=current_user.user_id
+        )
 
 
 @router.post('/groups/{group_id}/copy', response_model=OrgGroupResponse, status_code=status.HTTP_201_CREATED)
@@ -109,7 +123,10 @@ async def copy_group(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupResponse:
     """Copy a group's entries, extensions and settings into a new group with nobody in it. Admin-only."""
-    return await GroupsService.copy_group(group_id=group_id, body=body, current_user=current_user)
+    with GroupRefusals():
+        return await GroupsService().copy_group(
+            org_id=current_user.org_id, group_id=group_id, body=body, by_user_id=current_user.user_id
+        )
 
 
 # -------------------------------------------------------------------------
@@ -122,7 +139,8 @@ async def list_group_memberships(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupMembershipList:
     """Every active person of the organisation and the one group they are in. Admin-only."""
-    return await GroupsService.memberships(current_user=current_user)
+    with GroupRefusals():
+        return await GroupMembersService().memberships(org_id=current_user.org_id, by_user_id=current_user.user_id)
 
 
 @router.get('/groups/{group_id}/members', response_model=OrgGroupMemberList, status_code=status.HTTP_200_OK)
@@ -136,9 +154,10 @@ async def list_group_members(
     organization, not of the one that owns this group — passing
     ``org_id`` is what turns the first into the second.
     """
-    return await GroupsService.list_members(
-        group_id=group_id, org_id=current_user.org_id, by_user_id=current_user.user_id
-    )
+    with GroupRefusals():
+        return await GroupMembersService().list_members(
+            org_id=current_user.org_id, group_id=group_id, by_user_id=current_user.user_id
+        )
 
 
 @router.post(
@@ -156,13 +175,13 @@ async def add_group_member(
     A person is in exactly one group, so this is the only way into one:
     there is no separate "move".
     """
-    await GroupsService.add_member(
-        group_id=group_id,
-        user_id=body.user_id,
-        current_user=current_user,
-    )
-    # Return updated member list, scoped like the mutation above it.
-    return await GroupsService.list_members(group_id=group_id, org_id=current_user.org_id)
+    members = GroupMembersService()
+    with GroupRefusals():
+        await members.add_member(
+            org_id=current_user.org_id, group_id=group_id, user_id=body.user_id, by_user_id=current_user.user_id
+        )
+        # Return updated member list, scoped like the mutation above it.
+        return await members.list_members(org_id=current_user.org_id, group_id=group_id)
 
 
 @router.delete(
@@ -179,7 +198,10 @@ async def remove_group_member(
     409 on the Default group itself: nobody leaves it except by being
     put in another group.
     """
-    await GroupsService.remove_member(group_id=group_id, user_id=user_id, current_user=current_user)
+    with GroupRefusals():
+        await GroupMembersService().remove_member(
+            org_id=current_user.org_id, group_id=group_id, user_id=user_id, by_user_id=current_user.user_id
+        )
 
 
 @router.get(
@@ -192,7 +214,8 @@ async def get_user_group(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupSummary | None:
     """Get the group a user belongs to. Admin-only, scoped to this org."""
-    return await GroupsService.get_user_group(user_id=user_id, org_id=current_user.org_id)
+    with GroupRefusals():
+        return await GroupMembersService().get_user_group(org_id=current_user.org_id, user_id=user_id)
 
 
 # -------------------------------------------------------------------------
@@ -210,7 +233,8 @@ async def list_entries(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupEntryList:
     """List all entries for a group. Admin-only."""
-    return await GroupsService.list_entries(group_id=group_id, org_id=current_user.org_id)
+    with GroupRefusals():
+        return await GroupEntriesService().list_entries(org_id=current_user.org_id, group_id=group_id)
 
 
 @router.post(
@@ -230,15 +254,19 @@ async def create_entry(
     write, but the admin should hear about it now rather than when an
     agent fails to start.
     """
-    await GroupsService.create_entry(
-        group_id=group_id,
-        body=body,
-        current_user=current_user,
-    )
-    listing = await GroupsService.list_entries(group_id=group_id, org_id=current_user.org_id)
-    listing.warnings = await GroupsService.warnings_for(
-        body.kind, body.content, org_id=current_user.org_id, group_id=group_id, entry_name=body.entry_name
-    )
+    entries = GroupEntriesService()
+    with GroupRefusals():
+        await entries.create_entry(
+            org_id=current_user.org_id, group_id=group_id, body=body, by_user_id=current_user.user_id
+        )
+        listing = await entries.list_entries(org_id=current_user.org_id, group_id=group_id)
+        listing.warnings = await EntryWarnings().warnings_for(
+            kind=body.kind,
+            content=body.content,
+            org_id=current_user.org_id,
+            group_id=group_id,
+            entry_name=body.entry_name,
+        )
     return listing
 
 
@@ -254,22 +282,19 @@ async def update_entry(
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupEntryList:
     """Update an entry's content or enabled state. Admin-only."""
-    await GroupsService.update_entry(
-        group_id=group_id,
-        entry_id=entry_id,
-        body=body,
-        org_id=current_user.org_id,
-    )
-    listing = await GroupsService.list_entries(group_id=group_id, org_id=current_user.org_id)
-    if body.content is not None:
-        entry = await GroupsService.get_entry(group_id, entry_id, current_user.org_id)
-        listing.warnings = await GroupsService.warnings_for(
-            str(entry.kind),
-            body.content,
-            org_id=current_user.org_id,
-            group_id=group_id,
-            entry_name=str(entry.entry_name),
-        )
+    entries = GroupEntriesService()
+    with GroupRefusals():
+        await entries.update_entry(org_id=current_user.org_id, group_id=group_id, entry_id=entry_id, body=body)
+        listing = await entries.list_entries(org_id=current_user.org_id, group_id=group_id)
+        if body.content is not None:
+            entry = await entries.get_entry(org_id=current_user.org_id, group_id=group_id, entry_id=entry_id)
+            listing.warnings = await EntryWarnings().warnings_for(
+                kind=str(entry.kind),
+                content=body.content,
+                org_id=current_user.org_id,
+                group_id=group_id,
+                entry_name=str(entry.entry_name),
+            )
     return listing
 
 
@@ -283,7 +308,8 @@ async def delete_entry(
     current_user: PortalUser = Depends(require_admin),
 ) -> None:
     """Delete an entry. Admin-only."""
-    await GroupsService.delete_entry(group_id=group_id, entry_id=entry_id, org_id=current_user.org_id)
+    with GroupRefusals():
+        await GroupEntriesService().delete_entry(org_id=current_user.org_id, group_id=group_id, entry_id=entry_id)
 
 
 # -------------------------------------------------------------------------
@@ -339,7 +365,8 @@ async def get_my_group(
     in a group under a different org, and this endpoint answers about the
     one they are asking as.
     """
-    return await GroupsService.get_user_group(user_id=current_user.user_id, org_id=current_user.org_id)
+    with GroupRefusals():
+        return await GroupMembersService().get_user_group(org_id=current_user.org_id, user_id=current_user.user_id)
 
 
 @router.get(
@@ -386,7 +413,8 @@ async def get_my_group_pack(
     """
     # The group in the organisation this session is in, which is also the
     # `org` the signed pack names and igni checks against the token.
-    pack = await GroupsService.get_my_group_pack(user_id=current_user.user_id, org_id=current_user.org_id)
+    with GroupRefusals():
+        pack = await GroupPackService().get_my_group_pack(user_id=current_user.user_id, org_id=current_user.org_id)
     signer = GroupPackSigner()
     if pack is None:
         # "No pack for you", signed for this person, so igni can clear the

@@ -5686,7 +5686,7 @@
         "type": "object"
       },
       "OrgGroupEntryResponse": {
-        "description": "A single entry entry for a group.",
+        "description": "A single entry for a group.",
         "properties": {
           "content": {
             "title": "Content",
@@ -5954,7 +5954,7 @@
         "type": "object"
       },
       "OrgGroupPackEntry": {
-        "description": "One entry entry in the group pack.",
+        "description": "One entry in the group pack.",
         "properties": {
           "content": {
             "title": "Content",
