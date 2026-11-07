@@ -84,7 +84,8 @@ def clean_pool(monkeypatch, tmp_path):
 
     SingletonMeta._instances.pop(PoolManager, None)
     PoolManager(provider=InferenceBackendProvider(path='', inline='', registry=NoRegistry()))
-    monkeypatch.setattr('app.api.base_v1.endpoints.portal.inference.NodeRegistry', NoRegistry)
+    monkeypatch.setattr('app.services.ai.fleet_status.NodeRegistry', NoRegistry)
+    monkeypatch.setattr('app.services.ai.pinned_nodes.NodeRegistry', NoRegistry)
     yield
     SingletonMeta._instances.pop(PoolManager, None)
 
@@ -222,7 +223,7 @@ class TestIdCollisions:
             async def get(self, node_id):
                 return object() if node_id == 'gpu-hand-01' else None
 
-        monkeypatch.setattr('app.api.base_v1.endpoints.portal.inference.NodeRegistry', Registered)
+        monkeypatch.setattr('app.services.ai.pinned_nodes.NodeRegistry', Registered)
         resp = await client.post('/portal/inference/nodes', json=NODE, headers=admin)
         assert resp.status_code == 409
         assert 'cluster automation' in resp.json()['detail']

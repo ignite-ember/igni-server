@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.db.sql.models.inference_node import InferenceNode
 from app.db.sql.schemas.inference_node import NodeChanges
+from app.services.ai.fleet_schemas import FleetSnapshot
 from app.services.ai.schemas import BackendStatus, InferenceBackend
 
 
@@ -296,6 +297,20 @@ class InferenceStatusView(BaseModel):
     utilization: float
     registration_enabled: bool
     heartbeat_interval_seconds: int
+
+    @classmethod
+    def of(
+        cls, snapshot: FleetSnapshot, *, registration_enabled: bool, heartbeat_interval_seconds: int
+    ) -> 'InferenceStatusView':
+        """Project a fleet snapshot for the portal."""
+        return cls(
+            nodes=[NodeStatusView.of(s) for s in snapshot.nodes],
+            total_in_flight=snapshot.total_in_flight,
+            total_capacity=snapshot.total_capacity,
+            utilization=snapshot.utilization,
+            registration_enabled=registration_enabled,
+            heartbeat_interval_seconds=heartbeat_interval_seconds,
+        )
 
 
 class NodeProbeRequest(BaseModel):

@@ -71,7 +71,8 @@ def registry(monkeypatch):
     FakeRegistry.nodes = {}
     monkeypatch.setattr('app.services.ai.node_registry.NodeRegistry', FakeRegistry)
     monkeypatch.setattr('app.api.base_v1.endpoints.client.nodes.NodeRegistry', FakeRegistry)
-    monkeypatch.setattr('app.api.base_v1.endpoints.portal.inference.NodeRegistry', FakeRegistry)
+    monkeypatch.setattr('app.services.ai.fleet_status.NodeRegistry', FakeRegistry)
+    monkeypatch.setattr('app.services.ai.pinned_nodes.NodeRegistry', FakeRegistry)
     return FakeRegistry
 
 

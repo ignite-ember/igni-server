@@ -109,6 +109,16 @@ class InferenceBackendPool:
 
     # ── Public API ───────────────────────────────────────────────────
 
+    @property
+    def drains(self) -> NodeDrainRegistry:
+        """The drain registry this pool reads on every acquire.
+
+        Exposed so whatever takes a node out of rotation writes through
+        the same registry — and the same Redis client — that routing
+        reads, rather than opening a second one.
+        """
+        return self._drains
+
     @asynccontextmanager
     async def lease(
         self,

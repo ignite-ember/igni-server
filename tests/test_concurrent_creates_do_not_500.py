@@ -117,8 +117,8 @@ class TestInferenceNodeId:
         await nodes.create(node_id='dup-node', **kwargs)
 
         # A domain error, not an HTTPException. The status code is the
-        # router's to choose — see the 409 mapping in
-        # app/api/base_v1/endpoints/portal/inference.py — and a caller
+        # router's to choose — see app/services/ai/pinned_nodes.py, which
+        # turns it into a NodeIdTaken the portal router maps to 409 — and a caller
         # that is not an HTTP request can now catch this by name.
         with pytest.raises(NodeIdAlreadyRegistered) as caught:
             await nodes.create(node_id='dup-node', **kwargs)
