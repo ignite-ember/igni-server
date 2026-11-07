@@ -84,7 +84,7 @@ class GroupExtensions:
             ]
         )
 
-    async def set(self, org_id: str, group_id: str, extension_id: str, enabled: bool, by_user_id: str) -> None:
+    async def set(self, org_id: str, *, group_id: str, extension_id: str, enabled: bool, by_user_id: str) -> None:
         """Switch an approved extension on or off for a group.
 
         The Default group can have extensions too: it is read-only as the

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 import hashlib
 import json
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -81,4 +82,15 @@ class SignedOrgGroupPack(OrgGroupPack):
     (`app.services.portal.group_pack_signature`); igni applies only that.
     """
 
+    signed_pack: str
+
+
+class SignedNoPack(BaseModel):
+    """What `GET /v1/portal/me/group/pack` serves to a person with no pack.
+
+    Signed for that person (`GroupPackSigner.sign_absence`), so igni can
+    clear the policy it cached rather than ignore an unsigned `null`.
+    """
+
+    no_pack: Literal[True] = True
     signed_pack: str

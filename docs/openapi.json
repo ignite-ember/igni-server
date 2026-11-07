@@ -8783,6 +8783,26 @@
         "title": "SignUpRequest",
         "type": "object"
       },
+      "SignedNoPack": {
+        "description": "What `GET /v1/portal/me/group/pack` serves to a person with no pack.\n\nSigned for that person (`GroupPackSigner.sign_absence`), so igni can\nclear the policy it cached rather than ignore an unsigned `null`.",
+        "properties": {
+          "no_pack": {
+            "const": true,
+            "default": true,
+            "title": "No Pack",
+            "type": "boolean"
+          },
+          "signed_pack": {
+            "title": "Signed Pack",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signed_pack"
+        ],
+        "title": "SignedNoPack",
+        "type": "object"
+      },
       "SignedOrgGroupPack": {
         "description": "What `GET /v1/portal/me/group/pack` serves: the pack, and the pack signed.\n\nEvery field of `OrgGroupPack` is still here, unchanged, for clients\nthat read them. `signed_pack` is the same content as a compact JWS\n(`app.services.portal.group_pack_signature`); igni applies only that.",
         "properties": {
@@ -18020,7 +18040,7 @@
     },
     "/v1/portal/me/group/pack": {
       "get": {
-        "description": "The current user's group pack. Any signed-in account.\n\nAn account rather than an org member: igni asks for this on every\nsession, and an account in no organisation yet is a normal state\nthat has no pack, not a refusal for the CLI to report.\n\nRevalidates: a client that sends back the ``ETag`` it holds gets a\n304 and no body when nothing has changed. igni polls this every few\nminutes from every running session, and the answer is almost always\n\"same as before\" — a full pack of agent prompts each time would be\na lot of bytes to say nothing.\n\nRevalidation, not caching: every response leaves here with\n``no-store`` (see ``DisableCacheMiddleware``), so the client asks\nevery time and the saving is in the answer, not in the asking.",
+        "description": "The current user's group pack, signed. Any signed-in account.\n\nAn account rather than an org member: igni asks for this on every\nsession, and an account in no organisation yet is a normal state\nthat has no pack, not a refusal for the CLI to report. It gets a\nsigned \"no pack\" so igni can clear the policy it cached.\n\nRevalidates: a client that sends back the ``ETag`` it holds gets a\n304 and no body when nothing has changed (see ``GroupPackDelivery``).\n\nRevalidation, not caching: every response leaves here with\n``no-store`` (see ``DisableCacheMiddleware``), so a ``Cache-Control``\nset here would not be delivered. ``no-store`` stops a cache *storing*\nthe pack and leaves conditional revalidation alone, so the client asks\nevery time and the saving is in the answer, not in the asking.",
         "operationId": "get_my_group_pack_v1_portal_me_group_pack_get",
         "responses": {
           "200": {
@@ -18032,7 +18052,7 @@
                       "$ref": "#/components/schemas/SignedOrgGroupPack"
                     },
                     {
-                      "type": "null"
+                      "$ref": "#/components/schemas/SignedNoPack"
                     }
                   ],
                   "title": "Response Get My Group Pack V1 Portal Me Group Pack Get"
