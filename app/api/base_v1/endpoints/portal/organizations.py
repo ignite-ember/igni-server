@@ -18,9 +18,17 @@ from app.api.base_v1.schema.portal.organizations import (
     UpdateOrgRequest,
 )
 from app.api.base_v1.schema.portal.user import OrgSummary, PortalAccount
+from app.db.sql.schemas.org_domain import DomainInUse, DomainNotHeld, DomainTaken
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
-from app.services.portal.org_errors import InvalidSlug, NotOrgAdmin, OrgNotFound, OrgStillHasMembers
+from app.services.portal.org_errors import (
+    InvalidDomain,
+    InvalidSlug,
+    NotOrgAdmin,
+    OrgNotFound,
+    OrgStillHasMembers,
+    PublicMailDomain,
+)
 from app.services.portal.organisations_service import OrganisationsService
 
 router = APIRouter()
@@ -41,6 +49,14 @@ def _invalid_slug(exc: InvalidSlug) -> HTTPException:
 
 def _not_admin(exc: NotOrgAdmin) -> HTTPException:
     return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+
+
+def _bad_domain(exc: InvalidDomain | PublicMailDomain) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
+
+
+def _conflict(exc: DomainTaken | DomainInUse) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.get(
@@ -79,6 +95,10 @@ async def create_organization(
         )
     except InvalidSlug as exc:
         raise _invalid_slug(exc) from exc
+    except (InvalidDomain, PublicMailDomain) as exc:
+        raise _bad_domain(exc) from exc
+    except DomainTaken as exc:
+        raise _conflict(exc) from exc
 
 
 @router.get('/deployment/organizations', response_model=list[DeploymentOrg])
@@ -106,6 +126,10 @@ async def add_domain(
         return await service.add_domain(org_id, body.domain)
     except OrgNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except (InvalidDomain, PublicMailDomain) as exc:
+        raise _bad_domain(exc) from exc
+    except DomainTaken as exc:
+        raise _conflict(exc) from exc
 
 
 @router.delete('/organizations/{org_id}/domains/{domain}', response_model=OrgDomains)
@@ -115,8 +139,15 @@ async def remove_domain(
     _account: PortalAccount = Depends(require_super_admin),
     service: OrganisationsService = Depends(organisations_service),
 ) -> OrgDomains:
-    """Release a domain. Super admins only; 409 while any member's address is on it."""
-    return await service.remove_domain(org_id, domain)
+    """Release a domain. Super admins only; 404 if not theirs, 409 while any member's address is on it."""
+    try:
+        return await service.remove_domain(org_id, domain)
+    except (InvalidDomain, PublicMailDomain) as exc:
+        raise _bad_domain(exc) from exc
+    except DomainNotHeld as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except DomainInUse as exc:
+        raise _conflict(exc) from exc
 
 
 @router.patch(

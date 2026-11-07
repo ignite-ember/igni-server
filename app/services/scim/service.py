@@ -35,11 +35,12 @@ import logging
 import secrets
 
 import bcrypt
-from fastapi import status
+from fastapi import HTTPException, status
 
 from app.api.base_v1.schema.scim import Email, Meta, Name, ScimUser
 from app.api.scim.errors import scim_error
 from app.db.sql.org_domains import OrgDomainDB
+from app.db.sql.schemas.org_domain import AdmissionRefused
 from app.db.sql.user import UserDB
 from app.services.auth.person_name import split_full_name
 from app.services.portal.member_status import MemberStatus
@@ -137,6 +138,13 @@ async def find_by_id(user_id: str):
     return await _users.get_by_user_id(user_id)
 
 
+def _off_every_domain(address: str) -> HTTPException:
+    return scim_error(
+        f"{address} isn't on a domain any organisation here owns. A super admin adds the domain in the portal.",
+        status.HTTP_409_CONFLICT,
+    )
+
+
 async def provision(payload: ScimUser):
     """Create the account a provider is telling us about.
 
@@ -149,21 +157,22 @@ async def provision(payload: ScimUser):
     # Refused in SCIM's own shape, before an account exists: the same
     # rule `UserDB.create` applies, said in words a provider shows.
     if await _domains.org_for_address(address) is None:
-        raise scim_error(
-            f"{address} isn't on a domain any organisation here owns. A super admin adds the domain in the portal.",
-            status.HTTP_409_CONFLICT,
-        )
+        raise _off_every_domain(address)
     full_name = payload.displayName or payload.name.formatted or ''
     if not full_name:
         full_name = f'{payload.name.givenName} {payload.name.familyName}'.strip()
 
     throwaway = bcrypt.hashpw(secrets.token_urlsafe(32).encode(), bcrypt.gensalt()).decode()
-    user = await _users.create(
-        email=address,
-        hashed_password=throwaway,
-        full_name=full_name or None,
-        auth_provider='scim',
-    )
+    try:
+        user = await _users.create(
+            email=address,
+            hashed_password=throwaway,
+            full_name=full_name or None,
+            auth_provider='scim',
+        )
+    except AdmissionRefused as exc:
+        # The domain was released between the check above and the insert.
+        raise _off_every_domain(address) from exc
     # A provider may create somebody already deactivated — a leaver
     # synced for the first time. Honoured rather than assumed active.
     if not payload.active:

@@ -111,7 +111,9 @@ class OrganizationDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         domains: list[str],
         owner_email: str | None = None,
     ) -> Organization:
-        """Create an organisation owning ``domains``. 409 for a taken slug or domain.
+        """Create an organisation owning ``domains``.
+
+        409 for a taken slug; `DomainTaken` for a taken domain.
 
         The creator becomes its admin only when their own address is on
         one of its domains: a person belongs to the organisation owning
@@ -169,7 +171,7 @@ class OrganizationDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"The name '{slug}' is already taken. Pick a different one.",
                 ) from exc
-            await OrgDomainDB().claim(session, str(org.id), domains)
+            await OrgDomainDB().claim(session, org_id=str(org.id), domains=domains)
             return org
 
     async def ensure_exists(

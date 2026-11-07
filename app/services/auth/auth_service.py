@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from app.api.base_v1.schema.auth import SignInRequest, SignUpRequest
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.organizations import OrganizationDB
+from app.db.sql.schemas.org_domain import AdmissionRefused
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.security.account_domains import refuse_public_mail
@@ -105,6 +106,9 @@ class AuthService:
                 hashed_password=AuthService.hash_password(user_data.password),
                 full_name=full_name,
             )
+        except AdmissionRefused as exc:
+            # An address this deployment does not take, said in words the person can act on.
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
         except HTTPException:
             # `UserDB.create` raises its own 409 for a duplicate address,
             # which is the caller's problem and says so. Passed through.

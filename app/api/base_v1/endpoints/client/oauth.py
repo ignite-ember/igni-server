@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from app.api.base_v1.schema.oauth import SocialSignInState
 from app.config import settings
 from app.db.redis.auth_handoff import auth_handoff, AuthHandoffDB
+from app.db.sql.schemas.org_domain import AdmissionRefused
 from app.services.auth.auth_emails import auth_emails, AuthEmails
 from app.services.auth.oauth_service import OAuthExchangeFailed, OAuthProvider, OAuthService
 from app.services.auth.providers import is_usable
@@ -90,7 +91,10 @@ async def oauth_callback(
         logger.warning('OAuth exchange with %s failed', resolved.value, exc_info=exc)
         return _to_login({'error': 'OAuth sign-in failed. Please try again.'})
 
-    result = await OAuthService.find_or_create_user_and_get_token(user_info)
+    try:
+        result = await OAuthService.find_or_create_user_and_get_token(user_info)
+    except AdmissionRefused as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     if result.is_new_user:
         emails.welcome(bg, email=result.email)
 

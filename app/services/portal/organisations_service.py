@@ -2,7 +2,8 @@
 
 Who may do what is decided here, not in the router: a super admin creates
 organisations and assigns their domains; an organisation's own admin
-renames or deletes it. Each refusal is a typed error from `org_errors`.
+renames or deletes it. Each refusal is a typed error from `org_errors`, or from the domain store's
+`app.db.sql.schemas.org_domain`.
 """
 
 from __future__ import annotations
@@ -12,11 +13,12 @@ from collections.abc import Callable
 from app.api.base_v1.schema.portal.organizations import CreateOrgResponse, DeploymentOrg, OrgDomains
 from app.api.base_v1.schema.portal.user import OrgSummary, PortalAccount
 from app.db.sql.models.organization import Organization
-from app.db.sql.org_domains import normalise_domain, OrgDomainDB
+from app.db.sql.org_domains import OrgDomainDB
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
 from app.services.cloud.producer_feed import ProducerFeed
 from app.services.identity.organisation_deletions import OrganisationDeletions
+from app.services.portal.company_domain import CompanyDomain
 from app.services.portal.org_errors import NotOrgAdmin, OrgNotFound, OrgStillHasMembers
 from app.services.portal.org_slug import OrgSlug
 
@@ -50,12 +52,15 @@ class OrganisationsService:
     async def create(
         self, *, display_name: str, slug: str | None, domains: list[str], creator: PortalAccount
     ) -> CreateOrgResponse:
-        """A new organisation owning *domains*; the creator becomes its admin. `InvalidSlug`."""
+        """A new organisation owning *domains*; the creator becomes its admin.
+
+        `InvalidSlug`, `InvalidDomain`, `PublicMailDomain`, `DomainTaken`.
+        """
         org = await self._orgs.create(
             display_name=display_name,
             slug=OrgSlug.for_new_org(slug=slug, display_name=display_name),
             owner_user_id=creator.user_id,
-            domains=sorted({normalise_domain(domain) for domain in domains}),
+            domains=sorted({CompanyDomain.checked(domain) for domain in domains}),
             owner_email=creator.email,
         )
         return self._response(org)
@@ -74,14 +79,14 @@ class OrganisationsService:
         ]
 
     async def add_domain(self, org_id: str, domain: str) -> OrgDomains:
-        """Give the organisation another domain. `OrgNotFound`; the domain store refuses one owned elsewhere."""
+        """Give the organisation another domain. `OrgNotFound`, `InvalidDomain`, `PublicMailDomain`, `DomainTaken`."""
         if await self._orgs.get_by_id(org_id) is None:
             raise OrgNotFound()
-        return OrgDomains(org_id=org_id, domains=await self._domains.add(org_id, normalise_domain(domain)))
+        return OrgDomains(org_id=org_id, domains=await self._domains.add(org_id, CompanyDomain.checked(domain)))
 
     async def remove_domain(self, org_id: str, domain: str) -> OrgDomains:
-        """Release a domain; the domain store refuses while a member's address is on it."""
-        return OrgDomains(org_id=org_id, domains=await self._domains.remove(org_id, normalise_domain(domain)))
+        """Release a domain. `InvalidDomain`, `PublicMailDomain`, `DomainNotHeld`, `DomainInUse`."""
+        return OrgDomains(org_id=org_id, domains=await self._domains.remove(org_id, CompanyDomain.checked(domain)))
 
     async def update(
         self, org_id: str, *, display_name: str | None, slug: str | None, by: PortalAccount

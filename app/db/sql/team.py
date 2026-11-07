@@ -1,6 +1,5 @@
 """Database layer for team management (org-scoped)."""
 
-from collections.abc import Sequence
 from datetime import datetime, timezone
 import logging
 import uuid
@@ -19,38 +18,6 @@ logger = logging.getLogger(__name__)
 
 #: The unique index a duplicate violates.
 _PENDING_INVITE_INDEX = 'uq_org_memberships_pending_invite'
-
-
-def newest_invite_per_org(
-    rows: Sequence[OrgMembership],
-) -> tuple[dict[str, OrgMembership], list[OrgMembership]]:
-    """Split pending invitations into the one to keep per org, and the rest.
-
-    Used by :meth:`Admission.admit` (``app.db.sql.org_domains``), and kept here so it can be
-    tested without a database. The state it guards against — two pending
-    rows for one address in one org — can no longer be *created*, because
-    ``uq_org_memberships_pending_invite`` refuses it; and reproducing it in
-    a test by dropping the index deadlocks, since the DDL lock blocks the
-    session the claim opens. Pure logic, tested directly.
-
-    Newest wins. Re-inviting somebody is an admin restating current
-    intent, so the last invite is the live one. Keeping the
-    higher-privilege row instead would turn a corrective demotion into a
-    silent grant, and keeping the oldest would ignore the admin's most
-    recent decision.
-
-    Ties on ``created_at`` are broken by ``id`` so the outcome is
-    deterministic rather than dependent on scan order.
-    """
-    keep: dict[str, OrgMembership] = {}
-    superseded: list[OrgMembership] = []
-    for row in sorted(rows, key=lambda r: (r.created_at, r.id), reverse=True):
-        org_id = str(row.org_id)
-        if org_id in keep:
-            superseded.append(row)
-        else:
-            keep[org_id] = row
-    return keep, superseded
 
 
 class TeamDB(SQLAlchemySessionManager, metaclass=SingletonMeta):

@@ -208,6 +208,10 @@ class TestNoCreateFlushesWithoutAHandler:
             # provision, so no second writer can insert the same org_id,
             # number or database meanwhile. F90: no dead handler.
             'tenant_registry.py',
+            # A membership is inserted for the account being made in the
+            # same transaction, or moved under the super-admin advisory
+            # lock, so no second writer holds that (org_id, user_id).
+            'admission.py',
         }
 
         unguarded = []

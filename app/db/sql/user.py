@@ -9,12 +9,13 @@ from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db.sql import SQLAlchemySessionManager
+from app.db.sql.admission import Admission
 from app.db.sql.group_person_erasure import GroupPersonErasureDB
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.organization import Organization
 from app.db.sql.models.user import User
-from app.db.sql.org_domains import Admission, NOT_A_COMPANY_ADDRESS
 from app.db.sql.organisation_deletion_notices import OrganisationDeletionNoticeDB
+from app.db.sql.schemas.org_domain import NotACompanyAddress
 from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.account_domains import refuse_public_mail
 from app.utils.singleton import SingletonMeta
@@ -74,9 +75,10 @@ class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
 
             # Who may have an account, and where they belong, decided
             # under the lock: two first sign-ups must not both be the
-            # bootstrap account. See `app.db.sql.org_domains`.
+            # bootstrap account. See `app.db.sql.admission`.
             first = await self._nobody_is_super_admin(session)
-            joins = await Admission.check(session, email)
+            admission = Admission(session)
+            joins = await admission.joining(email)
 
             now = datetime.now(timezone.utc)
             user = User(
@@ -111,7 +113,7 @@ class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                     detail='User already registered',
                 ) from exc
             if joins is not None:
-                await Admission.admit(session, joins, str(user.user_id), email)
+                await admission.admit(org=joins, user_id=str(user.user_id), email=email)
             return user
 
     async def get_by_email(self, email: str) -> User | None:
@@ -345,7 +347,7 @@ class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
 
         409 when the account is already in an organisation (its address
         decides which, so it is not changed here) or the address is
-        taken; 403 when no organisation owns the address's domain.
+        taken; `NotACompanyAddress` when no organisation owns the address's domain.
         """
         async with self.session_scope() as session:
             await session.execute(text('SELECT pg_advisory_xact_lock(:key)'), {'key': _SUPER_ADMIN_LOCK})
@@ -367,13 +369,14 @@ class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             ).first()
             if taken is not None:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='That address already has an account.')
-            joins = await Admission.owner_of(session, email)
+            admission = Admission(session)
+            joins = await admission.owner_of(email)
             if joins is None:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_A_COMPANY_ADDRESS)
+                raise NotACompanyAddress()
             user.email = email
             user.updated_at = datetime.now(timezone.utc)
             await session.flush()
-            await Admission.admit(session, joins, user_id, email)
+            await admission.admit(org=joins, user_id=user_id, email=email)
             return joins
 
     @staticmethod

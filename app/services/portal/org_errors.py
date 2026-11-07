@@ -24,3 +24,19 @@ class OrgStillHasMembers(Exception):
     def __init__(self, count: int) -> None:
         super().__init__(f'Remove all members before deleting. {count} member(s) still in this organization.')
         self.count = count
+
+
+class InvalidDomain(ValueError):
+    """Not an email domain at all."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"'{value}' is not an email domain, like acme.com.")
+        self.value = value
+
+
+class PublicMailDomain(ValueError):
+    """A consumer mail provider's domain, which names no employer."""
+
+    def __init__(self, domain: str) -> None:
+        super().__init__(f'{domain} is a public mail provider, not a company domain.')
+        self.domain = domain

@@ -32,7 +32,7 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.user import User
-from app.db.sql.org_domains import NOT_A_COMPANY_ADDRESS, NOT_SET_UP_YET
+from app.db.sql.schemas.org_domain import NotACompanyAddress, NotSetUpYet
 from app.db.sql.user import LastSuperAdmin, UserDB
 from app.security.portal_auth import NO_ORGANISATION
 from app.services.auth.otp_service import OTPResult, OTPService
@@ -102,7 +102,7 @@ class TestAFreshInstall:
         response = await _sign_up(client, 'second@acmecorp.io')
 
         assert response.status_code == 403
-        assert response.json()['detail'] == NOT_SET_UP_YET
+        assert response.json()['detail'] == str(NotSetUpYet())
 
     async def test_two_first_sign_ups_at_once_make_one_account(self, db):
         outcomes = await asyncio.gather(
@@ -112,7 +112,7 @@ class TestAFreshInstall:
 
         made = [o for o in outcomes if isinstance(o, User)]
         assert len(made) == 1 and made[0].is_super_admin is True
-        assert all(isinstance(o, HTTPException) and o.status_code == 403 for o in outcomes if o not in made)
+        assert all(isinstance(o, NotSetUpYet) for o in outcomes if o not in made)
 
     async def test_its_pages_say_why_until_it_has_an_organisation(self, client, codes_accepted):
         user_id = await _signed_up(client, 'founder@acmecorp.io')
@@ -157,7 +157,7 @@ class TestTheDomainDecides:
         response = await _sign_up(client, 'outsider@elsewhere.io')
 
         assert response.status_code == 403
-        assert response.json()['detail'] == NOT_A_COMPANY_ADDRESS
+        assert response.json()['detail'] == str(NotACompanyAddress())
 
     async def test_an_invitation_sets_the_role_they_join_with(self, client, db, codes_accepted):
         owner = await create_user(db, email='owner@acmecorp.io')

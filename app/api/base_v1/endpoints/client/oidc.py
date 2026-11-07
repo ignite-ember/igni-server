@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from app.api.base_v1.schema.oidc import OidcSignInState
 from app.config import settings
 from app.db.redis.auth_handoff import AuthHandoffDB
+from app.db.sql.schemas.org_domain import AdmissionRefused
 from app.services.auth.oauth_service import OAuthService, OAuthUserInfo
 from app.services.auth.oidc import OidcClient, OidcError, OidcNotConfigured
 from app.services.auth.person_name import email_local_part, split_full_name
@@ -93,14 +94,17 @@ async def oidc_callback(code: str = Query(...), state: str = Query(...)):
         )
 
     first, last = split_full_name(claims.full_name)
-    result = await OAuthService.find_or_create_user_and_get_token(
-        OAuthUserInfo(
-            email=claims.email,
-            first_name=first or email_local_part(claims.email),
-            last_name=last,
-            provider='oidc',
+    try:
+        result = await OAuthService.find_or_create_user_and_get_token(
+            OAuthUserInfo(
+                email=claims.email,
+                first_name=first or email_local_part(claims.email),
+                last_name=last,
+                provider='oidc',
+            )
         )
-    )
+    except AdmissionRefused as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
     # A one-time code, never the token — the same reasoning as the other
     # providers. See app/db/redis/auth_handoff.py.
