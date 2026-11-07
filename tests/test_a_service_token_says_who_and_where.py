@@ -423,7 +423,7 @@ class TestRenewalIsWhereRevocationArrives:
 
     async def test_not_once_removed_from_the_organisation(self, client, world):
         refresh = await self._refresh_token(client, world)
-        await TeamDB().update_status(world['org'], world['member'], 'deactivated')
+        await TeamDB().update_status(world['org'], user_id=world['member'], status='deactivated')
 
         response = await _token(client, self._renew(world, refresh))
 

@@ -39,7 +39,7 @@ class MemberStatus:
 
     async def set_in_org(self, org_id: str, user_id: str, *, active: bool) -> str:
         """One membership, as an org admin sets it. Answers the status it had."""
-        old_status = await self._team.update_status(org_id, user_id, ACTIVE if active else DEACTIVATED)
+        old_status = await self._team.update_status(org_id, user_id=user_id, status=ACTIVE if active else DEACTIVATED)
         await self._account(user_id, active=active)
         return old_status
 

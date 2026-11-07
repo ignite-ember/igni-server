@@ -26,6 +26,7 @@ from app.services.cloud.vm_credentials import VmCredentials
 from app.services.identity.api_keys import ApiKeys
 from app.services.portal.member_status import MemberStatus
 from app.services.portal.session_withdrawal import SessionWithdrawal
+from app.services.portal.team_refusals import TeamRefusals
 
 logger = logging.getLogger(__name__)
 
@@ -128,12 +129,10 @@ class TeamService:
                 detail=f'A member with email {email} already exists in this organization',
             )
 
-        member = await self._db.create_invited_member(
-            org_id=current_user.org_id,
-            email=email,
-            role=role,
-            invited_by=current_user.user_id,
-        )
+        with TeamRefusals():
+            member = await self._db.create_invited_member(
+                current_user.org_id, email=email, role=role, invited_by=current_user.user_id
+            )
 
         return TeamMemberResponse(
             id=member.user_id,
@@ -174,7 +173,10 @@ class TeamService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f'{account.email} is a member of another organization',
             )
-        member = await self._db.add_existing(current_user.org_id, user_id, role=role, added_by=current_user.user_id)
+        with TeamRefusals():
+            member = await self._db.add_existing(
+                current_user.org_id, user_id=user_id, role=role, added_by=current_user.user_id
+            )
         return TeamMemberResponse(
             id=user_id,
             user_id=user_id,
@@ -208,7 +210,8 @@ class TeamService:
                 detail=f'Invalid role. Must be one of: {", ".join(valid_roles)}',
             )
 
-        old_role = await self._db.update_role(current_user.org_id, user_id, new_role, assigned_by=current_user.user_id)
+        with TeamRefusals():
+            old_role = await self._db.update_role(current_user.org_id, user_id=user_id, role=new_role)
 
         return RoleChangeResponse(user_id=user_id, old_role=old_role, new_role=new_role)
 
@@ -245,9 +248,10 @@ class TeamService:
 
         # The membership and the account together, as SCIM's `active` does:
         # `MemberStatus` says why the account is the half that deprovisions.
-        old_status = await MemberStatus(team=self._db, users=self._user_db).set_in_org(
-            current_user.org_id, user_id, active=new_status == 'active'
-        )
+        with TeamRefusals():
+            old_status = await MemberStatus(team=self._db, users=self._user_db).set_in_org(
+                current_user.org_id, user_id, active=new_status == 'active'
+            )
 
         return StatusChangeResponse(user_id=user_id, old_status=old_status, new_status=new_status)
 
@@ -294,7 +298,8 @@ class TeamService:
                 detail='Cannot remove yourself',
             )
 
-        async with ProducerFeed().removal():
-            await self._db.delete(current_user.org_id, user_id)
+        with TeamRefusals():
+            async with ProducerFeed().removal():
+                await self._db.delete(current_user.org_id, user_id)
         await VmCredentials().revoke_person(user_id, org_ids=[current_user.org_id])
         await ApiKeys().revoke_person(user_id, org_ids=[current_user.org_id])

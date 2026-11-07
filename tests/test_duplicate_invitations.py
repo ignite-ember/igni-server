@@ -45,11 +45,11 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from fastapi import HTTPException
 import pytest
 from sqlalchemy import select
 
 from app.db.sql.models.org_membership import OrgMembership
+from app.db.sql.schemas.membership_errors import InvitationPending
 from app.db.sql.schemas.pending_invites import PendingInvites
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
@@ -89,11 +89,10 @@ class TestTheConstraintStopsDuplicates:
         team = TeamDB()
         await team.create_invited_member(org_id=org, email='dup@example.com', role='member', invited_by='inviter')
 
-        with pytest.raises(HTTPException) as caught:
+        with pytest.raises(InvitationPending) as caught:
             await team.create_invited_member(org_id=org, email='dup@example.com', role='admin', invited_by='inviter')
 
-        assert caught.value.status_code == 409
-        assert 'dup@example.com' in str(caught.value.detail)
+        assert caught.value.email == 'dup@example.com'
 
     async def test_concurrent_invites_produce_one_row(self, db, org):
         """The shape that produced five rows."""
@@ -107,8 +106,8 @@ class TestTheConstraintStopsDuplicates:
         )
 
         created = [r for r in results if isinstance(r, OrgMembership)]
-        conflicts = [r for r in results if isinstance(r, HTTPException) and r.status_code == 409]
-        other = [r for r in results if not isinstance(r, (OrgMembership, HTTPException))]
+        conflicts = [r for r in results if isinstance(r, InvitationPending)]
+        other = [r for r in results if not isinstance(r, (OrgMembership, InvitationPending))]
 
         assert not other, f'unexpected failures: {other}'
         assert len(created) == 1, f'{len(created)} rows created'
