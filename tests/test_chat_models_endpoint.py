@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.services.ai.chat.services import chat_services, ChatServices
 from app.services.ai.schemas import InferenceBackend
 from tests.conftest import auth_header, create_org, create_user, make_token
 
@@ -36,13 +37,12 @@ class _FakePool:
 
 
 @pytest.fixture(autouse=True)
-def _clear_models_cache():
-    """Drop the 60s cache between tests so each test sees its own fixture."""
-    from app.api.base_v1.endpoints.client.chat import _resolve_models_for
-
-    _resolve_models_for.cache.clear()
+def _fresh_catalog(app):
+    """A fresh `ChatServices` per test, so the 60s model cache never carries over."""
+    services = ChatServices()
+    app.dependency_overrides[chat_services] = lambda: services
     yield
-    _resolve_models_for.cache.clear()
+    app.dependency_overrides.pop(chat_services, None)
 
 
 class TestListChatModels:
@@ -74,8 +74,8 @@ class TestListChatModels:
 
         assert resp.status_code == 200
         body = resp.json()
-        ids = {m['id'] for m in body['models']}
-        assert ids == {'claude-opus-4-7', 'claude-haiku-4-5'}
+        # Each model once, in the order the pool first names it.
+        assert [m['id'] for m in body['models']] == ['claude-opus-4-7', 'claude-haiku-4-5']
         # ``base_url`` is deliberately not returned — the CLI always
         # talks to the igni Server proxy, so upstream provider URLs
         # are routing internals the client doesn't need to see.

@@ -7,7 +7,7 @@ anyone is waiting or not. The igni CLI waits 60 s and then retries,
 three times; one slow request ran on the GPU four times and was billed
 four times.
 
-`_unless_the_client_leaves` races the work against the connection's
+`ClientConnection.unless_it_closes` races the work against the connection's
 `http.disconnect` and cancels it when the caller has gone. The last test
 runs it under a real uvicorn, behind `BaseHTTPMiddleware`s like the
 app's own, with a client that times out — the shape of the CLI's
@@ -19,12 +19,10 @@ never reported the disconnect at all.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import socket
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 import httpx
 import pytest
@@ -32,8 +30,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 from app.api.base_v1.endpoints.client import chat as chat_module
+from app.api.base_v1.endpoints.client.client_connection import ClientConnection
+from app.config import settings
+from app.services.ai.chat.services import chat_services, ChatServices
 from app.services.ai.fair_queue import FairQueue
 from app.services.ai.schemas import NoBackendAvailableError
+from app.services.ai.token_estimate import TokenEstimator
+from tests.chat_proxy import completions, context, lease, on_transport, person, pools, request, SpyPool, UsageRows
 
 POLL = 0.02
 
@@ -80,36 +83,36 @@ class _Work:
 class TestTheRace:
     async def test_a_caller_who_waits_gets_the_answer(self):
         work = _Work(POLL * 3)
-        assert await chat_module._unless_the_client_leaves(_Caller(None), work.run()) == 'answer'
+        assert await ClientConnection(_Caller(None)).unless_it_closes(work.run()) == 'answer'
         assert work.finished and not work.cancelled
 
     async def test_a_caller_who_leaves_after_the_answer_changes_nothing(self):
         work = _Work(0)
-        assert await chat_module._unless_the_client_leaves(_Caller(POLL * 5), work.run()) == 'answer'
+        assert await ClientConnection(_Caller(POLL * 5)).unless_it_closes(work.run()) == 'answer'
         assert work.finished
 
     async def test_a_receive_that_fails_does_not_throw_the_answer_away(self):
         work = _Work(POLL * 2)
-        assert await chat_module._unless_the_client_leaves(_Caller(None, receive_fails=True), work.run()) == 'answer'
+        assert await ClientConnection(_Caller(None, receive_fails=True)).unless_it_closes(work.run()) == 'answer'
         assert work.finished and not work.cancelled
 
     async def test_a_caller_who_leaves_cancels_the_work(self):
         work = _Work(60)
         async with asyncio.timeout(2):
-            assert await chat_module._unless_the_client_leaves(_Caller(POLL * 2), work.run()) is None
+            assert await ClientConnection(_Caller(POLL * 2)).unless_it_closes(work.run()) is None
         assert work.cancelled and not work.finished
 
     async def test_a_failure_still_reaches_the_caller(self):
         async def refuse():
-            raise chat_module.HTTPException(status_code=502, detail='no')
+            raise HTTPException(status_code=502, detail='no')
 
-        with pytest.raises(chat_module.HTTPException) as caught:
-            await chat_module._unless_the_client_leaves(_Caller(None), refuse())
+        with pytest.raises(HTTPException) as caught:
+            await ClientConnection(_Caller(None)).unless_it_closes(refuse())
         assert caught.value.status_code == 502
 
     async def test_the_handler_itself_cancelled_cancels_the_work(self):
         work = _Work(60)
-        task = asyncio.ensure_future(chat_module._unless_the_client_leaves(_Caller(None), work.run()))
+        task = asyncio.ensure_future(ClientConnection(_Caller(None)).unless_it_closes(work.run()))
         await asyncio.sleep(POLL * 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -117,33 +120,15 @@ class TestTheRace:
         assert work.cancelled
 
 
-@dataclass
-class _SpyPool:
-    released: list[str] = field(default_factory=list)
-
-    async def release(self, lease):
-        self.released.append(lease.lease_id)
-
-
-@dataclass
-class _FakeLease:
-    lease_id: str = 'lease-1'
-    backend_id: str = 'node-1'
-    base_url: str = 'http://node.invalid'
-    model: str = 'fake-model'
-    api_key: str | None = None
-
-
 class TestTheUpstreamCall:
-    async def test_leaving_closes_the_upstream_request_releases_the_lease_and_bills_the_prompt(self, monkeypatch):
-        """Through `_non_stream_response` and a real `httpx` client: the
+    async def test_leaving_closes_the_upstream_request_releases_the_lease_and_bills_the_prompt(self):
+        """Through the completion service and a real `httpx` client: the
         node's request is cancelled mid-flight and the lease comes back.
         The prompt's prefill ran, so it is recorded — estimated, as a
-        stream without a usage block is — with no output: it used to be
-        recorded as nothing at all."""
+        stream without a usage block is — with no output."""
         upstream = {'started': 0, 'cancelled': 0, 'finished': 0}
 
-        async def slow_node(request: httpx.Request) -> httpx.Response:
+        async def slow_node(_request: httpx.Request) -> httpx.Response:
             upstream['started'] += 1
             try:
                 await asyncio.sleep(60)
@@ -153,39 +138,25 @@ class TestTheUpstreamCall:
             upstream['finished'] += 1
             return httpx.Response(200, json={'choices': []})
 
-        real_client = httpx.AsyncClient
-
-        def client_on_the_stub_node(*args, **kwargs):
-            kwargs['transport'] = httpx.MockTransport(slow_node)
-            return real_client(*args, **kwargs)
-
-        monkeypatch.setattr(chat_module.httpx, 'AsyncClient', client_on_the_stub_node)
-        log_usage = AsyncMock()
-        monkeypatch.setattr(chat_module._RequestContext, 'log_usage', log_usage)
-
-        pool = _SpyPool()
-        body = {'messages': [{'role': 'user', 'content': 'Summarise the attached contract in three bullet points.'}]}
-        ctx = chat_module._RequestContext(
-            user_id='user-1', org_id='org-1', model='fake-model', lease=_FakeLease(), pool=pool
-        )
+        pool, usage = SpyPool(), UsageRows()
+        prompt = request([{'role': 'user', 'content': 'Summarise the attached contract in three bullet points.'}])
+        ctx = context(pool, usage_db=usage, upstream_request=prompt)
 
         async with asyncio.timeout(5):
-            answer = await chat_module._unless_the_client_leaves(
-                _Caller(POLL * 3),
-                chat_module._non_stream_response('http://node.invalid/chat/completions', {}, body, ctx),
+            answer = await ClientConnection(_Caller(POLL * 3)).unless_it_closes(
+                completions(on_transport(slow_node)).complete(ctx)
             )
 
         assert answer is None
         assert upstream == {'started': 1, 'cancelled': 1, 'finished': 0}
         assert pool.released == ['lease-1']
-        prompt_tokens, _, _ = chat_module.TokenEstimator().estimate(body=body, output_pieces=[])
+        prompt_tokens, _, _ = TokenEstimator().estimate(body=prompt.wire(), output_pieces=[])
         assert prompt_tokens > 0
-        log_usage.assert_awaited_once()
-        recorded = log_usage.await_args.kwargs
-        assert recorded['input_tokens'] == prompt_tokens
-        assert recorded['output_tokens'] == 0
-        assert recorded['total_tokens'] == prompt_tokens
-        assert recorded['stream'] is False
+        assert len(usage.rows) == 1, usage.rows
+        row = usage.rows[0]
+        assert (row['input_tokens'], row['output_tokens'], row['total_tokens']) == (prompt_tokens, 0, prompt_tokens)
+        assert row['stream'] is False
+        assert (row['user_id'], row['org_id'], row['model']) == ('user-1', 'org-1', 'fake-model')
 
 
 def _free_port() -> int:
@@ -211,7 +182,7 @@ async def test_under_uvicorn_a_client_timeout_cancels_the_work():
 
     @app.post('/chat/completions')
     async def completions(request: Request, body: dict):
-        answer = await chat_module._unless_the_client_leaves(request, work.run())
+        answer = await ClientConnection(request).unless_it_closes(work.run())
         if answer is None:
             return JSONResponse({}, status_code=499)
         return {'answer': answer}
@@ -261,16 +232,14 @@ async def test_under_uvicorn_a_client_timeout_leaves_the_model_queue(monkeypatch
     the disconnect behind `BaseHTTPMiddleware` — holding its place for
     the full 15-minute wait; now it leaves within a moment of the client."""
     pool = _NoRoom()
-    monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
-    monkeypatch.setattr(chat_module.GroupModelService, 'model_for_user', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_pool=lambda: pool))
-    monkeypatch.setattr(chat_module.settings, 'chat_queue_max_wait_seconds', 30)
+    monkeypatch.setattr(settings, 'chat_queue_max_wait_seconds', 30)
 
     app = FastAPI()
     app.add_middleware(_PassThrough)
     app.add_middleware(_PassThrough)
     app.include_router(chat_module.router)
+    services = ChatServices(pools=pools(pool), callers=person(), usage_db=UsageRows())
+    app.dependency_overrides[chat_services] = lambda: services
 
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(app, host='127.0.0.1', port=port, log_level='warning', lifespan='off'))
@@ -281,7 +250,7 @@ async def test_under_uvicorn_a_client_timeout_leaves_the_model_queue(monkeypatch
                 break
             await asyncio.sleep(0.01)
         assert server.started
-        queue = FairQueue.of_loop(max_length=chat_module.settings.chat_queue_max_length)
+        queue = FairQueue.of_loop(max_length=settings.chat_queue_max_length)
 
         async with httpx.AsyncClient(timeout=0.5) as client:
             with pytest.raises(httpx.ReadTimeout):
@@ -307,7 +276,7 @@ class _OneNode:
     """A chat pool with one free node."""
 
     async def acquire(self, user_id, *, model=None, exclude_backend_id=None):
-        return _FakeLease()
+        return lease()
 
     async def release(self, lease):
         return None
@@ -320,23 +289,21 @@ async def test_under_uvicorn_a_client_that_gives_up_leaves_a_499_in_the_access_l
     that has closed. So the rerun's abandoned request left only "Client
     left…" behind, and a log reader counting outcomes saw nothing. B32."""
     pool = _NoRoom() if where == 'waiting for a node' else _OneNode()
-    monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
-    monkeypatch.setattr(chat_module.GroupModelService, 'model_for_user', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_pool=lambda: pool))
-    monkeypatch.setattr(chat_module.settings, 'chat_queue_max_wait_seconds', 30)
+    monkeypatch.setattr(settings, 'chat_queue_max_wait_seconds', 30)
     work = _Work(30)
 
-    async def slow_answer(url, headers, body, ctx):
-        return await work.run()
+    class _SlowNode:
+        async def complete(self, *, lease, request):
+            return await work.run()
 
-    monkeypatch.setattr(chat_module, '_non_stream_response', slow_answer)
     caplog.set_level('INFO', logger='uvicorn.access')
 
     app = FastAPI()
     app.add_middleware(_PassThrough)
     app.add_middleware(_PassThrough)
     app.include_router(chat_module.router)
+    services = ChatServices(pools=pools(pool), callers=person(), upstream=_SlowNode(), usage_db=UsageRows())
+    app.dependency_overrides[chat_services] = lambda: services
 
     port = _free_port()
     # No log_config: uvicorn's own stops `uvicorn.access` propagating to

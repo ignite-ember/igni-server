@@ -11,11 +11,13 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 from cryptography.fernet import Fernet
-from fastapi.responses import JSONResponse
 import pytest
 from sqlalchemy import text
 
+from app.api.base_v1.schema.chat import CompletionUsage
 from app.config import settings
+from app.services.ai.chat.schemas import UpstreamCompletion
+from app.services.ai.chat.services import chat_services, ChatServices
 from app.services.ai.schemas import BackendLease
 from tests.cloud_world import CloudOrg
 from tests.conftest import auth_header
@@ -31,8 +33,18 @@ def secret_key(monkeypatch):
     monkeypatch.setattr(settings, 'secret_encryption_key', Fernet.generate_key().decode())
 
 
+@pytest.fixture(autouse=True)
+def node(app):
+    """The upstream: answers every completion with 7 tokens of usage."""
+    model = FakeModel()
+    services = ChatServices(upstream=model)
+    app.dependency_overrides[chat_services] = lambda: services
+    yield model
+    app.dependency_overrides.pop(chat_services, None)
+
+
 class FakeModel:
-    """The pool and the upstream: records who asked, and logs usage as a real answer would."""
+    """The pool and the upstream: records who asked, and reports usage as a real answer would."""
 
     def __init__(self) -> None:
         self.pool = AsyncMock()
@@ -42,17 +54,12 @@ class FakeModel:
             )
         )
 
-    async def answer(self, url, headers, body, ctx):  # noqa: ANN001, ANN201 — stands in for the upstream call
-        await ctx.log_usage(input_tokens=3, output_tokens=4, total_tokens=7, duration=0.1, stream=False)
-        await ctx.release()
-        return JSONResponse({'choices': []})
+    async def complete(self, *, lease, request) -> UpstreamCompletion:
+        return UpstreamCompletion(usage=CompletionUsage(prompt_tokens=3, completion_tokens=4, total_tokens=7))
 
 
 async def _chat(client, headers: dict[str, str], model: FakeModel):
-    with (
-        patch('app.services.ai.pool_manager.PoolManager.get_pool', new=lambda _self: model.pool),
-        patch('app.api.base_v1.endpoints.client.chat._non_stream_response', new=model.answer),
-    ):
+    with patch('app.services.ai.pool_manager.PoolManager.get_pool', new=lambda _self: model.pool):
         return await client.post(
             '/chat/completions', headers=headers, json={'messages': [{'role': 'user', 'content': 'hi'}]}
         )
@@ -64,7 +71,7 @@ async def _usage(org_db, org_id: str) -> list[tuple[str, str | None, int]]:
         return [(str(u), a, int(t)) for u, a, t in rows.all()]
 
 
-async def test_an_app_and_its_space_are_served_and_their_usage_is_the_orgs(client, org_db):
+async def test_an_app_and_its_space_are_served_and_their_usage_is_the_orgs(client, org_db, node):
     acme = await CloudOrg(client).create()
     app = await acme.app()
     app_headers = await acme.app_token(app)
@@ -80,7 +87,7 @@ async def test_an_app_and_its_space_are_served_and_their_usage_is_the_orgs(clien
             },
         )
     ).json()['access_token']
-    model = FakeModel()
+    model = node
 
     by_app = await _chat(client, app_headers, model)
     by_space = await _chat(client, auth_header(space_token), model)
@@ -98,7 +105,7 @@ async def test_an_app_and_its_space_are_served_and_their_usage_is_the_orgs(clien
     )
 
 
-async def test_a_deleted_spaces_token_is_refused(client):
+async def test_a_deleted_spaces_token_is_refused(client, node):
     acme = await CloudOrg(client).create()
     app = await acme.app()
     app_headers = await acme.app_token(app)
@@ -116,6 +123,6 @@ async def test_a_deleted_spaces_token_is_refused(client):
     ).json()['access_token']
     await client.delete(f'/apps/{app.client_id}/spaces/cust-1', headers=app_headers)
 
-    response = await _chat(client, auth_header(token), FakeModel())
+    response = await _chat(client, auth_header(token), node)
 
     assert response.status_code == 401

@@ -270,6 +270,22 @@ class BackendLease(BaseModel):
     model: str
     api_key: str | None = None
 
+    @property
+    def completions_url(self) -> str:
+        """The node's OpenAI-compatible chat completions endpoint."""
+        return f'{self.base_url.rstrip("/")}/chat/completions'
+
+    def auth_headers(self) -> dict[str, str]:
+        """Headers for a call to this node.
+
+        No ``Authorization`` when the node has no key: a vLLM on a private
+        network has no auth, and ``Bearer None`` would be a confusing 401.
+        """
+        headers = {'Content-Type': 'application/json'}
+        if self.api_key:
+            headers['Authorization'] = f'Bearer {self.api_key}'
+        return headers
+
 
 class NoBackendAvailableError(Exception):
     """Every backend is at its concurrency limit.
