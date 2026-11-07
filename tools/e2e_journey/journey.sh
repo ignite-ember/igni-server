@@ -12,6 +12,7 @@
 #
 # Checkouts it expects beside this one (override with the variables):
 #   IGNI_CLI      ../igni                     the CLI, with `uv sync` run in it
+#   IGNI_SDK      ../igni-sdk                 igni's SDKs, built into wheels
 #
 # And in portal/: `npm ci`, then `npx playwright install chromium` (what CI's
 # "Install the portal and Chromium" step does).
@@ -45,6 +46,7 @@ SERVER="$(cd "$E2E/../.." && pwd)"
 RUN="${E2E_RUN_DIR:-$E2E/run}"
 LOGS="$RUN/logs"
 CLI="${IGNI_CLI:-$SERVER/../igni}"
+SDK="${IGNI_SDK:-$SERVER/../igni-sdk}"
 STARTER="${IGNI_STARTER:-$SERVER/../igni__extension-starter}"
 
 PG_PORT="${PG_PORT:-55501}"
@@ -111,11 +113,12 @@ service_kind() {
   echo "$kind"
 }
 
-# igni's service and extension SDKs, as wheels built from the CLI
+# igni's service and extension SDKs, as wheels built from the igni-sdk
 # checkout: what both services' bundles install, and what the fixture runs on.
 sdk_wheels() {
   rm -rf "$RUN/sdk-wheels"
-  (cd "$CLI" && uv build -q --wheel --out-dir "$RUN/sdk-wheels" packages/igni-service &&
+  [[ -d "$SDK/packages/igni-service" ]] || die "no igni-sdk checkout at $SDK (IGNI_SDK)"
+  (cd "$SDK" && uv build -q --wheel --out-dir "$RUN/sdk-wheels" packages/igni-service &&
     uv build -q --wheel --out-dir "$RUN/sdk-wheels" packages/igni-extension)
 }
 

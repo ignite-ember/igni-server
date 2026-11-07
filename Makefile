@@ -130,12 +130,12 @@ portal-build:
 # until it has one.
 IGNI_CLI ?= ../igni
 refresh-default-seed:
-	@test -d "$(IGNI_CLI)/src/ember_code/bundled_agents" || \
+	@test -d "$(IGNI_CLI)/src/igni_core/bundled_agents" || \
 		(echo "No igni checkout at $(IGNI_CLI); pass IGNI_CLI=<path>" && exit 1)
 	rm -f app/services/portal/default_group_agents/*.md app/services/portal/default_group_skills/*.md
 	@mkdir -p app/services/portal/default_group_agents app/services/portal/default_group_skills
-	cp "$(IGNI_CLI)"/src/ember_code/bundled_agents/*.md app/services/portal/default_group_agents/
-	@for d in "$(IGNI_CLI)"/src/ember_code/bundled_skills/*/; do \
+	cp "$(IGNI_CLI)"/src/igni_core/bundled_agents/*.md app/services/portal/default_group_agents/
+	@for d in "$(IGNI_CLI)"/src/igni_core/bundled_skills/*/; do \
 		cp "$$d/SKILL.md" "app/services/portal/default_group_skills/$$(basename $$d).md"; \
 	done
 	@echo "Seeded from $(IGNI_CLI): $$(ls app/services/portal/default_group_agents/*.md | wc -l | tr -d ' ') agents, $$(ls app/services/portal/default_group_skills/*.md | wc -l | tr -d ' ') skills"
@@ -150,10 +150,10 @@ default-seed-migration:
 # Re-read the tool names igni offers, so the portal's typo warning does
 # not start rejecting tools that were added since.
 refresh-agent-tools:
-	@test -d "$(IGNI_CLI)/src/ember_code" || \
+	@test -d "$(IGNI_CLI)/src/igni_core" || \
 		(echo "No igni checkout at $(IGNI_CLI); pass IGNI_CLI=<path>" && exit 1)
 	@"$(IGNI_CLI)"/.venv/bin/python -c "\
-from ember_code.core.tools.registry import ToolRegistry; \
+from igni_core.core.tools.registry import ToolRegistry; \
 print(chr(10).join(sorted(ToolRegistry(base_dir='.').available_tools)))" \
 		| .venv/bin/python scripts/write_agent_tools.py
 

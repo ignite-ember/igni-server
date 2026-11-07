@@ -21,8 +21,8 @@ import json
 from pathlib import Path
 import sys
 
-from ember_code.backend.server_auth import AuthController
-from ember_code.core.config.settings import load_settings
+from igni_core.backend.server_auth import AuthController
+from igni_core.core.config.settings import load_settings
 
 
 class _Session:
