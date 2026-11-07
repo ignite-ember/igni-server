@@ -258,18 +258,17 @@ signed push of the pinned version exists, and until that package grants
 `igni__release` read access ("Manage Actions access"), the bundle job
 fails at `oras pull` rather than ship a bundle without Fleet.
 
-**Dev, stage and prod on one registry.** The three branches used to push
-into three Google Cloud projects. On GHCR each image has one name and the
-environment is in the tag. igni server's images are built for releases
-only now, so `igni-api` and `igni-portal` get the `main` row alone, from
-`igni__release`; the module repositories still push all three, and the
-`dev-` and `stage-` tags pushed earlier remain:
+**Releases only, from `main`.** Ignite Ember hosts nothing; it ships
+images. There are no dev or stage builds: igni server's images are built
+by `igni__release` from a commit on this repository's `main`, and each
+module repository builds and signs its images on a push to its default
+branch, in its own `release` environment. The `dev-` and `stage-` tags
+pushed before this remain on GHCR and are never signed with the release
+key.
 
-| Branch | GitHub environment | Tags pushed |
+| Built from | GitHub environment | Tags pushed |
 |---|---|---|
-| `dev` | `dev` | `dev-<sha>`, `dev` |
-| `stage` | `stage` | `stage-<sha>`, `stage` |
-| `main` | `prod` (`release` in `igni__release`) | `<sha>`, `<version>`, `latest` |
+| `main` (`master` in igni__cloudvm) | `release` | `<sha>`, `<version>`, `latest` (igni-fleet: `<version>`, written once) |
 
 So a release tag only ever comes from `main`, and the bundle copies only
 release tags (the commit for igni-api and igni-portal, the pinned version
