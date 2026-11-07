@@ -47,7 +47,7 @@ from app.db.sql.models.vm_command import VmCommand, VmJob
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.spaces import SpacesDB
 from app.db.sql.team import TeamDB
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.db.sql.vm_commands import VmCommandsDB
 from app.db.sql.vm_profiles import VmProfilesDB
 from app.security.producer import ProducerCaller, ProducerRef
@@ -180,9 +180,10 @@ class Records:
 class VmCommands:
     """What people and apps ask for; what the node agent pulls and reports."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, tenants: TenantRegistryDB | None = None) -> None:
         self._db = VmCommandsDB()
         self._authority = VmCommandAuthority()
+        self._tenants = tenants or TenantRegistryDB()
 
     # ── Asking ──────────────────────────────────────────────────────
 
@@ -353,7 +354,7 @@ class VmCommands:
     async def wakes(self) -> list[WakeReason]:
         """Every producer, in every organisation, with a command for its VM alone waiting."""
         found = []
-        for org_id in await TenantData().each_tenant():
+        for org_id in await self._tenants.active_org_ids():
             for kind, producer_id in await self._db.waiting_to_wake(org_id):
                 found.append(
                     WakeReason(

@@ -20,8 +20,9 @@ from app.db.sql.models.org_group import OrgGroup
 from app.db.sql.models.org_group_entry import OrgGroupEntry
 from app.db.sql.models.org_group_extension import OrgGroupExtension
 from app.db.sql.models.org_group_member import OrgGroupMember
+from app.db.sql.organizations import OrganizationDB
 from app.db.sql.schemas.group import GroupMembership, GroupSummary
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenancy import TenantData, TenantSessions
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,15 @@ _DEFAULT_KEEPS_ITS_PEOPLE = (
 
 class GroupsDB(TenantData):
     """Database operations for org groups, scoped to an org."""
+
+    def __init__(
+        self,
+        *,
+        sessions: TenantSessions | None = None,
+        organizations: OrganizationDB | None = None,
+    ) -> None:
+        super().__init__(sessions=sessions)
+        self._organizations = organizations or OrganizationDB()
 
     # ------------------------------------------------------------------
     # Groups
@@ -490,7 +500,7 @@ class GroupsDB(TenantData):
         person's session is in — and to nothing if they are not an active
         member of it.
         """
-        active = await self.orgs_of(user_id, active_only=True)
+        active = await self._organizations.member_org_ids(user_id, active_only=True)
         if org_id is not None:
             # Only in this organisation: a person in two answers for the one
             # they are signed into, never for whichever comes first.
@@ -504,7 +514,7 @@ class GroupsDB(TenantData):
         is active — see :meth:`get_active_user_group_summary`, which is
         what the self-serve paths use.
         """
-        return await self._summary(user_id, await self.orgs_of(user_id, active_only=False))
+        return await self._summary(user_id, await self._organizations.member_org_ids(user_id, active_only=False))
 
     async def _summary(self, user_id: str, org_ids: list[str]) -> GroupSummary | None:
         """The person's group in the first of these organisations that has one."""

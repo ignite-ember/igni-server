@@ -56,7 +56,6 @@ from app.db.sql.models.vm_credential import (
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.revocations import FeedSignals
-from app.db.sql.tenancy import TenantData
 from app.db.sql.vm_credentials import Rotation, VmCredentialsDB
 from app.security.producer import ProducerCaller, ProducerRef
 from app.services.auth.jwt_service import JWTService, PERSON, TokenUse
@@ -166,8 +165,9 @@ class PickedUp(BaseModel):
 
 
 class VmCredentials:
-    def __init__(self) -> None:
+    def __init__(self, *, organizations: OrganizationDB | None = None) -> None:
         self._db = VmCredentialsDB()
+        self._organizations = organizations or OrganizationDB()
 
     @staticmethod
     def record(org_id: str, row: VmCredential) -> VmCredentialRecord:
@@ -377,7 +377,9 @@ class VmCredentials:
 
     async def revoke_person(self, user_id: str, *, org_ids: list[str] | None = None) -> None:
         """A person signed out, left or was deactivated: their VMs' credentials stop now."""
-        for org_id in org_ids if org_ids is not None else await TenantData.orgs_of(user_id, active_only=False):
+        for org_id in (
+            org_ids if org_ids is not None else await self._organizations.member_org_ids(user_id, active_only=False)
+        ):
             await self._db.revoke_producer(org_id, PERSON, user_id, reason=SIGNED_OUT)
 
     async def revoke_app(self, org_id: str, app_id: str) -> None:

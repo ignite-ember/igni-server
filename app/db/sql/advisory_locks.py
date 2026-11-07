@@ -10,6 +10,8 @@ not own a registry of them, because a lock key means something only to
 the one piece of work that takes it.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 import logging
 
 from sqlalchemy import text
@@ -50,6 +52,30 @@ class AdvisoryLockDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             return False
         self._held[key] = connection
         return True
+
+    @asynccontextmanager
+    async def holding(self, key: int) -> AsyncIterator[AsyncConnection]:
+        """Wait for the lock, hold it for the block, and yield the connection holding it.
+
+        Unlike :meth:`try_acquire`, the connection is local to this call
+        rather than kept in the shared ``_held`` map, so two coroutines
+        waiting on one key in one process cannot clobber each other's
+        connection. The caller may run its own queries on the yielded
+        connection — and should, so that holding the lock never needs a
+        second pool slot — but must leave it with no open transaction.
+        """
+        connection = await self.engine.connect()
+        try:
+            await connection.execute(text('SELECT pg_advisory_lock(:k)'), {'k': key})
+            await connection.commit()
+            try:
+                yield connection
+            finally:
+                await connection.rollback()
+                await connection.execute(text('SELECT pg_advisory_unlock(:k)'), {'k': key})
+                await connection.commit()
+        finally:
+            await connection.close()
 
     async def release(self, key: int) -> bool:
         """Give the lock back. False if this process did not hold it.

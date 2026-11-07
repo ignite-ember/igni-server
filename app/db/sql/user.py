@@ -15,7 +15,7 @@ from app.db.sql.models.organization import Organization
 from app.db.sql.models.user import User
 from app.db.sql.org_domains import Admission, NOT_A_COMPANY_ADDRESS
 from app.db.sql.organisation_deletion_notices import OrganisationDeletionNoticeDB
-from app.db.sql.tenancy import Tenants
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.account_domains import refuse_public_mail
 from app.utils.singleton import SingletonMeta
 
@@ -479,7 +479,7 @@ class UserDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         # still sign in — the outcome the single transaction exists to
         # rule out.
         for org_id in delete_org_ids:
-            await Tenants().detach(org_id)
+            await TenantRegistryDB().detach(org_id)
         for org_id in leave_org_ids:
             try:
                 await GroupsDB().forget_person(org_id, user_id)

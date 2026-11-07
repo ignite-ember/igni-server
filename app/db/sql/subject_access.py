@@ -60,6 +60,9 @@ ACTIVITY_LIMIT = 1000
 class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
     """The reads that make up one person's export."""
 
+    def __init__(self, *, tenant_sessions: TenantSessions | None = None) -> None:
+        self._tenant_sessions = tenant_sessions or TenantSessions()
+
     async def _rows(self, sql: str, **params: Any) -> list[dict[str, Any]]:
         """One statement, as a list of plain dicts.
 
@@ -74,7 +77,7 @@ class SubjectAccessDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
 
     async def _org_rows(self, org_id: str, sql: str, **params: Any) -> list[dict[str, Any]]:
         """`_rows`, in one organisation's own database."""
-        async with TenantSessions().session_scope(org_id) as session:
+        async with self._tenant_sessions.session_scope(org_id) as session:
             result = await session.execute(text(sql), params)
             return [dict(row._mapping) for row in result.all()]
 

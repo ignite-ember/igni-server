@@ -11,7 +11,7 @@ Every organisation has its own database (`app.db.sql.tenancy`), so a
 backup is one archive for the shared plane and one per organisation. The
 drill needs both kinds to have something in them, and needs the
 organisation databases to exist the way the application makes them —
-so they are provisioned by the application's own code (`Tenants`), which
+so they are provisioned by the application's own code (`TenantRegistryDB`), which
 copies the template and registers the result, rather than by a
 `CREATE DATABASE` here that could drift from it.
 
@@ -63,7 +63,8 @@ from app.db.sql.models.org_group_member import OrgGroupMember
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.organization import Organization
 from app.db.sql.models.user import User
-from app.db.sql.tenancy import Tenants, TenantSessions
+from app.db.sql.tenancy import TenantSessions
+from app.db.sql.tenant_registry import TenantRegistryDB
 
 #: Not a real token, but constant, so the drill's md5 comparison is
 #: against a value a human can read in a log.
@@ -163,7 +164,7 @@ class DrillSeed:
 
     async def active_organisation(self) -> str:
         """Provisioned the way a first request provisions it, then filled."""
-        database = await Tenants().database_of(ACTIVE_ORG)
+        database = await TenantRegistryDB().database_of(ACTIVE_ORG)
         async with TenantSessions().session_scope(ACTIVE_ORG) as session:
             session.add(OrgGroup(id='drill-t-group-a', org_id=ACTIVE_ORG, name='Drill group', is_default=True))
             await session.flush()
@@ -206,7 +207,7 @@ class DrillSeed:
 
     async def detached_organisation(self) -> str:
         """Provisioned, filled, then deleted: detached, its data kept."""
-        database = await Tenants().database_of(DETACHED_ORG)
+        database = await TenantRegistryDB().database_of(DETACHED_ORG)
         async with TenantSessions().session_scope(DETACHED_ORG) as session:
             session.add(OrgGroup(id='drill-t-group-b', org_id=DETACHED_ORG, name='Gone group'))
             session.add(
@@ -221,7 +222,7 @@ class DrillSeed:
                     occurred_at=self.now,
                 )
             )
-        await Tenants().detach(DETACHED_ORG)
+        await TenantRegistryDB().detach(DETACHED_ORG)
         return database
 
     async def run(self) -> None:
@@ -236,7 +237,7 @@ class DrillSeed:
             active = await self.active_organisation()
             detached = await self.detached_organisation()
         finally:
-            await TenantSessions().dispose()
+            await SQLAlchemySessionManager().dispose()
         print(
             'seeded: shared plane (1 user, 1 org, 1 membership, 1 domain, 1 inference node, 2 audit events); '
             f'{active} (active: 1 group, 1 member, 1 notification, 1 usage, 3 audit events); '

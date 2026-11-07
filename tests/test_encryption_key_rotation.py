@@ -43,7 +43,7 @@ from sqlalchemy.pool import NullPool
 from app.config import settings
 from app.db.sql.models import Base, load_all_models, TenantBase
 from app.db.sql.models.vm_credential import VmCredential
-from app.db.sql.tenancy import Tenants
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.startup_checks import check_deployment
 from app.services.secrets import decrypt_secret, encrypt_secret, previous_keys, SecretCipherUnavailable
 from app.services.secrets.cipher import SecretDecryptError
@@ -353,7 +353,7 @@ class TestTheToolCoversEveryEncryptedColumn:
         mid-rotation, the worst moment to debug it."""
         from tools.rotate_secret_key import SHARED_COLUMNS, TENANT_COLUMNS
 
-        await Tenants().database_of(str(uuid.uuid4()))
+        await TenantRegistryDB().database_of(str(uuid.uuid4()))
         (tenant,) = _tenant_databases()
 
         for url, columns in ((_shared_url(), SHARED_COLUMNS), (_tenant_url(tenant), TENANT_COLUMNS)):

@@ -12,30 +12,21 @@ from __future__ import annotations
 
 import asyncio
 
-from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
 from alembic import command
 
-from app.db.sql.tenancy import _TENANT_MIGRATIONS, TenantDatabases, Tenants
 from app.db.sql.tenant_migrations import TenantMigrations
+from app.db.sql.tenant_migrator import TenantMigrator
+from app.db.sql.tenant_names import TenantNames
+from app.db.sql.tenant_registry import TenantRegistryDB
 from tests.conftest import create_org, create_user
 
 
-def _config(database: str) -> Config:
-    config = Config()
-    config.set_main_option('script_location', str(_TENANT_MIGRATIONS))
-    config.set_main_option(
-        'sqlalchemy.url',
-        TenantDatabases.sync_url(database).render_as_string(hide_password=False).replace('%', '%%'),
-    )
-    return config
-
-
 def _revision(database: str) -> str:
-    engine = create_engine(TenantDatabases.sync_url(database), poolclass=NullPool)
+    engine = create_engine(TenantNames().sync_url(database), poolclass=NullPool)
     try:
         with engine.connect() as conn:
             return str(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one())
@@ -44,7 +35,8 @@ def _revision(database: str) -> str:
 
 
 def _head() -> str:
-    return str(ScriptDirectory.from_config(_config(TenantDatabases.template())).get_current_head())
+    config = TenantMigrator().alembic_config(TenantNames().template())
+    return str(ScriptDirectory.from_config(config).get_current_head())
 
 
 async def test_organisations_behind_head_are_brought_to_it(db):
@@ -56,22 +48,22 @@ async def test_organisations_behind_head_are_brought_to_it(db):
     for name in ('acme', 'globex'):
         await create_user(db, user_id=name, email=f'admin@{name}.test')
         org = await create_org(db, owner_user_id=name, slug=name, domains=(f'{name}.test',))
-        databases.append(await Tenants().database_of(str(org.id)))
+        databases.append(await TenantRegistryDB().database_of(str(org.id)))
     for database in databases:
-        await asyncio.to_thread(command.downgrade, _config(database), '-1')
+        await asyncio.to_thread(command.downgrade, TenantMigrator().alembic_config(database), '-1')
         assert _revision(database) != head
 
     # `run` is the job's entry point and starts its own event loop, as
     # `python -m` does; a thread gives it one of its own here.
-    migrated = await asyncio.to_thread(TenantMigrations.run)
+    migrated = await asyncio.to_thread(TenantMigrations().run)
 
-    assert migrated == len(await Tenants().active()) == 2
+    assert migrated == len(await TenantRegistryDB().active()) == 2
     assert [_revision(database) for database in databases] == [head, head]
-    assert _revision(TenantDatabases.template()) == head
+    assert _revision(TenantNames().template()) == head
 
 
 async def test_nothing_to_do_is_not_an_error(db):
     """A deployment with no organisations yet — every fresh install's
     first migrate — migrates the template and reports none."""
-    assert await asyncio.to_thread(TenantMigrations.run) == 0
-    assert _revision(TenantDatabases.template()) == _head()
+    assert await asyncio.to_thread(TenantMigrations().run) == 0
+    assert _revision(TenantNames().template()) == _head()

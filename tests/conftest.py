@@ -367,7 +367,6 @@ async def _clean_tables():
     from app.db.sql import SQLAlchemySessionManager
 
     await SQLAlchemySessionManager.dispose_all()
-    await TenantSessions().dispose()
 
     # Each organisation's own database goes, not just its rows: the
     # registry in the shared plane is truncated below, so the next test's

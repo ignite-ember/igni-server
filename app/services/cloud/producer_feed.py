@@ -50,7 +50,7 @@ from app.db.sql.producer_feed import FeedNumbering, PERSON, ProducerFeedDB
 from app.db.sql.producer_feed_tenant import ProducerFeedTenantDB
 from app.db.sql.revocations import FeedSignals, RevocationsDB
 from app.db.sql.schemas.producer_feed import FeedMark
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.producer import ProducerRef
 from app.services.cloud.erasure_audit import ErasureAudit
 from app.services.cloud.long_poll import LongPoll
@@ -111,16 +111,17 @@ class Targets:
 
 
 class ProducerFeed:
-    def __init__(self) -> None:
+    def __init__(self, *, tenants: TenantRegistryDB | None = None) -> None:
         self._db = ProducerFeedDB()
         self._tenant = ProducerFeedTenantDB()
+        self._tenants = tenants or TenantRegistryDB()
 
     async def drain(self) -> int:
         """Number the producers the marks name whose state changed. Returns how many."""
         tenant_marks: dict[str, list[FeedMark]] = {}
         async with self._db.numbering() as numbering:
             marks = await numbering.marks()
-            for org_id in await TenantData().each_tenant():
+            for org_id in await self._tenants.active_org_ids():
                 found = await self._tenant.marks(org_id)
                 if found:
                     tenant_marks[org_id] = found

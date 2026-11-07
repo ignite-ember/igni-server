@@ -203,6 +203,11 @@ class TestNoCreateFlushesWithoutAHandler:
             'producer_exports.py',
             # A service's file is keyed by a fresh uuid4 and has no other unique key.
             'service_attachments.py',
+            # An organisation's tenant row is inserted only after re-reading
+            # it, under the TENANT_LOCK advisory lock held for the whole
+            # provision, so no second writer can insert the same org_id,
+            # number or database meanwhile. F90: no dead handler.
+            'tenant_registry.py',
         }
 
         unguarded = []

@@ -30,7 +30,8 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
-from app.db.sql.tenancy import TenantDatabases
+from app.db.sql.tenant_migrator import TenantMigrator
+from app.db.sql.tenant_names import TenantNames
 from app.services.subject_access import (
     _ACTIVITY_LIMIT,
     _note_if_capped,
@@ -71,10 +72,10 @@ def _live(sql: str, params: dict | None = None) -> set[str]:
     groups, usage, notifications, the organisation's audit trail. Every
     one has the same schema, the template's, so that is where it is read.
     """
-    TenantDatabases.ensure_template()
+    TenantMigrator().ensure_template()
     found = {r.col for r in _execute(sql, params)}
     base, _, _ = TEST_DB_URL_SYNC.rpartition('/')
-    engine = create_engine(f'{base}/{TenantDatabases.template()}')
+    engine = create_engine(f'{base}/{TenantNames().template()}')
     try:
         with engine.connect() as conn:
             found |= {r.col for r in conn.execute(text(sql), params or {}).fetchall()}
@@ -229,9 +230,9 @@ class TestTheCoverageRule:
         with no account is exactly the one who loses the data.
         """
         statements = _export_statements()
-        assert (
-            len(statements) >= 12
-        ), f'only parsed {len(statements)} statements out of the export — has its SQL changed shape?'
+        assert len(statements) >= 12, (
+            f'only parsed {len(statements)} statements out of the export — has its SQL changed shape?'
+        )
 
         identity: dict[str, set[str]] = {}
         for table, _selected, matched in statements:

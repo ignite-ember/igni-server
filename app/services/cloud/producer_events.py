@@ -58,7 +58,7 @@ from app.db.sql.models.producer_event import ProducerEvent
 from app.db.sql.models.service_attachment import ServiceAttachment
 from app.db.sql.producer_events import AttachmentsUnavailable, ProducerEventsDB
 from app.db.sql.service_attachments import ServiceAttachmentsDB
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.producer import ProducerCaller, ProducerRef
 from app.security.service_caller import ServiceCaller
 from app.services.auth.jwt_service import PERSON
@@ -88,9 +88,10 @@ class EventRateLimit:
 
 
 class ProducerEvents:
-    def __init__(self) -> None:
+    def __init__(self, *, tenants: TenantRegistryDB | None = None) -> None:
         self._db = ProducerEventsDB()
         self._attachments = ServiceAttachmentsDB()
+        self._tenants = tenants or TenantRegistryDB()
 
     @staticmethod
     async def entitlement(org_id: str, producer: ProducerRef) -> Entitlement:
@@ -150,7 +151,7 @@ class ProducerEvents:
     async def close_out(self) -> int:
         """The retention round: mark what is due as expired, delete what closed long ago."""
         purged = 0
-        for org_id in await TenantData().each_tenant():
+        for org_id in await self._tenants.active_org_ids():
             await self._db.expire_due(org_id)
             if settings.service_event_retention_days > 0:
                 purged += await self._db.purge(org_id, older_than_days=settings.service_event_retention_days)
@@ -303,7 +304,7 @@ class ProducerEvents:
 
     async def wakes(self) -> list[WakeReason]:
         found = []
-        for org_id in await TenantData().each_tenant():
+        for org_id in await self._tenants.active_org_ids():
             for kind, producer_id in await self._db.waiting(org_id):
                 found.append(
                     WakeReason(

@@ -17,8 +17,8 @@ from app.db.sql.producer_feed_tenant import ProducerFeedTenantDB
 from app.db.sql.producer_volumes import ProducerVolumesDB
 from app.db.sql.retention import RetentionDB
 from app.db.sql.schemas.producer_feed import Census, ProducerKey, ProducerState
+from app.db.sql.schemas.tenancy import OrganisationDetached
 from app.db.sql.spaces import SpacesDB
-from app.db.sql.tenancy import OrganisationDetached
 from app.db.sql.vm_profiles import VmProfilesDB
 from app.services.cloud.retention_rules import Retention
 from app.services.cloud.vm_profiles import ProfileVersion, VmCaps, VmProfiles

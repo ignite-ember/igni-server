@@ -29,7 +29,7 @@ import time
 import pytest
 
 from app.db.sql.models.tenant import ACTIVE, DETACHED
-from app.db.sql.tenancy import TenantDatabases
+from app.db.sql.tenant_names import TenantNames
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _SCRIPT = _ROOT / 'containers/backup.sh'
@@ -290,13 +290,15 @@ class TestTheScriptAgreesWithTheApplication:
         assert 'WHERE' not in match.group(1).upper(), f'the tenants query is filtered: {match.group(0)}'
 
     def test_the_template_it_excludes_is_the_one_the_application_makes(self, script):
-        """The suffix, from `TenantDatabases` rather than a second copy."""
-        suffix = TenantDatabases.template().removeprefix(TenantDatabases.base_name())
+        """The suffix, from `TenantNames` rather than a second copy."""
+        names = TenantNames()
+        suffix = names.template().removeprefix(names.base_name())
 
         assert f'TEMPLATE_DB="${{POSTGRES_DB}}{suffix}"' in script, suffix
         assert 'if [ "$database" = "$TEMPLATE_DB" ]; then' in script
 
     def test_organisation_databases_are_named_the_way_it_looks_for_them(self, script):
         """The unregistered-database warning looks for `<db>_t<n>`."""
-        assert TenantDatabases.name(7) == f'{TenantDatabases.base_name()}_t7'
+        names = TenantNames()
+        assert names.name(7) == f'{names.base_name()}_t7'
         assert "= :'db' || '_t'" in script

@@ -16,9 +16,9 @@ from app.db.sql.chat_usage import ChatUsageDB
 from app.db.sql.models.user import User
 from app.db.sql.models.user_role import Role
 from app.db.sql.org_domains import OrgDomainDB
+from app.db.sql.organizations import OrganizationDB
 from app.db.sql.schemas.chat_usage import PersonUsage
 from app.db.sql.team import TeamDB
-from app.db.sql.tenancy import TenantData
 from app.db.sql.user import UserDB
 from app.security.account_domains import email_domain
 from app.services.cloud.producer_feed import ProducerFeed
@@ -42,11 +42,17 @@ class TeamService:
     """
 
     def __init__(
-        self, *, team: TeamDB | None = None, users: UserDB | None = None, usage: ChatUsageDB | None = None
+        self,
+        *,
+        team: TeamDB | None = None,
+        users: UserDB | None = None,
+        usage: ChatUsageDB | None = None,
+        organizations: OrganizationDB | None = None,
     ) -> None:
         self._db = team or TeamDB()
         self._user_db = users or UserDB()
         self._usage = usage or ChatUsageDB()
+        self._organizations = organizations or OrganizationDB()
 
     async def list_members(self, org_id: str) -> TeamMemberList:
         rows, total = await self._db.list_members(org_id)
@@ -161,7 +167,7 @@ class TeamService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f'The account of {account.email} is deactivated; reactivate it first',
             )
-        if await TenantData.orgs_of(user_id, active_only=True):
+        if await self._organizations.member_org_ids(user_id, active_only=True):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f'{account.email} is a member of another organization',

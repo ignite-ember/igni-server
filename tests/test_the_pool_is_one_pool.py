@@ -34,6 +34,7 @@ import weakref
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import TimeoutError as PoolTimeout
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine
 
 from app.config import settings
 from app.db.sql import SQLAlchemySessionManager
@@ -390,12 +391,12 @@ class TestTheRegistryIsKeyedOnTheLoopItself:
         made: list[object] = []
 
         def _engine(*_a, **_kw):
-            engine = MagicMock()
+            engine = MagicMock(spec=AsyncEngine)
             made.append(engine)
             return engine
 
         monkeypatch.setattr(db_module, 'create_async_engine', _engine)
-        monkeypatch.setattr(db_module, 'async_sessionmaker', lambda **_kw: MagicMock())
+        monkeypatch.setattr(db_module, 'async_sessionmaker', lambda **_kw: MagicMock(spec=async_sessionmaker))
         monkeypatch.setattr(SQLAlchemySessionManager, '_engines', weakref.WeakKeyDictionary())
         return made
 
