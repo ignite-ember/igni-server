@@ -142,6 +142,8 @@ _TARGET_PARAMS = (
 _STATE_ACTOR = 'audit_actor'
 _STATE_DETAIL = 'audit_detail'
 _STATE_TARGET = 'audit_target'
+#: Set by `audit_this_request`: record this request whatever its path.
+_STATE_FORCED = 'audit_forced'
 
 
 class AuditActor(BaseModel):
@@ -206,6 +208,16 @@ def set_audit_target(request: Request, *, target_type: str, target_id: str) -> N
     # writers spelled the attribute out anyway, so the name the reader
     # looks up and the name the writer sets had to agree by hand.
     setattr(request.state, _STATE_TARGET, AuditTarget(target_type=target_type, target_id=target_id))
+
+
+def audit_this_request(request: Request) -> None:
+    """Record this request although its path is not one `is_auditable` names.
+
+    For a route shared by things worth a row and things not: the token
+    endpoint records an API key's exchange — a person's access used by a
+    program, or refused — and not every service's token.
+    """
+    setattr(request.state, _STATE_FORCED, True)
 
 
 def set_audit_detail(request: Request, detail: dict[str, Any]) -> None:
@@ -318,7 +330,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
         # audit row must not change what the caller receives. `record`
         # itself never raises, and this guard covers the rest.
         try:
-            if is_auditable(request.method, request.url.path):
+            if is_auditable(request.method, request.url.path) or getattr(request.state, _STATE_FORCED, False):
                 await self._write(request, response.status_code)
         except Exception:
             logger.exception('AUDIT MIDDLEWARE FAILED for %s %s', request.method, request.url.path)

@@ -132,6 +132,8 @@ CROSS_ORG_CALLS: list[tuple[str, str]] = [
     # VM credentials and apps are read in the portal's own organisation.
     ('DELETE', '/portal/vm-credentials/{other}'),
     ('POST', '/portal/apps/{other}/vm-credential'),
+    # So are API keys: another organisation's key is not found (§22).
+    ('DELETE', '/portal/api-keys/{other}'),
 ]
 
 # Endpoints that answer 2xx to a foreign identifier *by design*, each with

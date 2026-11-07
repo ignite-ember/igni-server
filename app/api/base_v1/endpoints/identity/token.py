@@ -8,9 +8,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
+from app.middlewares.audit import audit_this_request, set_audit_actor, set_audit_detail, set_audit_target
 from app.services.cloud.vm_credentials import VM_GRANTS, VmCredentials
+from app.services.identity.api_keys import API_KEY, ApiKeys, ApiKeyString
 from app.services.identity.errors import OAuthError
-from app.services.identity.grants import RevocationRequest, TokenGrants, TokenRequest
+from app.services.identity.grants import IssuedTokens, RevocationRequest, TokenGrants, TokenRequest
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +24,12 @@ async def token(request: Request) -> JSONResponse:
     form = await request.form()
     try:
         body = TokenRequest.model_validate({name: str(value) for name, value in form.items()})
-        # A VM's own credential, and the sign-in that issues a person's:
-        # docs/service-identity.md §16.
-        issued = await (VmCredentials().grant(body) if body.grant_type in VM_GRANTS else TokenGrants().grant(body))
+        if body.grant_type == API_KEY:
+            issued = await _api_key(request, body)
+        else:
+            # A VM's own credential, and the sign-in that issues a person's:
+            # docs/service-identity.md §16.
+            issued = await (VmCredentials().grant(body) if body.grant_type in VM_GRANTS else TokenGrants().grant(body))
     except ValidationError:
         return OAuthError.invalid_request('grant_type is required').response()
     except OAuthError as refusal:
@@ -34,6 +39,19 @@ async def token(request: Request) -> JSONResponse:
         content=issued.model_dump(exclude_none=True),
         headers={'Cache-Control': 'no-store', 'Pragma': 'no-cache'},
     )
+
+
+async def _api_key(request: Request, body: TokenRequest) -> IssuedTokens:
+    """A personal API key exchanged for a session (§22) — recorded, granted or refused."""
+    audit_this_request(request)
+    set_audit_detail(request, {'grant': 'api_key'})
+    try:
+        set_audit_target(request, target_type='api_key', target_id=ApiKeyString.parse(body.api_key or '').key_id)
+    except OAuthError:
+        pass  # not even shaped like one: refused below, recorded without a target
+    exchanged = await ApiKeys().exchange(body)
+    set_audit_actor(request, user_id=exchanged.user_id, email=None, org_id=exchanged.org_id)
+    return exchanged.issued
 
 
 @router.post(

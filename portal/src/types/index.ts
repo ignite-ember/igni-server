@@ -759,6 +759,25 @@ export interface VmCredential {
   generation: number
 }
 
+/** How long a personal API key lives, chosen when it is made. */
+export type ApiKeyLifetime = 30 | 90 | 365
+
+/** A personal API key as the portal lists it: never the key itself. */
+export interface ApiKey {
+  key_id: string
+  name: string
+  user_id: string
+  created_at: string
+  expires_at: string
+  last_used_at: string | null
+  expired: boolean
+}
+
+/** A key just made — the one time the key itself is shown. */
+export interface CreatedApiKey extends ApiKey {
+  api_key: string
+}
+
 /** A legal hold on an app: its VM (and its spaces') is not erased while it stands. */
 export interface AppHold {
   org_id: string

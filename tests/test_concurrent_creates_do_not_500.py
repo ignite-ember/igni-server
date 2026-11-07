@@ -166,6 +166,10 @@ class TestNoCreateFlushesWithoutAHandler:
         # a freshly generated primary key.
         exempt = {
             'chat_usage.py',
+            # A personal API key's row is keyed by `secrets.token_hex(16)`,
+            # made a moment before, and has no other unique constraint: two
+            # inserts cannot collide (docs/service-identity.md §22).
+            'api_keys.py',
             # The primary key is the thumbprint of a key generated a
             # moment before, so two inserts cannot share one; and the one
             # race there is — replicas booting together against an empty

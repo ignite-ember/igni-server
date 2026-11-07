@@ -18,6 +18,7 @@ from app.services.cloud.revocations import Revocations
 from app.services.cloud.vm_credentials import VmCredentials
 from app.services.email.delivery import EmailDelivery
 from app.services.email.service import EmailService
+from app.services.identity.api_keys import ApiKeys
 from app.services.portal.user_service import UserService
 
 _user_db = UserDB()
@@ -123,6 +124,7 @@ async def revoke_my_sessions(
     # Their cloud VMs sign out too (docs/service-identity.md §16), and the
     # gateway and services learn of it (§21).
     await VmCredentials().revoke_person(current_user.user_id)
+    await ApiKeys().revoke_person(current_user.user_id)
     await Revocations().sessions_withdrawn(current_user.user_id, watermark)
     return SessionsWithdrawnResponse(user_id=current_user.user_id, tokens_valid_after=watermark)
 

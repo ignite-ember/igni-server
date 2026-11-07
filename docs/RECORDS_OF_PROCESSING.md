@@ -19,7 +19,7 @@
 
 igni runs in the customer's own infrastructure and no data reaches the vendor, so the customer is the controller and there is no processor relationship to describe. What a controller cannot write without the vendor is the inventory: what the software stores, why, and for how long. That is what follows.
 
-It covers **217 classified personal-data columns across 39 tables**, plus one table whose personal data lives in a JSON payload, grouped into 8 processing activities.
+It covers **226 classified personal-data columns across 40 tables**, plus one table whose personal data lives in a JSON payload, grouped into 8 processing activities.
 
 ## Documents are processed by a paired service
 
@@ -61,7 +61,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 
 **Categories of data subject (30(1)(c)).** Developers and administrators given access to the deployment.
 
-**Retention (30(1)(f)).** For the life of the account. Deleting it removes the row and degrades provenance elsewhere to NULL rather than cascading (F60, F85), and every session it issued stops working (F122).
+**Retention (30(1)(f)).** For the life of the account. Deleting it removes the row and degrades provenance elsewhere to NULL rather than cascading (F60, F85), and every session it issued stops working (F122). A personal API key stops at its expiry (30, 90 or 365 days) or when revoked, and is kept, revoked or expired, for the life of the organisation as the record of who could act as whom.
 
 **Categories of personal data (30(1)(c)).**
 
@@ -71,6 +71,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 | `user_roles` | 10 | `assigned_by`, `created_at`, `email`, `full_name`, `pending_email`, `role`, `status`, `updated_at`, `user_id` | `email_verification_token` | 1 |
 | `org_memberships` | 8 | `created_at`, `invited_by`, `invited_email`, `org_id`, `role`, `status`, `updated_at`, `user_id` | — | 1 |
 | `org_invitations` | 9 | — | — | 0 |
+| `api_keys` | 9 | `created_at`, `expires_at`, `last_used_at`, `name`, `revoked_at`, `revoked_by_id`, `revoked_reason`, `user_id` | `secret_hash` | 1 |
 
 ### Organisations and groups
 

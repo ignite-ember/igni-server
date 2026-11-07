@@ -135,7 +135,7 @@ that adds one fails the build until somebody classifies it.
 
 | Activity | Data subjects | Tables | Retention |
 |---|---|---|---|
-| Accounts and authentication | Developers and administrators given access to the deployment. | 4 | For the life of the account. Deleting it removes the row and degrades provenance elsewhere to NULL rather than cascading (F60, F85), and every session it issued stops working (F122). |
+| Accounts and authentication | Developers and administrators given access to the deployment. | 5 | For the life of the account. Deleting it removes the row and degrades provenance elsewhere to NULL rather than cascading (F60, F85), and every session it issued stops working (F122). A personal API key stops at its expiry (30, 90 or 365 days) or when revoked, and is kept, revoked or expired, for the life of the organisation as the record of who could act as whom. |
 | Organisations and groups | Members of an organisation in the deployment. | 5 | For the life of the organisation or the membership. |
 | Telling somebody that something concerns them | People who are told — active members of the organisation a service names — and the people whose action is being reported. | 1 | For the life of the organisation. A notification that has been read is marked rather than deleted: deleting it would make "what have I already seen" unanswerable the first time two machines are open, and there is nothing in the row worth reclaiming. |
 | Usage accounting | Developers whose requests the deployment served. | 1 | No automatic window. Rows persist for the life of the deployment unless the operator prunes them. |
