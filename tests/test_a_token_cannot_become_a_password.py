@@ -33,7 +33,7 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
-from app.services.auth.auth_service import AuthService
+from app.services.auth.passwords import Passwords
 from tests.conftest import auth_header, make_token, TEST_DB_URL_SYNC
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -62,7 +62,7 @@ def _seed_user_with_password(password: str) -> tuple[str, str, str]:
                     'i': str(uuid.uuid4()),
                     'u': user_id,
                     'e': email,
-                    'h': AuthService.hash_password(password),
+                    'h': Passwords().hash(password),
                 },
             )
             conn.execute(

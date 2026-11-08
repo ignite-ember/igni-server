@@ -284,7 +284,7 @@ class TestTheBehaviour:
 
         with caplog.at_level(logging.ERROR):
             with pytest.raises(HTTPException) as caught:
-                await AuthService.sign_up(body)
+                await AuthService().sign_up(body)
 
         detail = str(caught.value.detail)
 
@@ -321,6 +321,7 @@ class TestTheBehaviour:
         from app.db.sql.user import UserDB
         from app.services.auth.auth_service import AuthService
         from app.services.auth.otp_service import OTPService
+        from app.services.identity.account_refusals import AccountRefusals
 
         async def accept_any_code(_self, **kwargs):
             # Takes `self`: `validate_signup_code` is an instance method
@@ -341,8 +342,9 @@ class TestTheBehaviour:
             last_name='Doe',
         )
 
-        with pytest.raises(HTTPException) as caught:
-            await AuthService.sign_up(body)
+        # Composed as the `/sign-up` route composes it.
+        with pytest.raises(HTTPException) as caught, AccountRefusals():
+            await AuthService().sign_up(body)
 
         assert caught.value.status_code == 409
         assert 'already registered' in str(caught.value.detail)

@@ -122,12 +122,11 @@ class TestNoCodeIsSentToAnAddressWeWillRefuse:
     """
 
     async def test_a_personal_address_is_refused_at_the_first_step(self, db):
+        from app.db.sql.schemas.account_errors import PersonalAddress
         from app.services.auth.auth_service import AuthService
 
-        with pytest.raises(Exception) as refused:
-            await AuthService.send_sign_up_code('someone@gmail.com')
-
-        assert getattr(refused.value, 'status_code', None) == 422
+        with pytest.raises(PersonalAddress):
+            await AuthService().send_sign_up_code('someone@gmail.com')
 
     async def test_it_still_says_nothing_about_who_has_an_account(self, db):
         # The oracle F112 closed must stay closed. Whether an address
@@ -144,8 +143,8 @@ class TestNoCodeIsSentToAnAddressWeWillRefuse:
         stamp = uuid.uuid4().hex[:8]
         await create_user(db, email=f'taken-{stamp}@acme.test')
 
-        taken = await AuthService.send_sign_up_code(f'taken-{stamp}@acme.test')
-        free = await AuthService.send_sign_up_code(f'free-{stamp}@acme.test')
+        taken = await AuthService().send_sign_up_code(f'taken-{stamp}@acme.test')
+        free = await AuthService().send_sign_up_code(f'free-{stamp}@acme.test')
 
         assert taken.suppress_delivery is True
         assert free.suppress_delivery is False

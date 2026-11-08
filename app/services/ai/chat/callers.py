@@ -6,7 +6,7 @@ from fastapi import Request
 
 from app.security.producer import Producers
 from app.services.ai.chat.schemas import ChatCaller
-from app.services.auth.auth_service import AuthService
+from app.services.auth.org_context import OrgContexts
 from app.services.portal.group_model_service import GroupModelService
 
 
@@ -17,11 +17,11 @@ class ChatCallerResolver:
         self,
         *,
         producers: Producers,
-        auth: type[AuthService],
+        orgs: OrgContexts,
         group_models: GroupModelService,
     ) -> None:
         self._producers = producers
-        self._auth = auth
+        self._orgs = orgs
         self._group_models = group_models
 
     async def resolve(self, *, request: Request, token: str) -> ChatCaller:
@@ -46,9 +46,9 @@ class ChatCallerResolver:
         await self._person(token=token, org_id=self._org_header(request))
 
     async def _person(self, *, token: str, org_id: str | None) -> ChatCaller:
-        """A person, asserting current membership of *org_id*."""
-        user_id, resolved_org_id = await self._auth.resolve_user_org(token, org_id=org_id)
-        return ChatCaller(user_id=user_id, org_id=resolved_org_id)
+        """A person, asserting current membership of *org_id*; raises `AuthRefused` otherwise."""
+        context = await self._orgs.resolve(token, org_id=org_id)
+        return ChatCaller(user_id=context.user_id, org_id=context.org_id)
 
     @staticmethod
     def _org_header(request: Request) -> str | None:

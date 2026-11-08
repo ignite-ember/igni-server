@@ -1,7 +1,8 @@
 """OpenAI-compatible ``/chat/completions`` and ``/chat/models``, proxied to the organisation's inference nodes.
 
 Resolves the caller, hands the request to `ChatProxy`, and turns its
-answer into a response. A refusal becomes HTTP through `ChatRefusals`,
+answer into a response. A refusal becomes HTTP through `AuthRefusals`
+(the caller) and `ChatRefusals` (the proxy),
 and comes back in the envelope an OpenAI SDK reads (``openai_errors``).
 """
 
@@ -21,6 +22,7 @@ from app.security.auth import oauth2_scheme
 from app.services.ai.chat.answers import CallerLeft, CompletedAnswer, StreamedAnswer
 from app.services.ai.chat.refusals import ChatRefusals
 from app.services.ai.chat.services import chat_services, ChatServices
+from app.services.auth.auth_refusals import AuthRefusals
 
 router = APIRouter(route_class=OpenAICompatibleRoute)
 
@@ -61,7 +63,8 @@ async def list_chat_models(
     token: str = Depends(oauth2_scheme),
     services: ChatServices = Depends(chat_services),
 ) -> ChatModelsResponse:
-    await services.callers.assert_current_member(request=request, token=token)
+    with AuthRefusals():
+        await services.callers.assert_current_member(request=request, token=token)
     return ChatModelsResponse(models=await services.catalog.models())
 
 
@@ -79,7 +82,8 @@ async def chat_completions(
     services: ChatServices = Depends(chat_services),
 ) -> ChatCompletionResponse | Response:
     connection = ClientConnection(request)
-    caller = await services.callers.resolve(request=request, token=token)
+    with AuthRefusals():
+        caller = await services.callers.resolve(request=request, token=token)
     with ChatRefusals():
         answer = await services.proxy.answer(caller=caller, body=body, presence=connection)
     match answer:

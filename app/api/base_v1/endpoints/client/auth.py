@@ -16,10 +16,12 @@ from app.api.base_v1.schema.auth import (
     SignUpRequest,
 )
 from app.services.auth.auth_emails import auth_emails, AuthEmails
-from app.services.auth.auth_service import AuthService
+from app.services.auth.auth_refusals import AuthRefusals
+from app.services.auth.auth_service import auth_service, AuthService
 from app.services.auth.cli_tokens import cli_tokens, CLITokens
 from app.services.auth.jwt_service import TokenResponse
 from app.services.auth.otp_service import otp_service, OTPService
+from app.services.identity.account_refusals import AccountRefusals
 
 _oauth2 = OAuth2PasswordBearer(tokenUrl='token')
 
@@ -34,8 +36,10 @@ router = APIRouter()
 )
 async def sign_in(
     credentials: SignInRequest = Body(..., description='User credentials for sign in'),
+    auth: AuthService = Depends(auth_service),
 ) -> TokenResponse:
-    return await AuthService.sign_in(credentials)
+    with AuthRefusals():
+        return await auth.sign_in(credentials)
 
 
 @router.post(
@@ -48,8 +52,10 @@ async def sign_up(
     bg: BackgroundTasks,
     user_data: SignUpRequest = Body(..., description='New user registration details'),
     emails: AuthEmails = Depends(auth_emails),
+    auth: AuthService = Depends(auth_service),
 ) -> TokenResponse:
-    token = await AuthService.sign_up(user_data)
+    with AccountRefusals(), AuthRefusals():
+        token = await auth.sign_up(user_data)
     emails.welcome(bg, email=str(user_data.email), name=user_data.first_name)
     return token
 
@@ -65,7 +71,8 @@ async def send_sign_up_code(
     request: SendSignUpCodeRequest = Body(..., description='Email to send sign-up code to'),
     emails: AuthEmails = Depends(auth_emails),
 ) -> AuthResponse:
-    return AuthResponse(message=await emails.send_sign_up_code(bg, str(request.email)))
+    with AccountRefusals():
+        return AuthResponse(message=await emails.send_sign_up_code(bg, str(request.email)))
 
 
 @router.post(

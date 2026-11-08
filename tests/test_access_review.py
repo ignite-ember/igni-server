@@ -266,14 +266,14 @@ class TestSignInsAreRecorded:
         """Through the real endpoint, because the point is that the
         recording happens where a token is minted rather than where a test
         calls a helper."""
-        from app.services.auth.auth_service import AuthService
+        from app.services.auth.passwords import Passwords
 
         email = f'signer-{uuid.uuid4().hex[:6]}@example.com'
         password = 'a-real-password-123'
         user = await create_user(db, email=email)
         _execute(
             'UPDATE users SET hashed_password = :h, last_sign_in_at = NULL WHERE user_id = :u',
-            {'h': AuthService.hash_password(password), 'u': str(user.user_id)},
+            {'h': Passwords().hash(password), 'u': str(user.user_id)},
         )
 
         response = await client.post('/sign-in', json={'email': email, 'password': password})

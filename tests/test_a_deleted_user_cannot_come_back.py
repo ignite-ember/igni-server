@@ -8,7 +8,7 @@ token refers to, and that did not work either.
 Demonstrated on the live path:
 
     user gone-05091c deleted; token still in hand
-      resolve_user_org        -> ('gone-05091c', None)
+      OrgContexts.resolve     -> ('gone-05091c', None)
       POST /chat/completions  -> 404 "Model 'x' is not served"
 
 A 404 about models means authorisation passed and the request reached
@@ -166,7 +166,7 @@ def _create_then_delete_a_user() -> str:
 #: reaches the question it is asking.
 #:
 #: `POST /v1/chat/completions` is the only one today, and it is the one
-#: that matters most: the live path, and the one `resolve_user_org` opens
+#: that matters most: the live path, and the one `OrgContexts.resolve` opens
 #: without a membership check when no organisation resolves.
 _VALID_REQUESTS: dict[tuple[str, str], dict] = {
     ('POST', '/v1/chat/completions'): {
@@ -295,17 +295,17 @@ class TestTheTwoPathsThatWereWrong:
 
     async def test_the_chat_path_refuses(self, db):
         """The live path, and the one with no membership check to fall
-        back on: `resolve_user_org` returns without asserting membership
+        back on: `OrgContexts.resolve` returns without asserting membership
         when no org context resolves, so existence is the only
         authorisation there is."""
         from fastapi import HTTPException
 
-        from app.services.auth.auth_service import AuthService
+        from app.services.auth.org_context import OrgContexts
 
         token = _create_then_delete_a_user()
 
         with pytest.raises(HTTPException) as caught:
-            await AuthService.resolve_user_org(token)
+            await OrgContexts().resolve(token)
 
         assert caught.value.status_code == 401
 

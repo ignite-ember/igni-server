@@ -22,6 +22,7 @@ from app.services.ai.fair_queue import FairQueue
 from app.services.ai.schemas import BackendLease
 from app.services.ai.token_estimate import TokenEstimator
 from app.services.ai.upstream import RetryPolicy
+from app.services.auth.org_context import OrgContext
 
 #: No pause between attempts: the tests are about which attempts, not when.
 NO_BACKOFF = RetryPolicy(backoff=0)
@@ -131,7 +132,7 @@ def person(user_id: str = 'ada', org_id: str | None = 'org-1') -> ChatCallerReso
     """A resolver that takes every token for *user_id* in *org_id*, with no group model."""
     return ChatCallerResolver(
         producers=SimpleNamespace(machine=AsyncMock(return_value=None)),
-        auth=SimpleNamespace(resolve_user_org=AsyncMock(return_value=(user_id, org_id))),
+        orgs=SimpleNamespace(resolve=AsyncMock(return_value=OrgContext(user_id=user_id, org_id=org_id))),
         group_models=SimpleNamespace(model_for_user=AsyncMock(return_value=None)),
     )
 

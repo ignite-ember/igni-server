@@ -19,7 +19,7 @@ from app.services.ai.fair_queue import FairQueue
 from app.services.ai.pool_manager import PoolManager
 from app.services.ai.token_estimate import TokenEstimator
 from app.services.ai.upstream import RetryPolicy
-from app.services.auth.auth_service import AuthService
+from app.services.auth.org_context import OrgContexts
 from app.services.portal.group_model_service import GroupModelService
 
 
@@ -49,7 +49,7 @@ class ChatServices:
         pools = pools or PoolManager()
         self._tails = tails or TailRunner()
         self._callers = callers or ChatCallerResolver(
-            producers=Producers(), auth=AuthService, group_models=GroupModelService()
+            producers=Producers(), orgs=OrgContexts(), group_models=GroupModelService()
         )
         self._catalog = catalog or ChatModelCatalog(pools=pools)
         upstream = upstream or UpstreamChatClient()

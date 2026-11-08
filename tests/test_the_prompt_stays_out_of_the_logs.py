@@ -240,7 +240,7 @@ class TestTheModelListingClaimsNothingItDoesNotDo:
         check = callers[callers.index('async def assert_current_member') : callers.index('async def _person')]
         assert 'self._person(' in check
         person = callers[callers.index('async def _person') : callers.index('def _org_header')]
-        assert 'self._auth.resolve_user_org(' in person
+        assert 'self._orgs.resolve(' in person
 
 
 pytestmark = pytest.mark.anyio

@@ -31,15 +31,18 @@ class AuthEmails:
         delivery: EmailDelivery | None = None,
         emails: EmailService | None = None,
         otp: OTPService | None = None,
+        auth: AuthService | None = None,
     ) -> None:
         self._delivery = delivery or EmailDelivery()
         self._emails = emails or EmailService()
         self._otp = otp or OTPService()
+        self._auth = auth or AuthService(otp=self._otp)
 
     async def send_sign_up_code(self, bg: BackgroundTasks, email: str) -> str:
+        """Raises `PersonalAddress` for an address at a personal mail provider."""
         return await self._send_code(
             bg,
-            issue=AuthService.send_sign_up_code,
+            issue=self._auth.send_sign_up_code,
             mail=self._emails.send_sign_up_code,
             purpose='sign-up',
             email=email,

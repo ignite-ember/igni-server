@@ -57,6 +57,18 @@ class OrganizationDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             )
             return [(row[0], row[1]) for row in result.all()]
 
+    async def first_org_id(self, user_id: str) -> str | None:
+        """The oldest organisation the user is an active member of, if any."""
+        async with self.session_scope() as session:
+            org_id = await session.scalar(
+                select(Organization.id)
+                .join(OrgMembership, OrgMembership.org_id == Organization.id)
+                .where(OrgMembership.user_id == user_id, OrgMembership.status == ACTIVE)
+                .order_by(Organization.created_at)
+                .limit(1)
+            )
+            return str(org_id) if org_id is not None else None
+
     async def member_org_ids(self, user_id: str, *, active_only: bool = True) -> list[str]:
         """The organisations a person is a member of.
 

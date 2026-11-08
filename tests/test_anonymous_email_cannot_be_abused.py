@@ -43,8 +43,8 @@ from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.monitoring import metrics as monitoring
-from app.services.auth.auth_service import AuthService
 from app.services.auth.code_throttle import COOLDOWN_SECONDS, PER_ADDRESS_HOURLY
+from app.services.auth.passwords import Passwords
 from app.utils.email_mask import mask_email
 from tests.conftest import TEST_DB_URL_SYNC
 
@@ -72,7 +72,7 @@ def _register(email: str) -> None:
                     'i': str(uuid.uuid4()),
                     'u': str(uuid.uuid4()),
                     'e': email,
-                    'h': AuthService.hash_password('Whatever-1!'),
+                    'h': Passwords().hash('Whatever-1!'),
                 },
             )
     finally:
