@@ -9,9 +9,61 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.api.base_v1.schema.vm_profile_requests import ManifestVm
+
+
+class PromptOverride(BaseModel):
+    """One `contributes.prompt.overrides` entry, as far as the plugin summary reads it."""
+
+    model_config = ConfigDict(extra='ignore', populate_by_name=True)
+
+    target: str
+    source: str | None = None
+    from_: str = Field(default='', alias='from')
+    exclusive: bool = False
+    when: str | None = None
+
+    @field_validator('source', mode='before')
+    @classmethod
+    def _source_is_text(cls, value: Any) -> Any:
+        """Impact does not read `source`, so anything but text means "not a file" rather than a refusal."""
+        return value if isinstance(value, str) else None
+
+    @property
+    def agent(self) -> str | None:
+        """The agent it overrides, or `None` when it overrides another prompt."""
+        return self.target.removeprefix('agent:') if self.target.startswith('agent:') else None
+
+    @property
+    def file(self) -> str:
+        """The bundle file that defines it, when its source is a file; else empty."""
+        return self.from_.strip('/') if self.source == 'file' else ''
+
+
+class PromptContribution(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
+    overrides: list[PromptOverride] = Field(default_factory=list)
+
+
+class Contributions(BaseModel):
+    """The parts of `contributes` the plugin summary reads.
+
+    Read once `ExtensionImpact` has accepted the manifest, so the shapes
+    here have already been checked.
+    """
+
+    model_config = ConfigDict(extra='ignore')
+
+    prompt: PromptContribution = Field(default_factory=PromptContribution)
+    #: The plugin's root directory in the bundle.
+    plugin: str | None = None
+
+    @property
+    def plugin_root(self) -> str:
+        return (self.plugin or '').strip('/')
 
 
 class Manifest(BaseModel):
@@ -33,6 +85,9 @@ class Manifest(BaseModel):
         if isinstance(data, dict) and data.get('vm') is not None:
             ManifestVm.model_validate(data['vm'])
         return data
+
+    def contributions(self) -> Contributions:
+        return Contributions.model_validate(self.contributes)
 
 
 class PluginAgent(BaseModel):

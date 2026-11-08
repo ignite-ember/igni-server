@@ -18,6 +18,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.security import jose
+
 #: Members that only a private JWK has. Any of them present means the
 #: caller sent a private key.
 PRIVATE_MEMBERS = frozenset({'d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'})
@@ -25,6 +27,10 @@ PRIVATE_MEMBERS = frozenset({'d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'})
 #: The algorithms a key may be used with. Asymmetric only: an HMAC key
 #: would have to be shared, and sharing a secret is what this replaces.
 Algorithm = Literal['RS256', 'ES256']
+
+#: The algorithm each key type may sign with — chosen by the key, never
+#: by the token header.
+_ALGORITHM_FOR: dict[str, Algorithm] = {'RSA': 'RS256', 'EC': 'ES256'}
 
 
 def _b64url(data: bytes) -> str:
@@ -88,6 +94,11 @@ class PublicJwk(BaseModel):
     def as_dict(self) -> dict[str, str]:
         return self.model_dump(exclude_none=True)
 
+    @property
+    def algorithm(self) -> Algorithm:
+        """What this key may sign with, whatever a token's header claims."""
+        return _ALGORITHM_FOR[self.kty]
+
 
 class JwkSet(BaseModel):
     """What `/.well-known/jwks.json` serves, and what a client registers."""
@@ -96,6 +107,20 @@ class JwkSet(BaseModel):
 
     def find(self, kid: str) -> PublicJwk | None:
         return next((key for key in self.keys if key.kid == kid), None)
+
+    def verified_payload(self, signature: str) -> bytes | None:
+        """The payload of a compact JWS, if one of these keys signed it; `None` when none did.
+
+        Tries the key its `kid` names, or every key when it names none.
+        Raises `jose.TokenError` when `signature` is not a compact JWS.
+        """
+        kid = str(jose.unverified_header(signature).get('kid') or '')
+        for key in [k for k in self.keys if k.kid == kid] if kid else self.keys:
+            try:
+                return jose.verify_jws(signature, key.as_dict(), algorithms=[key.algorithm])
+            except jose.TokenError:
+                continue
+        return None
 
 
 class RsaKeyPair:

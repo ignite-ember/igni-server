@@ -33,7 +33,8 @@ from app.services.identity.client_review import (
     NoHeldUpdate,
     ReviewedClient,
 )
-from app.services.identity.extensions import ExtensionConflict, HeldUpdate
+from app.services.identity.extension_errors import ExtensionConflict
+from app.services.identity.held_updates import HeldUpdate
 from app.services.identity.registry import ExtensionIdTaken
 
 router = APIRouter()

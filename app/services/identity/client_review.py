@@ -2,7 +2,7 @@
 
 Approving lets a client obtain tokens for any organisation on the
 install. An approved service's newer version that asks for more is held
-(`app.services.identity.extensions.HeldUpdates`) and decided here too.
+(`app.services.identity.held_updates.HeldUpdates`) and decided here too.
 Each lookup and decision answers with what the portal shows about the
 client afterwards, or raises a typed refusal the router maps to HTTP.
 """
@@ -16,7 +16,7 @@ from app.db.sql.models.service_extension import ServiceExtension
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.service_extensions import ServiceExtensionDB
 from app.services.identity.extension_review import ExtensionReview, ExtensionReviews
-from app.services.identity.extensions import HeldUpdate, HeldUpdates
+from app.services.identity.held_updates import HeldUpdate, HeldUpdates
 from app.services.identity.registry import ClientRegistry
 
 

@@ -20,7 +20,7 @@ import pytest
 
 from app.config import settings
 from app.middlewares.body_size_limit import BodySizeLimitMiddleware
-from app.services.identity.extensions import MAX_ARCHIVE_BYTES
+from app.services.identity.extension_bundle import MAX_ARCHIVE_BYTES
 from tests.conftest import auth_header, create_user, make_token, the_app
 from tests.entitled_person import EntitledPerson
 from tests.registered_service import ExtensionBundle, RegisteredService

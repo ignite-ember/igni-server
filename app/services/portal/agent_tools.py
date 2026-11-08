@@ -30,9 +30,8 @@ the one warning that says so; the agent is what needs changing.
 from __future__ import annotations
 
 import difflib
-import re
 
-import yaml
+from app.utils.frontmatter import Frontmatter
 
 #: What ``ToolRegistry.available_tools`` answers. Refresh with
 #: ``make refresh-agent-tools``.
@@ -55,8 +54,6 @@ KNOWN_TOOLS: frozenset[str] = frozenset(
 #: MCP server's tools, and the pseudo-tools igni reserves.
 _ALWAYS_ALLOWED = ('MCP:', 'mcp:')
 
-_FRONTMATTER = re.compile(r'^---\s*\n(.*?)\n---\s*\n?', re.DOTALL)
-
 
 def declared_tools(content: str) -> list[str]:
     """The tool names an agent's frontmatter asks for.
@@ -65,22 +62,7 @@ def declared_tools(content: str) -> list[str]:
     YAML list — and answers an empty list for anything it cannot parse,
     since a malformed agent has a bigger problem than its tool names.
     """
-    match = _FRONTMATTER.match(content)
-    if not match:
-        return []
-    try:
-        frontmatter = yaml.safe_load(match.group(1))
-    except yaml.YAMLError:
-        return []
-    if not isinstance(frontmatter, dict):
-        return []
-
-    raw = frontmatter.get('tools')
-    if isinstance(raw, str):
-        return [name.strip() for name in raw.split(',') if name.strip()]
-    if isinstance(raw, list):
-        return [str(name).strip() for name in raw if str(name).strip()]
-    return []
+    return list(Frontmatter.of(content).tools)
 
 
 def unknown_tools(content: str) -> list[str]:

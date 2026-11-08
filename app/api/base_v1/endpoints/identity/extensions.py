@@ -40,19 +40,15 @@ from fastapi.responses import StreamingResponse
 from app.api.base_v1.schema.extensions import Distributed, HeldAsset, Published
 from app.security.producer import current_producer, ProducerCaller
 from app.services.identity.extension_assets import AssetRefused, extension_assets, ExtensionAssets
+from app.services.identity.extension_bundle import MAX_ARCHIVE_BYTES
 from app.services.identity.extension_distribution import (
     AssetNotDistributed,
     extension_distribution,
     ExtensionDistribution,
     ExtensionNotDistributed,
 )
-from app.services.identity.extensions import (
-    ExtensionConflict,
-    ExtensionRefused,
-    MAX_ARCHIVE_BYTES,
-    service_extensions,
-    ServiceExtensions,
-)
+from app.services.identity.extension_errors import ExtensionConflict, ExtensionRefused
+from app.services.identity.extensions import service_extensions, ServiceExtensions
 
 router = APIRouter()
 

@@ -29,7 +29,7 @@ from app.services.ai.pool_manager import PoolManager
 from app.services.cloud.producer_feed import ProducerFeed
 from app.services.deployment_licence import DeploymentLicence, LicenceDailyAudit
 from app.services.identity.extension_assets import ASSET_UPLOAD_PATH, MAX_ASSET_BYTES
-from app.services.identity.extensions import EXTENSION_UPLOAD_PATH, MAX_ARCHIVE_BYTES
+from app.services.identity.extension_bundle import EXTENSION_UPLOAD_PATH, MAX_ARCHIVE_BYTES
 from app.services.identity.key_ring import SigningKeys
 from app.services.identity.organisation_deletions import OrganisationDeletions
 from app.services.retention import Retention

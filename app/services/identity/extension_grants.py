@@ -5,7 +5,7 @@ put on people's machines. That approval covers what they read — not
 whatever a later version asks for. So an approved service's new upload
 is compared with the version it would replace, and one that asks for
 **more** is held until a super admin accepts it
-(`app.services.identity.extensions`); one that asks for the same or
+(`app.services.identity.extensions.ServiceExtensions`); one that asks for the same or
 less goes live at once. The comparison is
 `app.services.identity.grants_comparison`.
 
@@ -49,10 +49,11 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationError
 
+from app.db.sql.models.service_extension import ServiceExtension
 from app.services.identity.extension_manifest import Manifest, PluginSummary
-from app.services.identity.impact import ExtensionImpact, ImpactEdit, ImpactOverride, ImpactTool
+from app.services.identity.impact import ExtensionImpact, ImpactEdit, ImpactOverride, ImpactRefused, ImpactTool
 
 
 class WorkspaceLevel(StrEnum):
@@ -153,6 +154,21 @@ class ExtensionGrants(BaseModel):
             agents=sorted({agent.name for agent in plugin.agents if agent.name}),
             skills=sorted({skill.name for skill in plugin.skills if skill.name}),
         )
+
+    @classmethod
+    def of_version(cls, extension: ServiceExtension | None) -> ExtensionGrants:
+        """What a stored version asks for.
+
+        Nothing, for no version or one whose manifest no longer reads
+        under today's rules: then everything a new version asks for is
+        more, and it is held for a super admin rather than let through.
+        """
+        if extension is None:
+            return cls()
+        try:
+            return cls.of(Manifest.model_validate(extension.manifest), PluginSummary.model_validate(extension.plugin))
+        except (ImpactRefused, ValidationError):
+            return cls()
 
 
 __all__ = ['ExtensionGrants', 'ToolAudience', 'WorkspaceLevel']
