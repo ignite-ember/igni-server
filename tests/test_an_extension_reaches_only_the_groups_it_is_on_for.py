@@ -222,6 +222,17 @@ class TestTheGroupPage:
 
         assert await org.switch(str(theirs.json()['id']), EXTENSION, True) == 404
 
+    async def test_a_group_that_does_not_exist_is_not_found(self, client, db):
+        await _shipped(client)
+        org = await Org(client, db).create()
+
+        listed = await client.get('/portal/groups/no-such-group/extensions', headers=org.admin)
+        switched = await client.put(
+            f'/portal/groups/no-such-group/extensions/{EXTENSION}', json={'enabled': True}, headers=org.admin
+        )
+
+        assert [(r.status_code, r.json()['detail']) for r in (listed, switched)] == [(404, 'Group not found')] * 2
+
 
 class TestOneGroupDecides:
     async def test_moving_them_changes_what_they_get(self, client, db):

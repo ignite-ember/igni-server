@@ -23,7 +23,9 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.db.sql.group_person_erasure import GroupPersonErasureDB
 from app.db.sql.schemas.tenancy import OrganisationDetached
 from app.db.sql.tenant_registry import TenantRegistryDB
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
@@ -174,6 +176,34 @@ class TestTheOrgKeepsItsWork:
         ).fetchall()
         assert len(rows) == 1
         assert rows[0][0] is None
+
+
+class TestAnOrganisationThatCannotBeCleared:
+    """The account is already gone when the organisation's groups are cleared of it.
+
+    A failure in the organisation's own database leaves a stale group
+    row for nobody, never a person who can still sign in, so it is
+    logged and the deletion still succeeds.
+    """
+
+    async def test_it_is_logged_and_the_deletion_stands(
+        self, client, db, org_db, leaver_and_stayer, monkeypatch, caplog
+    ):
+        org_id = leaver_and_stayer['org']
+
+        async def _down(self, org_id: str, *, user_id: str) -> None:
+            raise SQLAlchemyError("the organisation's database is down")
+
+        monkeypatch.setattr(GroupPersonErasureDB, 'forget_person', _down)
+        response = await client.delete('/portal/me', headers=leaver_and_stayer['headers'])
+
+        assert response.status_code == 200, response.text
+        assert not (await db.execute(text('SELECT 1 FROM users WHERE user_id = :u'), {'u': 'leaver'})).fetchall()
+        assert f'Could not clear a deleted account from organisation {org_id}' in caplog.text
+        stale = await _in_org(
+            org_db, org_id, 'SELECT count(*) FROM org_group_members WHERE added_by_user_id = :u', {'u': 'leaver'}
+        )
+        assert stale.scalar() == 1
 
 
 class TestTheSoleMemberCase:
