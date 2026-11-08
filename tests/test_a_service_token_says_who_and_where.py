@@ -22,8 +22,8 @@ from app.db.sql.user import UserDB
 from app.services.auth.jwt_service import JWTService, TokenUse
 from app.services.auth.token_claims import CustomClaims
 from app.services.identity.assertions import ASSERTION_TYPE
-from app.services.identity.grants import ACCESS_TOKEN_TYPE, TOKEN_EXCHANGE
 from app.services.identity.jwk import RsaKeyPair
+from app.services.identity.token_requests import ACCESS_TOKEN_TYPE, TOKEN_EXCHANGE
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import REDIRECT_URI, RegisteredService
 

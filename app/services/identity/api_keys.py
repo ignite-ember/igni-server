@@ -40,11 +40,11 @@ from app.db.sql.api_keys import ApiKeysDB
 from app.db.sql.models.api_key import ApiKey, REVOKED_BY_ADMIN, REVOKED_BY_PERSON, SIGNED_OUT
 from app.db.sql.organizations import OrganizationDB
 from app.security.producer import ProducerRef
-from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, PERSON
 from app.services.cloud.volume_sizes import VolumeSizes
 from app.services.identity.errors import OAuthError
-from app.services.identity.grants import IssuedTokens, PersonInOrganisation, TokenRequest
+from app.services.identity.people_in_organisations import PeopleInOrganisations
+from app.services.identity.token_requests import IssuedTokens, TokenRequest
 from app.services.portal.group_extensions import GroupExtensions
 
 logger = logging.getLogger(__name__)
@@ -124,10 +124,12 @@ class Exchanged(BaseModel):
 
 
 class ApiKeys:
-    def __init__(self, *, organizations: OrganizationDB | None = None, subjects: Subjects | None = None) -> None:
+    def __init__(
+        self, *, organizations: OrganizationDB | None = None, people: PeopleInOrganisations | None = None
+    ) -> None:
         self._db = ApiKeysDB()
         self._organizations = organizations or OrganizationDB()
-        self._subjects = subjects or Subjects()
+        self._people = people or PeopleInOrganisations()
 
     @staticmethod
     def record(row: ApiKey) -> ApiKeyRecord:
@@ -195,9 +197,7 @@ class ApiKeys:
             # The key's making stands in for a sign-in: signing out
             # everywhere, or leaving and rejoining, after it was made
             # ends it, as it ends every session from before.
-            await PersonInOrganisation.check(
-                row.user_id, org_id, issued_at=int(row.created_at.timestamp()), subjects=self._subjects
-            )
+            await self._people.check(row.user_id, org_id, issued_at=int(row.created_at.timestamp()))
         except OAuthError:
             await self._db.revoke(org_id, row.id, reason=SIGNED_OUT, by_id=None)
             raise

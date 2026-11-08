@@ -13,7 +13,9 @@ from app.middlewares.request_audit import RequestAudit
 from app.services.cloud.vm_credential_grants import VM_GRANTS, VmCredentialGrants
 from app.services.identity.api_keys import API_KEY, ApiKeys, ApiKeyString
 from app.services.identity.errors import OAuthError
-from app.services.identity.grants import IssuedTokens, RevocationRequest, TokenGrants, TokenRequest
+from app.services.identity.grants import TokenGrants
+from app.services.identity.sign_in_revocation import SignInRevocation
+from app.services.identity.token_requests import IssuedTokens, RevocationRequest, TokenRequest
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ async def revoke(request: Request) -> Response:
     form = await request.form()
     try:
         body = RevocationRequest.model_validate({name: str(value) for name, value in form.items()})
-        await TokenGrants().revoke(body)
+        await SignInRevocation().revoke(body)
     except ValidationError:
         return OAuthError.invalid_request('token is required').response()
     except OAuthError as refusal:

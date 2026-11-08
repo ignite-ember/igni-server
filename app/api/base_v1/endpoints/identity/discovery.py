@@ -15,8 +15,9 @@ from pydantic import BaseModel
 from app.config import settings
 from app.services.auth.jwt_service import JWTService
 from app.services.identity.assertions import ASSERTION_TYPE
-from app.services.identity.grants import GRANT_TYPES, TokenGrants
 from app.services.identity.key_ring import RELOAD_EVERY, SigningKeys
+from app.services.identity.token_clients import TokenClients
+from app.services.identity.token_requests import GRANT_TYPES
 
 router = APIRouter()
 
@@ -54,13 +55,13 @@ class ServerMetadata(BaseModel):
 async def metadata(response: Response) -> ServerMetadata:
     response.headers['Cache-Control'] = f'public, max-age={int(RELOAD_EVERY.total_seconds())}'
     issuer = JWTService().issuer
-    grants = TokenGrants()
+    clients = TokenClients()
     # A field left out rather than published as null when there is no Fleet.
     return ServerMetadata(
         issuer=issuer,
         jwks_uri=f'{issuer}/.well-known/jwks.json',
-        token_endpoint=grants.token_endpoint,
-        revocation_endpoint=grants.revocation_endpoint,
+        token_endpoint=clients.token_endpoint,
+        revocation_endpoint=clients.revocation_endpoint,
         # The portal, not this API: signing in is something a person
         # does in a browser, and the portal is where their session is.
         authorization_endpoint=f'{settings.portal_base_url.rstrip("/")}/authorize',

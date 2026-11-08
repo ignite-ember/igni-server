@@ -16,13 +16,12 @@ from app.db.sql.models.vm_credential import APP_REMOVED, SIGNED_OUT, SPACE_REMOV
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.security.producer import ProducerRef
-from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, PERSON, TokenUse
 from app.services.auth.token_claims import CustomClaims
 from app.services.cloud.vm_credential_records import VmCredentialRecord
 from app.services.cloud.volume_sizes import VolumeSizes
 from app.services.identity.errors import OAuthError
-from app.services.identity.grants import PersonInOrganisation
+from app.services.identity.people_in_organisations import PeopleInOrganisations
 from app.services.identity.space_tokens import SpaceTokens
 from app.services.portal.group_extensions import GroupExtensions
 
@@ -97,23 +96,18 @@ class PersonHolder(VmHolder):
     def __init__(
         self,
         *,
-        subjects: Subjects | None = None,
+        people: PeopleInOrganisations | None = None,
         organizations: OrganizationDB | None = None,
         groups: GroupExtensions | None = None,
         tokens: JWTService | None = None,
     ) -> None:
-        self._subjects = subjects or Subjects()
+        self._people = people or PeopleInOrganisations()
         self._organizations = organizations or OrganizationDB()
         self._groups = groups or GroupExtensions()
         self._tokens = tokens or JWTService()
 
     async def check(self, org_id: str, credential: VmCredentialRecord) -> None:
-        await PersonInOrganisation.check(
-            credential.producer.id,
-            org_id,
-            issued_at=int(credential.created_at.timestamp()),
-            subjects=self._subjects,
-        )
+        await self._people.check(credential.producer.id, org_id, issued_at=int(credential.created_at.timestamp()))
 
     async def token(self, org_id: str, producer_id: str) -> str:
         organisation = await self._organizations.get_by_id(org_id)

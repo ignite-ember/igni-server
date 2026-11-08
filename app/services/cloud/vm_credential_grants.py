@@ -14,14 +14,14 @@ from app.db.sql.models.vm_credential import IDLE
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.vm_credentials import Rotation, VmCredentialsDB
 from app.security.producer import ProducerRef
-from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, PERSON
 from app.services.cloud.vm_credential_records import VmCredentialRecord
 from app.services.cloud.vm_credential_string import VmCredentialString
 from app.services.cloud.vm_credentials import VmCredentials
 from app.services.cloud.vm_holders import TOKEN_LIFETIME, VmHolders
 from app.services.identity.errors import OAuthError
-from app.services.identity.grants import IssuedTokens, PersonInOrganisation, TokenRequest
+from app.services.identity.people_in_organisations import PeopleInOrganisations
+from app.services.identity.token_requests import IssuedTokens, TokenRequest
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +40,14 @@ class VmCredentialGrants:
         db: VmCredentialsDB | None = None,
         organizations: OrganizationDB | None = None,
         holders: VmHolders | None = None,
-        subjects: Subjects | None = None,
+        people: PeopleInOrganisations | None = None,
         tokens: JWTService | None = None,
     ) -> None:
         self._credentials = credentials or VmCredentials()
         self._db = db or VmCredentialsDB()
         self._organizations = organizations or OrganizationDB()
         self._holders = holders or VmHolders()
-        self._subjects = subjects or Subjects()
+        self._people = people or PeopleInOrganisations()
         self._tokens = tokens or JWTService()
 
     async def grant(self, request: TokenRequest) -> IssuedTokens:
@@ -72,7 +72,7 @@ class VmCredentialGrants:
             raise OAuthError.invalid_request('organisation is required: this session is not pinned to one')
         if claims.org_id and org_id != claims.org_id:
             raise OAuthError.invalid_target('this session is pinned to a different organisation')
-        await PersonInOrganisation.check(claims.user_id, org_id, issued_at=claims.issued_at, subjects=self._subjects)
+        await self._people.check(claims.user_id, org_id, issued_at=claims.issued_at)
         issued = await self._credentials.issue(
             org_id, ProducerRef(kind=PERSON, id=claims.user_id), by_kind=PERSON, by_id=claims.user_id, for_pickup=False
         )
