@@ -120,6 +120,54 @@ class TestTheRace:
         assert work.cancelled
 
 
+class TestWhatIsLogged:
+    async def test_a_watch_that_fails_is_a_warning_that_says_why(self, caplog):
+        caplog.set_level('WARNING', logger='app.api.base_v1.endpoints.client.client_connection')
+
+        await ClientConnection(_Caller(None, receive_fails=True)).unless_it_closes(_Work(POLL * 2).run())
+
+        assert 'Could not watch for a disconnect: receive broke' in caplog.messages
+
+    async def test_a_caller_who_leaves_is_noted(self, caplog):
+        caplog.set_level('INFO', logger='app.api.base_v1.endpoints.client.client_connection')
+
+        async with asyncio.timeout(2):
+            await ClientConnection(_Caller(POLL)).unless_it_closes(_Work(60).run())
+
+        assert 'Client left before the completion arrived; cancelling the upstream call' in caplog.messages
+
+
+class TestTheAccessLine:
+    """`closed_response`: a 499, and the access line uvicorn would not write."""
+
+    @staticmethod
+    def _closed(scope_extra: dict, caplog) -> tuple[int, list[str]]:
+        scope = {
+            'type': 'http',
+            'method': 'POST',
+            'path': '/chat/completions',
+            'root_path': '',
+            'query_string': b'trace=1',
+            'headers': [],
+            'client': ('10.0.0.7', 51234),
+            **scope_extra,
+        }
+        caplog.set_level('INFO', logger='uvicorn.access')
+        response = ClientConnection(Request(scope)).closed_response()
+        return response.status_code, [r.getMessage() for r in caplog.records if r.name == 'uvicorn.access']
+
+    def test_it_is_a_499_in_uvicorns_shape(self, caplog):
+        status, lines = self._closed({'http_version': '2'}, caplog)
+
+        assert status == 499
+        assert lines == ['10.0.0.7:51234 - "POST /chat/completions?trace=1 HTTP/2" 499']
+
+    def test_a_scope_with_no_http_version_says_1_1(self, caplog):
+        _, lines = self._closed({}, caplog)
+
+        assert lines == ['10.0.0.7:51234 - "POST /chat/completions?trace=1 HTTP/1.1" 499']
+
+
 class TestTheUpstreamCall:
     async def test_leaving_closes_the_upstream_request_releases_the_lease_and_bills_the_prompt(self):
         """Through the completion service and a real `httpx` client: the

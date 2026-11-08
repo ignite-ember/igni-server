@@ -31,9 +31,12 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
 import httpx
 import pytest
 
+from app.api.base_v1.endpoints.client.openai_errors import openai_error
+from app.api.base_v1.schema.openai_error import OpenAIErrorBody
 from app.config import settings
 from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.chat.errors import UpstreamRefusal
@@ -480,3 +483,65 @@ class TestHowManyNodesAndHowLong:
             await RetryPolicy(backoff=0.25).pause(attempt)
 
         assert pauses == [0.25, 0.5, 0.75]
+
+
+class TestEachStatusGetsTheTypeAnSdkExpects:
+    """`openai_error` on its own: the type each status maps to, and the
+    message out of a detail that is not a sentence."""
+
+    @pytest.mark.parametrize(
+        ('code', 'kind'),
+        [
+            (400, 'invalid_request_error'),
+            (401, 'authentication_error'),
+            (403, 'permission_error'),
+            (404, 'invalid_request_error'),
+            (409, 'invalid_request_error'),
+            (413, 'invalid_request_error'),
+            (418, 'invalid_request_error'),
+            (429, 'rate_limit_error'),
+            (500, 'server_error'),
+            (502, 'server_error'),
+            (599, 'server_error'),
+        ],
+    )
+    def test_the_type(self, code, kind):
+        body = json.loads(openai_error(HTTPException(status_code=code, detail='why')).body)
+
+        assert body == {'error': {'message': 'why', 'type': kind, 'code': None, 'param': None}, 'detail': 'why'}
+
+    def test_a_structured_detail_is_rendered_and_kept(self):
+        detail = {'reason': 'quota', 'limit': 3}
+
+        body = json.loads(openai_error(HTTPException(status_code=409, detail=detail)).body)
+
+        assert body['error']['message'] == str(detail)
+        assert body['detail'] == detail
+
+    def test_a_list_detail_is_rendered_too(self):
+        body = json.loads(openai_error(HTTPException(status_code=400, detail=['a', 'b'])).body)
+
+        assert body['error']['message'] == "['a', 'b']"
+
+    def test_no_detail_is_an_empty_message(self):
+        exc = HTTPException(status_code=403)
+        exc.detail = None  # type: ignore[assignment]
+
+        body = json.loads(openai_error(exc).body)
+
+        assert body['error']['message'] == ''
+        assert body['detail'] is None
+
+    def test_the_headers_are_kept(self):
+        response = openai_error(HTTPException(status_code=429, detail='slow', headers={'Retry-After': '30'}))
+
+        assert response.status_code == 429
+        assert response.headers['Retry-After'] == '30'
+
+    def test_the_sse_frame_is_the_same_envelope(self):
+        frame = OpenAIErrorBody.sse_frame(message='gone', status_code=403)
+
+        assert frame.startswith('data: ') and frame.endswith('\n\n')
+        assert json.loads(frame[6:]) == {
+            'error': {'message': 'gone', 'type': 'permission_error', 'code': None, 'param': None}
+        }
