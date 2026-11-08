@@ -38,9 +38,12 @@ from app.api.base_v1.schema.scim import (
     ServiceProviderConfig,
 )
 from app.api.scim.errors import scim_error
+from app.db.sql.models.user import User
 from app.middlewares.request_audit import RequestAudit
 from app.security.scim_token import require_scim_token, SCIM_ACTOR
-from app.services.scim import service
+from app.services.identity.account_refusals import AccountRefusals
+from app.services.scim.refusals import OffEveryDomain
+from app.services.scim.service import ScimService
 
 logger = logging.getLogger(__name__)
 
@@ -54,13 +57,33 @@ router = APIRouter(dependencies=[Depends(require_scim_token)])
 _FILTER = re.compile(r'^\s*userName\s+eq\s+"([^"]*)"\s*$', re.IGNORECASE)
 
 
-async def _recorded_in_their_organisation(request: Request, address: str) -> None:
+def scim_service() -> ScimService:
+    """A provider rather than `Depends(ScimService)`: FastAPI would read its keyword arguments as query parameters."""
+    return ScimService()
+
+
+async def _found(scim: ScimService, user_id: str) -> User:
+    user = await scim.find_by_id(user_id)
+    if user is None:
+        raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
+    return user
+
+
+async def _set_active(scim: ScimService, user_id: str, *, active: bool) -> ScimUser:
+    """The account after the change; a 404 if it was removed while the change was being made."""
+    user = await scim.set_active(user_id, active=active)
+    if user is None:
+        raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
+    return ScimUser.of_account(user)
+
+
+async def _recorded_in_their_organisation(request: Request, scim: ScimService, address: str) -> None:
     """What the provider does to a person is in their organisation's audit trail, where its admins read it.
 
     Somebody on no organisation's domain has none, and the deployment's
     trail records it instead.
     """
-    RequestAudit.of(request).attribute_to(user_id=SCIM_ACTOR, org_id=await service.organisation_of(address))
+    RequestAudit.of(request).attribute_to(user_id=SCIM_ACTOR, org_id=await scim.organisation_of(address))
 
 
 @router.get(
@@ -77,6 +100,7 @@ async def list_users(
     filter: str = Query(default='', alias='filter'),
     startIndex: int = Query(default=1, ge=1),
     count: int = Query(default=100, ge=0, le=200),
+    scim: ScimService = Depends(scim_service),
 ) -> ListResponse:
     """Answer a provider's "do you already have this person".
 
@@ -93,8 +117,8 @@ async def list_users(
     if not match:
         raise scim_error(f'Unsupported filter: {filter}', status.HTTP_400_BAD_REQUEST, 'invalidFilter')
 
-    user = await service.find_by_address(match.group(1).strip().lower())
-    found = [service.to_scim(user)] if user is not None else []
+    user = await scim.find_by_address(match.group(1).strip().lower())
+    found = [ScimUser.of_account(user)] if user is not None else []
     return ListResponse(
         totalResults=len(found),
         startIndex=startIndex,
@@ -109,35 +133,38 @@ async def list_users(
     status_code=status.HTTP_201_CREATED,
     description='Provision a user.',
 )
-async def create_user(payload: ScimUser, request: Request) -> ScimUser:
-    address = service.address_of(payload)
+async def create_user(payload: ScimUser, request: Request, scim: ScimService = Depends(scim_service)) -> ScimUser:
+    address = payload.address
     if not address:
         raise scim_error('userName is required', status.HTTP_400_BAD_REQUEST, 'invalidValue')
-    await _recorded_in_their_organisation(request, address)
+    await _recorded_in_their_organisation(request, scim, address)
 
-    existing = await service.find_by_address(address)
+    existing = await scim.find_by_address(address)
     if existing is not None:
         # 409 with `uniqueness`, which is what tells a provider to stop
         # retrying and reconcile instead. A 400 here makes a sync loop.
         RequestAudit.of(request).set_target(target_type='user', target_id=str(existing.user_id))
         raise scim_error(f'{address} already exists', status.HTTP_409_CONFLICT, 'uniqueness')
 
-    user = await service.provision(payload)
+    try:
+        with AccountRefusals():
+            user = await scim.provision(payload)
+    except OffEveryDomain as exc:
+        raise scim_error(str(exc), status.HTTP_409_CONFLICT) from exc
     RequestAudit.of(request).set_target(target_type='user', target_id=str(user.user_id))
     RequestAudit.of(request).add_detail(ActiveChangedAudit(active=payload.active))
-    return service.to_scim(user)
+    return ScimUser.of_account(user)
 
 
 @router.get('/Users/{user_id}', response_model=ScimUser, description='Read one user.')
-async def read_user(user_id: str) -> ScimUser:
-    user = await service.find_by_id(user_id)
-    if user is None:
-        raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
-    return service.to_scim(user)
+async def read_user(user_id: str, scim: ScimService = Depends(scim_service)) -> ScimUser:
+    return ScimUser.of_account(await _found(scim, user_id))
 
 
 @router.patch('/Users/{user_id}', response_model=ScimUser, description='Change one user.')
-async def patch_user(user_id: str, payload: PatchRequest, request: Request) -> ScimUser:
+async def patch_user(
+    user_id: str, payload: PatchRequest, request: Request, scim: ScimService = Depends(scim_service)
+) -> ScimUser:
     """The route deprovisioning actually arrives on.
 
     A patch that says nothing about ``active`` is accepted and changes
@@ -145,20 +172,20 @@ async def patch_user(user_id: str, payload: PatchRequest, request: Request) -> S
     server does not store, and failing those would make an
     administrator investigate a provisioning error that is not one.
     """
-    user = await service.find_by_id(user_id)
-    if user is None:
-        raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
-    await _recorded_in_their_organisation(request, str(user.email))
+    user = await _found(scim, user_id)
+    await _recorded_in_their_organisation(request, scim, user.email)
 
-    active = service.wants_deactivation(payload.Operations)
+    active = payload.active_change()
     if active is None:
-        return service.to_scim(user)
+        return ScimUser.of_account(user)
     RequestAudit.of(request).add_detail(ActiveChangedAudit(active=active))
-    return service.to_scim(await service.set_active(user_id, active=active))
+    return await _set_active(scim, user_id, active=active)
 
 
 @router.put('/Users/{user_id}', response_model=ScimUser, description='Replace one user.')
-async def replace_user(user_id: str, payload: ScimUser, request: Request) -> ScimUser:
+async def replace_user(
+    user_id: str, payload: ScimUser, request: Request, scim: ScimService = Depends(scim_service)
+) -> ScimUser:
     """Some providers replace rather than patch.
 
     Only ``active`` is applied. A replace carrying a different address
@@ -166,15 +193,13 @@ async def replace_user(user_id: str, payload: ScimUser, request: Request) -> Sci
     every other sign-in path agrees, so honouring it would move
     somebody's identity out from under their documents.
     """
-    user = await service.find_by_id(user_id)
-    if user is None:
-        raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
-    await _recorded_in_their_organisation(request, str(user.email))
+    user = await _found(scim, user_id)
+    await _recorded_in_their_organisation(request, scim, user.email)
 
     if payload.active == (user.deactivated_at is None):
-        return service.to_scim(user)
+        return ScimUser.of_account(user)
     RequestAudit.of(request).add_detail(ActiveChangedAudit(active=payload.active))
-    return service.to_scim(await service.set_active(user_id, active=payload.active))
+    return await _set_active(scim, user_id, active=payload.active)
 
 
 @router.delete(
@@ -182,7 +207,7 @@ async def replace_user(user_id: str, payload: ScimUser, request: Request) -> Sci
     status_code=status.HTTP_204_NO_CONTENT,
     description='Deprovision a user. Deactivates; does not delete their work.',
 )
-async def delete_user(user_id: str, request: Request) -> Response:
+async def delete_user(user_id: str, request: Request, scim: ScimService = Depends(scim_service)) -> Response:
     """Treated as deactivation, which is the honest reading.
 
     Providers differ about whether removing somebody sends ``DELETE``
@@ -192,10 +217,8 @@ async def delete_user(user_id: str, request: Request) -> Response:
     take their work and everything built on it, which no directory
     operation should do silently.
     """
-    user = await service.find_by_id(user_id)
-    if user is None:
-        raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
-    await _recorded_in_their_organisation(request, str(user.email))
+    user = await _found(scim, user_id)
+    await _recorded_in_their_organisation(request, scim, user.email)
     RequestAudit.of(request).add_detail(ActiveChangedAudit(active=False))
-    await service.set_active(user_id, active=False)
+    await scim.set_active(user_id, active=False)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

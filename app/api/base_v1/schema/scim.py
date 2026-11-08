@@ -24,9 +24,13 @@ reason.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.db.sql.models.user import User
+from app.services.auth.person_name import split_full_name
 
 USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User'
 LIST_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:ListResponse'
@@ -85,6 +89,52 @@ class ScimUser(BaseModel):
     active: bool = True
     meta: Meta = Field(default_factory=Meta)
 
+    @classmethod
+    def of_account(cls, user: User) -> ScimUser:
+        """One of our accounts, as a provider expects to read it."""
+        full_name = user.full_name or ''
+        given, family = split_full_name(full_name)
+        return cls(
+            id=user.user_id,
+            userName=user.email,
+            displayName=full_name,
+            name=Name(givenName=given, familyName=family, formatted=full_name),
+            emails=[Email(value=user.email, primary=True, type='work')],
+            # The one attribute a provisioning run is really asking about.
+            active=user.deactivated_at is None,
+            meta=Meta(
+                resourceType='User',
+                created=_iso(user.created_at),
+                lastModified=_iso(user.updated_at),
+                location=f'/scim/v2/Users/{user.user_id}',
+            ),
+        )
+
+    @property
+    def address(self) -> str:
+        """The address to key on, from wherever the provider put it.
+
+        ``userName`` is where it belongs and where every provider puts it.
+        The primary email is the documented fallback for the ones that
+        send a login name there instead, and taking the first email is the
+        last resort — a provider that sends exactly one is not ambiguous
+        about which it means.
+        """
+        if '@' in self.userName:
+            return self.userName.strip().lower()
+        primary = next((e.value for e in self.emails if e.primary and e.value), '')
+        fallback = primary or next((e.value for e in self.emails if e.value), '')
+        return fallback.strip().lower()
+
+    @property
+    def full_name(self) -> str:
+        """The display name, else the formatted name, else given and family joined; ``''`` when none is sent."""
+        return self.displayName or self.name.formatted or f'{self.name.givenName} {self.name.familyName}'.strip()
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
 
 class ListResponse(BaseModel):
     """What a filtered query answers with, even for one result."""
@@ -105,6 +155,31 @@ class PatchOperation(BaseModel):
     path: str | None = None
     value: Any = None
 
+    def active(self) -> bool | None:
+        """What this operation sets ``active`` to, or ``None`` when it does not set it.
+
+        Entra names the attribute in ``path`` with a scalar value; Okta
+        sends no path and an object.
+        """
+        if self.op and self.op.lower() not in ('replace', 'add'):
+            return None
+        path = (self.path or '').strip().lower()
+        if path == 'active':
+            return _as_bool(self.value)
+        answer: bool | None = None
+        if not path and isinstance(self.value, dict):
+            for key, value in self.value.items():
+                if key.lower() == 'active':
+                    answer = _as_bool(value)
+        return answer
+
+
+def _as_bool(value: Any) -> bool:
+    """A provider may send a JSON boolean or the string form of one."""
+    if isinstance(value, str):
+        return value.strip().lower() == 'true'
+    return bool(value)
+
 
 class PatchRequest(BaseModel):
     """``PATCH /Users/{id}`` — how a provider deprovisions somebody.
@@ -120,6 +195,19 @@ class PatchRequest(BaseModel):
 
     schemas: list[str] = Field(default_factory=lambda: [PATCH_SCHEMA])
     Operations: list[PatchOperation] = Field(default_factory=list)
+
+    def active_change(self) -> bool | None:
+        """Whether this patch sets ``active``, and to what; the last operation that does wins.
+
+        ``None`` when it says nothing about it — a provider syncing a
+        display name must not be read as a deprovisioning.
+        """
+        answer: bool | None = None
+        for operation in self.Operations:
+            active = operation.active()
+            if active is not None:
+                answer = active
+        return answer
 
 
 class ScimError(BaseModel):
