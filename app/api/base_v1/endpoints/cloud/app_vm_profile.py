@@ -11,6 +11,7 @@ from app.api.base_v1.schema.vm_profile_requests import VmProfileRequestRecord, V
 from app.api.base_v1.schema.vm_profiles import ProducerVmProfile
 from app.middlewares.request_audit import RequestAudit
 from app.security.producer import ProducerCaller, require_producer
+from app.services.cloud.vm_profile_request_refusals import VmProfileRequestRefusals
 from app.services.cloud.vm_profile_requests import VmProfileRequests
 
 router = APIRouter(prefix='/apps/{app_id}')
@@ -25,7 +26,8 @@ async def ask(
     caller: ProducerCaller = Depends(require_producer),
 ) -> VmProfileRequestRecord:
     """201 when new or changed — pending until an org admin decides; 200 when the same as before."""
-    record, changed = await VmProfileRequests().ask_for_app(caller, app_id, body)
+    with VmProfileRequestRefusals():
+        record, changed = await VmProfileRequests().ask_for_app(caller, app_id=app_id, settings=body)
     RequestAudit.of(request).set_target(target_type='vm_profile_request', target_id=record.id)
     RequestAudit.of(request).add_detail(
         VmProfileAskedAudit(
@@ -44,10 +46,12 @@ async def ask(
 
 @router.get('/vm-profile-request', response_model=VmProfileRequestRecord)
 async def read_request(app_id: str, caller: ProducerCaller = Depends(require_producer)) -> VmProfileRequestRecord:
-    return await VmProfileRequests().of_app(caller, app_id)
+    with VmProfileRequestRefusals():
+        return await VmProfileRequests().of_app(caller, app_id)
 
 
 @router.get('/vm-profile', response_model=ProducerVmProfile)
 async def read_profile(app_id: str, caller: ProducerCaller = Depends(require_producer)) -> ProducerVmProfile:
     """What the app's VM gets now: its profile's values, clamped to the caps, and its volume."""
-    return await VmProfileRequests().app_profile(caller, app_id)
+    with VmProfileRequestRefusals():
+        return await VmProfileRequests().app_profile(caller, app_id)

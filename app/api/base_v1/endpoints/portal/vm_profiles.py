@@ -29,6 +29,7 @@ from app.middlewares.request_audit import RequestAudit
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
+from app.services.cloud.vm_profile_request_refusals import VmProfileRequestRefusals
 from app.services.cloud.vm_profile_requests import VmProfileRequests
 from app.services.cloud.vm_profiles import VmCaps, VmProfiles, VmQuotas
 
@@ -139,7 +140,8 @@ async def approve_request(
     authority: OrgAuthority = Depends(require_org_authority),
 ) -> VmProfileRequestRecord:
     """The version read becomes a profile; an app's is given to the app. 409 if it changed since."""
-    record = await VmProfileRequests().approve(authority, request_id, body.version)
+    with VmProfileRequestRefusals():
+        record = await VmProfileRequests().approve(authority, request_id=request_id, version=body.version)
     _audit_decision(request, record)
     return record
 
@@ -152,7 +154,8 @@ async def reject_request(
     authority: OrgAuthority = Depends(require_org_authority),
 ) -> VmProfileRequestRecord:
     """Nothing runs; the VM keeps the profile it has."""
-    record = await VmProfileRequests().reject(authority, request_id, body.reason)
+    with VmProfileRequestRefusals():
+        record = await VmProfileRequests().reject(authority, request_id=request_id, reason=body.reason)
     _audit_decision(request, record)
     return record
 
