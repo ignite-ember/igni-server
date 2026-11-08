@@ -19,11 +19,16 @@ function WelcomeStub() {
   return <div data-testid="welcome">WELCOME</div>
 }
 
+function DashboardStub() {
+  return <div data-testid="dashboard">DASHBOARD</div>
+}
+
 function renderSignup(initialRoute = '/signup') {
   return renderWithProviders(
     <Routes>
       <Route path="/signup" element={<SignUpPage />} />
       <Route path="/welcome" element={<WelcomeStub />} />
+      <Route path="/dashboard" element={<DashboardStub />} />
     </Routes>,
     { route: initialRoute },
   )
@@ -114,6 +119,52 @@ describe('SignUpPage step 3 (password validation)', () => {
     expect(captured.first_name).toBe('Alice')
     expect(captured.code).toBe('123456')
     expect(localStorage.getItem('igni_token')).toBe('tok-abc')
+  })
+
+  test('a returnTo off this origin lands on the dashboard instead', async () => {
+    server.use(
+      http.post('/v1/send-sign-up-code', () => HttpResponse.json({ ok: true })),
+      http.post('/v1/sign-up', () => HttpResponse.json({ access_token: 'tok-abc' })),
+    )
+
+    renderSignup('/signup?returnTo=//evil.example.com')
+    await userEvent.type(screen.getByLabelText(/Email address/i), 'a@b.com')
+    await userEvent.click(screen.getByRole('button', { name: /Send verification code/i }))
+    await userEvent.type(await screen.findByLabelText(/Verification code/i), '123456')
+    await userEvent.click(screen.getByRole('button', { name: /^Verify$/i }))
+
+    await screen.findByRole('heading', { name: /Complete your profile/i })
+    await userEvent.type(screen.getByLabelText(/First name/i), 'A')
+    await userEvent.type(screen.getByLabelText(/Last name/i), 'B')
+    await userEvent.type(screen.getByLabelText(/^Password$/i), 'Str0ng!Pass')
+    await userEvent.type(screen.getByLabelText(/Confirm password/i), 'Str0ng!Pass')
+    await userEvent.click(screen.getByRole('button', { name: /Create account/i }))
+
+    expect(await screen.findByTestId('dashboard')).toBeInTheDocument()
+  })
+
+  test('joins the messages of a rejected form body', async () => {
+    server.use(
+      http.post('/v1/send-sign-up-code', () => HttpResponse.json({ ok: true })),
+      http.post('/v1/sign-up', () =>
+        HttpResponse.json({ detail: [{ msg: 'First name too long' }, { msg: 'Last name too long' }] }, { status: 422 }),
+      ),
+    )
+
+    renderSignup()
+    await userEvent.type(screen.getByLabelText(/Email address/i), 'a@b.com')
+    await userEvent.click(screen.getByRole('button', { name: /Send verification code/i }))
+    await userEvent.type(await screen.findByLabelText(/Verification code/i), '123456')
+    await userEvent.click(screen.getByRole('button', { name: /^Verify$/i }))
+
+    await screen.findByRole('heading', { name: /Complete your profile/i })
+    await userEvent.type(screen.getByLabelText(/First name/i), 'A')
+    await userEvent.type(screen.getByLabelText(/Last name/i), 'B')
+    await userEvent.type(screen.getByLabelText(/^Password$/i), 'Str0ng!Pass')
+    await userEvent.type(screen.getByLabelText(/Confirm password/i), 'Str0ng!Pass')
+    await userEvent.click(screen.getByRole('button', { name: /Create account/i }))
+
+    expect(await screen.findByText('First name too long. Last name too long')).toBeInTheDocument()
   })
 
   test('surfaces backend error from /sign-up', async () => {

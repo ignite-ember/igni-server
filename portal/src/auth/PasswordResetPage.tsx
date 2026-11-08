@@ -14,7 +14,9 @@ import {
 } from '@primer/react'
 import { useMutation } from '@tanstack/react-query'
 import client from '../api/client'
+import { formRefusalOf, refusalOf } from '../api/refusal'
 import { IgniLogo } from '../components/IgniLogo'
+import { missingPasswordRules } from './passwordRules'
 import './LoginPage.css'
 
 export function PasswordResetPage() {
@@ -36,10 +38,7 @@ export function PasswordResetPage() {
       setStep('code')
     },
     onError: (err: unknown) => {
-      const message =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail || 'Failed to send reset code'
-      setError(message)
+      setError(refusalOf(err, 'Failed to send reset code'))
     },
   })
 
@@ -56,30 +55,11 @@ export function PasswordResetPage() {
       setTimeout(() => navigate('/login', { replace: true }), 2000)
     },
     onError: (err: unknown) => {
-      const data = (err as { response?: { data?: { detail?: unknown } } })
-        ?.response?.data
-      const detail = data?.detail
-      let message = 'Failed to reset password'
-      if (typeof detail === 'string') {
-        message = detail
-      } else if (Array.isArray(detail) && detail.length > 0) {
-        message = detail.map((e: { msg?: string }) => e.msg ?? '').filter(Boolean).join('. ')
-      }
-      setError(message)
+      setError(formRefusalOf(err, 'Failed to reset password'))
     },
   })
 
-  const PASSWORD_RULES = [
-    { test: (p: string) => p.length >= 8, label: 'At least 8 characters' },
-    { test: (p: string) => /[A-Z]/.test(p), label: 'One uppercase letter' },
-    { test: (p: string) => /[a-z]/.test(p), label: 'One lowercase letter' },
-    { test: (p: string) => /\d/.test(p), label: 'One digit' },
-    { test: (p: string) => /[^A-Za-z0-9]/.test(p), label: 'One special character' },
-  ]
-
-  const passwordErrors = newPassword
-    ? PASSWORD_RULES.filter((r) => !r.test(newPassword)).map((r) => r.label)
-    : []
+  const passwordErrors = missingPasswordRules(newPassword)
 
   const handleSendCode = (e: React.FormEvent) => {
     e.preventDefault()
