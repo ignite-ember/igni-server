@@ -138,6 +138,11 @@ export interface InferenceStatus {
   heartbeat_interval_seconds: number
 }
 
+/** GET /portal/inference/models: every model id the nodes serve, for choosing one. */
+export interface AvailableModels {
+  models: string[]
+}
+
 export interface OrgSummary {
   id: string
   slug: string
