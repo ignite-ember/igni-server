@@ -64,8 +64,8 @@ from app.services.cloud.producer_event_errors import (
     ViewTooLarge,
 )
 from app.services.cloud.producer_event_views import ProducerEventViews
+from app.services.cloud.producer_lookup import ProducerLookup
 from app.services.cloud.service_grants import ServiceExtensionOf, ServiceGrants
-from app.services.cloud.vm_commands import Producer
 from app.services.portal.group_extensions import Entitlement, GroupExtensions
 
 
@@ -84,7 +84,7 @@ class ProducerEvents:
         rate_limit: EventRateLimit | None = None,
         group_extensions: GroupExtensions | None = None,
         extension_of: ServiceExtensionOf | None = None,
-        producers: Producer | None = None,
+        producers: ProducerLookup | None = None,
     ) -> None:
         self._db = db or ProducerEventsDB()
         self._attachments = attachments or ServiceAttachmentsDB()
@@ -92,7 +92,7 @@ class ProducerEvents:
         self._rate_limit = rate_limit or EventRateLimit()
         self._group_extensions = group_extensions or GroupExtensions()
         self._extension_of = extension_of or ServiceExtensionOf()
-        self._producers = producers or Producer()
+        self._producers = producers or ProducerLookup()
 
     async def entitlement(self, org_id: str, producer: ProducerRef) -> Entitlement:
         caller = ProducerCaller(kind=producer.kind, id=producer.id, org_id=org_id)

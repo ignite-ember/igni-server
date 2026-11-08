@@ -18,7 +18,7 @@ from app.db.sql.producer_volumes import ProducerVolumesDB
 from app.security.org_authority import OrgAuthority
 from app.security.producer import ProducerRef
 from app.services.auth.jwt_service import PERSON
-from app.services.cloud.vm_commands import Producer
+from app.services.cloud.producer_lookup import ProducerLookup
 from app.services.cloud.vm_profiles import VmProfiles
 from app.services.cloud.volume_sizes import VolumeSizes
 
@@ -27,11 +27,12 @@ SUPER_ADMIN = 'super_admin'
 
 
 class ProducerVolumes:
-    def __init__(self) -> None:
+    def __init__(self, *, producers: ProducerLookup | None = None) -> None:
         self._db = ProducerVolumesDB()
+        self._producers = producers or ProducerLookup()
 
     async def read(self, org_id: str, producer: ProducerRef) -> ProducerVolume:
-        await Producer.exists(org_id, producer)
+        await self._producers.exists(org_id, producer)
         profile = await VmProfiles().for_producer(org_id, producer)
         incarnation = await VolumeSizes.incarnation(org_id, producer) or ''
         grown = await self._db.get(org_id, producer.kind, producer.id)

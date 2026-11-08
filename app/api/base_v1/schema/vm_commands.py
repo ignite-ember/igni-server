@@ -1,9 +1,11 @@
 """Pydantic schemas for commands in producers' VMs (`docs/service-identity.md` §13)."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from app.security.producer import ProducerRef
 
@@ -30,12 +32,23 @@ class RunCommandRequest(BaseModel):
     timeout_s: int = Field(default=DEFAULT_TIMEOUT_S, ge=1, le=MAX_TIMEOUT_S)
 
 
+ScopeKind = Literal['group', 'profile', 'org', 'platform']
+
+
 class JobScope(BaseModel):
     """Which VMs a job is for."""
 
-    kind: Literal['group', 'profile', 'org', 'platform']
+    kind: ScopeKind
     #: The group's or profile's id; nothing for `org` or `platform`.
     id: str | None = None
+
+    @classmethod
+    def stored(cls, kind: str, scope_id: str | None) -> JobScope:
+        """A scope as `vm_jobs` stores it, its kind checked rather than assumed."""
+        return cls(kind=_SCOPE_KINDS.validate_python(kind), id=scope_id)
+
+
+_SCOPE_KINDS: TypeAdapter[ScopeKind] = TypeAdapter(ScopeKind)
 
 
 class QueueJobRequest(BaseModel):
