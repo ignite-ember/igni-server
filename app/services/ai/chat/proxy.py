@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from app.api.base_v1.schema.chat import ChatCompletionRequest
 from app.config import settings
 from app.db.sql.chat_usage import ChatUsageDB
@@ -23,8 +21,8 @@ from app.services.ai.schemas import BackendLease
 class ChatProxy:
     """Chooses the model, admits the request to a node, and streams or completes it.
 
-    The pool and the queue are looked up per request, so configuration
-    read at request time still applies. Refusals are raised as
+    The pool is looked up per request, so configuration read at request
+    time still applies; the queue is the app's one. Refusals are raised as
     `ChatRefused` and left to the caller to translate.
     """
 
@@ -33,14 +31,14 @@ class ChatProxy:
         *,
         callers: ChatCallerResolver,
         pools: PoolManager,
-        queue_factory: Callable[[], FairQueue],
+        queue: FairQueue,
         usage_db: ChatUsageDB,
         streamer: ChatStreamer,
         completions: ChatCompletionService,
     ) -> None:
         self._callers = callers
         self._pools = pools
-        self._queue_factory = queue_factory
+        self._queue = queue
         self._usage_db = usage_db
         self._streamer = streamer
         self._completions = completions
@@ -65,10 +63,10 @@ class ChatProxy:
         return CompletedAnswer(response=response)
 
     def _admission(self) -> ChatAdmission:
-        """Admission against the pool and queue as they are now."""
+        """Admission against the pool as it is now."""
         return ChatAdmission(
             pool=self._pools.get_pool(),
-            queue=self._queue_factory(),
+            queue=self._queue,
             max_wait=settings.chat_queue_max_wait_seconds,
         )
 
@@ -80,5 +78,5 @@ class ChatProxy:
             lease=lease,
             pool=self._pools.get_pool(),
             usage_db=self._usage_db,
-            queue=self._queue_factory(),
+            queue=self._queue,
         )

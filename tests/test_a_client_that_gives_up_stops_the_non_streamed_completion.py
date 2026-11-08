@@ -238,7 +238,8 @@ async def test_under_uvicorn_a_client_timeout_leaves_the_model_queue(monkeypatch
     app.add_middleware(_PassThrough)
     app.add_middleware(_PassThrough)
     app.include_router(chat_module.router)
-    services = ChatServices(pools=pools(pool), callers=person(), usage_db=UsageRows())
+    queue = FairQueue(max_length=settings.chat_queue_max_length)
+    services = ChatServices(pools=pools(pool), callers=person(), usage_db=UsageRows(), queue=queue)
     app.dependency_overrides[chat_services] = lambda: services
 
     port = _free_port()
@@ -250,7 +251,6 @@ async def test_under_uvicorn_a_client_timeout_leaves_the_model_queue(monkeypatch
                 break
             await asyncio.sleep(0.01)
         assert server.started
-        queue = FairQueue.of_loop(max_length=settings.chat_queue_max_length)
 
         async with httpx.AsyncClient(timeout=0.5) as client:
             with pytest.raises(httpx.ReadTimeout):

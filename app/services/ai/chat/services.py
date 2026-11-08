@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from fastapi import Request
 from starlette.applications import Starlette
 
@@ -25,25 +23,21 @@ from app.services.auth.auth_service import AuthService
 from app.services.portal.group_model_service import GroupModelService
 
 
-def _loop_queue() -> FairQueue:
-    """This event loop's queue, at the length configured now."""
-    return FairQueue.of_loop(max_length=settings.chat_queue_max_length)
-
-
 class ChatServices:
     """Builds the chat proxy's parts once and wires them together.
 
     Long-lived on purpose: the tail runner must outlive a request so a
-    shielded tail is never collected, and the model catalog caches. The
-    proxy looks the pool and the queue up per request, so configuration
-    read at request time still applies.
+    shielded tail is never collected, the model catalog caches, and the
+    fair queue holds every waiting request of this replica. The proxy
+    looks the pool up per request, so configuration read at request
+    time still applies.
     """
 
     def __init__(
         self,
         *,
         pools: PoolManager | None = None,
-        queue_factory: Callable[[], FairQueue] = _loop_queue,
+        queue: FairQueue | None = None,
         usage_db: ChatUsageDB | None = None,
         estimator: TokenEstimator | None = None,
         tails: TailRunner | None = None,
@@ -64,7 +58,7 @@ class ChatServices:
         self._proxy = ChatProxy(
             callers=self._callers,
             pools=pools,
-            queue_factory=queue_factory,
+            queue=queue or FairQueue(max_length=settings.chat_queue_max_length),
             usage_db=usage_db or ChatUsageDB(),
             streamer=ChatStreamer(upstream=upstream, estimator=estimator, tails=self._tails, retry=retry),
             completions=ChatCompletionService(upstream=upstream, estimator=estimator, tails=self._tails, retry=retry),
