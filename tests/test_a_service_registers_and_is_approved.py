@@ -221,6 +221,36 @@ class TestDeciding:
 
         assert response.status_code == 404
 
+    @pytest.mark.parametrize(
+        ('method', 'path', 'detail'),
+        [
+            ('GET', '/portal/clients/no-such-client', 'No such client'),
+            ('POST', '/portal/clients/no-such-client/approve', 'No such client'),
+            ('POST', '/portal/clients/no-such-client/revoke', 'No such client'),
+            ('DELETE', '/portal/clients/no-such-client', 'No such client'),
+            ('POST', '/portal/clients/no-such-client/held-update/approve', 'This service has no update waiting'),
+            ('POST', '/portal/clients/no-such-client/held-update/reject', 'This service has no update waiting'),
+        ],
+    )
+    async def test_every_route_says_so_in_its_own_words(self, client, db, method, path, detail):
+        headers = await _super_admin(db)
+
+        response = await client.request(method, path, headers=headers)
+
+        assert (response.status_code, response.json()['detail']) == (404, detail)
+        assert audit_rows(target_id='no-such-client') == [], 'a refused decision was audited as made'
+
+    async def test_a_client_with_no_update_waiting_has_none_to_decide(self, client, db):
+        headers = await _super_admin(db)
+        registered = (await client.post('/clients', json=RegisteredService().registration())).json()
+
+        for decision in ('approve', 'reject'):
+            response = await client.post(
+                f'/portal/clients/{registered["client_id"]}/held-update/{decision}', headers=headers
+            )
+
+            assert (response.status_code, response.json()['detail']) == (404, 'This service has no update waiting')
+
 
 class TestTwoKeysOneThumbprint:
     def test_different_keys_have_different_thumbprints(self):
