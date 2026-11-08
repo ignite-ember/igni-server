@@ -11,6 +11,7 @@ import {
   WorkflowIcon,
   type Icon,
 } from '@primer/octicons-react'
+import type { ContentType, EntryKind } from '../types'
 
 /**
  * What a group can hold.
@@ -24,11 +25,9 @@ import {
  * format per kind, and sending anything else is dropped rather than
  * rejected.
  */
-export type ContentType = 'markdown' | 'json' | 'yaml' | 'javascript' | 'python' | 'shell'
-
 export interface EntryKindSpec {
   /** Wire value. Never rename one: the CLI matches on it. */
-  id: string
+  id: EntryKind
   label: string
   /** Singular, for "New <thing>" and confirmations. */
   singular: string
@@ -300,12 +299,13 @@ export const ENTRY_KINDS: EntryKindSpec[] = [
   },
 ]
 
-export const KIND_BY_ID: Record<string, EntryKindSpec> = Object.fromEntries(
-  ENTRY_KINDS.map((kind) => [kind.id, kind]),
-)
+export const KIND_BY_ID = Object.fromEntries(ENTRY_KINDS.map((kind) => [kind.id, kind])) as Record<
+  EntryKind,
+  EntryKindSpec
+>
 
 /** The order kinds are shown in, most-reached-for first. */
-export const KIND_ORDER: string[] = ENTRY_KINDS.map((kind) => kind.id)
+export const KIND_ORDER: EntryKind[] = ENTRY_KINDS.map((kind) => kind.id)
 
 /** Monaco's language id for a kind's content. */
 export const EDITOR_LANGUAGE: Record<ContentType, string> = {

@@ -22,8 +22,8 @@ import { AgentModelField } from '../components/AgentModelField'
 import { ContentEditor } from '../components/ContentEditor'
 import { DeleteEntry } from '../components/entry/DeleteEntry'
 import { ToolWarning } from '../components/entry/ToolWarning'
-import type { OrgGroupDetail, OrgGroupEntry, OrgGroupEntryList } from '../types'
-import { KIND_BY_ID, type ContentType } from '../lib/entryKinds'
+import type { ContentType, OrgGroupDetail, OrgGroupEntry, OrgGroupEntryList } from '../types'
+import { KIND_BY_ID } from '../lib/entryKinds'
 
 export function EditEntryPage() {
   const { id: groupId, entryId } = useParams<{ id: string; entryId: string }>()

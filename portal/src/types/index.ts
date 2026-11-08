@@ -473,8 +473,26 @@ export interface TeamMemberList {
 
 // ─── Groups ─────────────────────────────────────────────────────────
 
-export type EntryKind = 'agents' | 'mcps' | 'plugins' | 'settings'
-export type ContentType = 'markdown' | 'yaml' | 'json'
+/** What a group can hold. Mirrors app/services/portal/entry_kinds.py; lib/entryKinds.ts describes each. */
+export type EntryKind =
+  | 'agents'
+  | 'skills'
+  | 'commands'
+  | 'workflows'
+  | 'rules'
+  | 'output-styles'
+  | 'hooks'
+  | 'tools'
+  | 'mcps'
+  | 'plugins'
+  | 'scripts'
+  | 'settings'
+
+/**
+ * The format an entry's content is in. Not a choice: igni's loaders honour
+ * exactly one per kind, and anything else is dropped rather than rejected.
+ */
+export type ContentType = 'markdown' | 'json' | 'yaml' | 'javascript' | 'python' | 'shell'
 
 /**
  * Brand overrides a group's people see in the igni client.
@@ -567,6 +585,24 @@ export interface OrgGroupEntry {
    * the group's default, then the deployment's.
    */
   model: string | null
+}
+
+/**
+ * POST /portal/groups/{id}/entries.
+ *
+ * The server tells an absent key from a null one, so the source fields
+ * ride along only for plugins and `model` only for an agent that names one.
+ */
+export interface CreateOrgGroupEntryRequest {
+  kind: EntryKind
+  entry_name: string
+  content: string
+  content_type: ContentType
+  enabled: boolean
+  source_url?: string | null
+  source_ref?: string | null
+  source_subdir?: string | null
+  model?: string
 }
 
 export interface OrgGroupEntryList {
