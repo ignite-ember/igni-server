@@ -66,9 +66,9 @@ class TestTheDocumentItself:
         assert len(text.splitlines()) > 200
 
     def test_the_committed_file_matches_the_generator(self):
-        assert (
-            _POLICIES.read_text() == render()
-        ), 'docs/POLICIES.md and its generator disagree. Regenerate:\n    python tools/generate_policies.py'
+        assert _POLICIES.read_text() == render(), (
+            'docs/POLICIES.md and its generator disagree. Regenerate:\n    python tools/generate_policies.py'
+        )
 
     def test_the_generator_agrees_from_the_command_line(self):
         result = subprocess.run(  # noqa: S603
@@ -219,7 +219,7 @@ class TestItStatesWhatTheCodeDoes:
         assert 'thirty days' in prose
 
     def test_the_key_sizes_match_the_code(self):
-        checks = (_ROOT / 'app/security/startup_checks.py').read_text()
+        checks = (_ROOT / 'app/security/secret_checks.py').read_text()
         assert '_MIN_SHARED_SECRET_LENGTH = 32' in checks, 'the minimum changed; CR-P4 needs updating'
         keys = (_ROOT / 'app/services/identity/jwk.py').read_text()
         assert 'KEY_SIZE = 2048' in keys, 'the signing key size changed; CR-P4 needs updating'
@@ -266,9 +266,9 @@ class TestWhatOnlyAnOrganisationCanDo:
         table = text.split('## Everything not enforced here, in one place')[1].split('\n## ')[0]
         for clause in CLAUSES:
             listed = f'| {clause.ref} |' in table
-            assert listed == (
-                not is_enforced(clause)
-            ), f'{clause.ref} is {"missing from" if not listed else "wrongly in"} the outstanding list'
+            assert listed == (not is_enforced(clause)), (
+                f'{clause.ref} is {"missing from" if not listed else "wrongly in"} the outstanding list'
+            )
 
     def test_it_refuses_the_weasel_words(self):
         """ "Appropriate", "adequate", "as necessary" — a requirement whose

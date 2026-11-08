@@ -23,11 +23,8 @@ from app.monitoring.clock_skew import ClockSkew
 from app.monitoring.router import router as metrics_router
 from app.observability.log_format import configure as configure_logging
 from app.observability.otel import ProcessTelemetry
-from app.security.startup_checks import (
-    check_deployment,
-    check_no_bypass_identity_in_database,
-    check_pool_fits_the_server,
-)
+from app.security.database_checks import DatabaseChecks
+from app.security.startup_checks import SettingsChecks
 from app.services.ai.pool_manager import PoolManager
 from app.services.cloud.producer_feed import ProducerFeed
 from app.services.deployment_licence import LicenceDailyAudit
@@ -46,13 +43,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # deployment that cannot authenticate anybody must fail to start
     # rather than serve. Everything below is best-effort init that
     # degrades; this is not.
-    check_deployment()
+    SettingsChecks().check()
 
     # Also not inside a try, and for the same reason. The dev bypass
     # writes a ``demo-user-001`` admin row that outlives the flag, so a
     # database it has touched carries a live administrator account with an
     # empty password. See the check's own docstring.
-    await check_no_bypass_identity_in_database()
+    database_checks = DatabaseChecks()
+    await database_checks.check_no_bypass_identity_in_database()
 
     # Not inside a try either: a server that cannot sign cannot sign
     # anybody in. Generates the deployment's first key on first start.
@@ -62,7 +60,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # A warning, not a gate: how many replicas share the server is not
     # something one process knows. It states both numbers in the log
     # where a deploy can see them. F116.
-    await check_pool_fits_the_server()
+    await database_checks.check_pool_fits_the_server()
 
     # Retention (DP-6): a setting is not a limit, so something has to
     # apply it. Does nothing and starts nothing unless a window is

@@ -113,7 +113,7 @@ class SQLAlchemySessionManager(metaclass=SingletonMeta):
 
         ``DB_POOL_SIZE + DB_MAX_OVERFLOW`` is the shared plane's ceiling on
         concurrent queries, and ``DB_POOL_TIMEOUT`` is how long a caller waits
-        for a slot before failing. `check_pool_fits_the_server` compares the
+        for a slot before failing. `DatabaseChecks.check_pool_fits_the_server` compares the
         arithmetic against the server's own ``max_connections`` at startup.
         Each organisation's database has a pool of the same size of its own,
         which that arithmetic does not count yet.

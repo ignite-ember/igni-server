@@ -44,7 +44,7 @@ from app.config import settings
 from app.db.sql.models import Base, load_all_models, TenantBase
 from app.db.sql.models.vm_credential import VmCredential
 from app.db.sql.tenant_registry import TenantRegistryDB
-from app.security.startup_checks import check_deployment
+from app.security.startup_checks import SettingsChecks
 from app.services.secrets import decrypt_secret, encrypt_secret, previous_keys, SecretCipherUnavailable
 from app.services.secrets.cipher import SecretDecryptError
 from tests.conftest import put_in_org, TEST_DB_URL_SYNC
@@ -345,7 +345,7 @@ class TestTheToolCoversEveryEncryptedColumn:
             assert column in listed, f'{path} writes {column}, which the rotation tool does not walk'
 
         # Ciphertext made some other way would bypass the key list entirely.
-        assert fernet_users <= {'app/services/secrets/cipher.py', 'app/security/startup_checks.py'}, fernet_users
+        assert fernet_users <= {'app/services/secrets/cipher.py', 'app/security/secret_checks.py'}, fernet_users
 
     async def test_every_listed_column_exists_and_every_encrypted_name_is_listed(self):
         """Both directions, against the live schemas — the shared plane and
@@ -623,7 +623,7 @@ class TestTheStartupChecksNagUntilItIsFinished:
         monkeypatch.setattr(settings, 'secret_encryption_key', KEY_B)
         monkeypatch.setattr(settings, 'secret_encryption_keys_previous', KEY_A)
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert any('SECRET_ENCRYPTION_KEYS_PREVIOUS holds 1 key' in p for p in problems), problems
         assert any('rotate_secret_key' in p for p in problems), problems
@@ -633,7 +633,7 @@ class TestTheStartupChecksNagUntilItIsFinished:
         monkeypatch.setattr(settings, 'secret_encryption_key', KEY_C)
         monkeypatch.setattr(settings, 'secret_encryption_keys_previous', f'{KEY_A},{KEY_B}')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert any('holds 2 key' in p for p in problems), problems
 
@@ -644,7 +644,7 @@ class TestTheStartupChecksNagUntilItIsFinished:
         monkeypatch.setattr(settings, 'secret_encryption_key', KEY_B)
         monkeypatch.setattr(settings, 'secret_encryption_keys_previous', 'truncated-pas')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert any('not a valid Fernet key' in p for p in problems), problems
 
@@ -655,7 +655,7 @@ class TestTheStartupChecksNagUntilItIsFinished:
         monkeypatch.setattr(settings, 'secret_encryption_key', KEY_B)
         monkeypatch.setattr(settings, 'secret_encryption_keys_previous', '')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert not any('SECRET_ENCRYPTION_KEYS_PREVIOUS' in p for p in problems), problems
 
@@ -690,7 +690,7 @@ class TestTheToolIsActuallyShipped:
         one of them is read at the worst moment."""
         for path in (
             'app/services/secrets/cipher.py',
-            'app/security/startup_checks.py',
+            'app/security/secret_checks.py',
             'docs/COMPLIANCE_TRACKER.md',
         ):
             text_ = (_ROOT / path).read_text()

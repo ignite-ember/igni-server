@@ -37,7 +37,7 @@ from cryptography.fernet import Fernet
 import pytest
 
 from app.config import settings
-from app.security.startup_checks import check_deployment
+from app.security.startup_checks import SettingsChecks
 from app.services.auth.oauth_service import OAuthService
 from app.services.auth.oidc import OidcClient, OidcError
 
@@ -353,7 +353,7 @@ class TestTheIssuerMustBeHttps:
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni')
         monkeypatch.setattr(settings, 'oidc_client_secret', 'shh')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert any('not HTTPS' in problem for problem in problems), problems
 
@@ -369,7 +369,7 @@ class TestHalfConfiguredOidcIsNotSilent:
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni')
         monkeypatch.setattr(settings, 'oidc_client_secret', '')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert any('partly configured' in problem for problem in problems), problems
         assert any('OIDC_CLIENT_SECRET' in problem for problem in problems), problems
@@ -382,7 +382,7 @@ class TestHalfConfiguredOidcIsNotSilent:
         for name in ('oidc_issuer', 'oidc_client_id', 'oidc_client_secret'):
             monkeypatch.setattr(settings, name, '')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert not any('OIDC' in problem for problem in problems), problems
 
