@@ -807,6 +807,30 @@ export interface AppHold {
   placed_at: string
 }
 
+/** One removed incarnation of a held person, and when it is erased (null while held). */
+export interface HeldIncarnation {
+  incarnation: string
+  removed_at: string | null
+  erase_at: string | null
+}
+
+/** A legal hold on a person in an organisation. */
+export interface PersonHold {
+  org_id: string
+  user_id: string
+  reason: string
+  placed_by_user_id: string
+  placed_at: string
+  /** Their removed incarnations in this organisation not yet erased. */
+  incarnations: HeldIncarnation[]
+}
+
+/** An organisation's legal holds: on people, and on apps. */
+export interface LegalHoldList {
+  holds: PersonHold[]
+  apps: AppHold[]
+}
+
 export type ErasureState = 'scheduled' | 'held' | 'erasing' | 'erased'
 
 /** A removed producer's VM on its way to erasure: a former member, a discarded app or space. */
@@ -828,4 +852,12 @@ export interface Erasure {
 export interface ErasureList {
   org_id: string
   erasures: Erasure[]
+}
+
+/** An app discarded: gone at once, its VM erased in the background. */
+export interface DiscardedApp {
+  /** Where its erasure stands; null for an app whose VM never existed. */
+  discarded: Erasure | null
+  /** The new app, when a fresh start was asked for. */
+  fresh_app: OrgApp | null
 }
