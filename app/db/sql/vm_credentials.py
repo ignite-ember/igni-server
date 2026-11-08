@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.sql.bind_chunks import chunks
 from app.db.sql.models.vm_credential import VmCredential
+from app.db.sql.schemas.vm_credential import PendingPickup
 from app.db.sql.tenancy import TenantData
 
 #: How many rotated-away secrets are remembered for reuse detection.
@@ -168,8 +169,8 @@ class VmCredentialsDB(TenantData):
 
     async def pick_up(
         self, org_id: str, producer_kind: str, producer_id: str, *, by_client_id: str
-    ) -> tuple[str, str] | None:
-        """An app's or a space's credential, once: (family id, encrypted credential); None ever after."""
+    ) -> PendingPickup | None:
+        """An app's or a space's credential, once, still encrypted; None ever after."""
         async with self.session_scope(org_id) as session:
             row = (
                 await session.execute(
@@ -189,4 +190,4 @@ class VmCredentialsDB(TenantData):
             row.pending_pickup = None
             row.picked_up_at = datetime.now(timezone.utc)
             row.picked_up_by = by_client_id
-            return row.id, sealed
+            return PendingPickup(family_id=row.id, sealed=sealed)

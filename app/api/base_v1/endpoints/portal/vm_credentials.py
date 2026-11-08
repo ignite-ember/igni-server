@@ -11,7 +11,8 @@ from app.api.base_v1.schema.portal.user import PortalUser
 from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import require_admin
 from app.security.producer import ProducerCaller, require_producer
-from app.services.cloud.vm_credentials import VmCredentialList, VmCredentialRecord, VmCredentials
+from app.services.cloud.vm_credential_records import VmCredentialList, VmCredentialRecord
+from app.services.cloud.vm_credentials import VmCredentials
 
 router = APIRouter()
 

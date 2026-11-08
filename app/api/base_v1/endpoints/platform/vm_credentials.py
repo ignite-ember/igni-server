@@ -12,7 +12,8 @@ from app.api.base_v1.schema.audit_detail import VmCredentialPickedUpAudit
 from app.middlewares.request_audit import RequestAudit
 from app.security.platform_caller import PlatformCaller, require_platform
 from app.security.producer import ProducerKind, ProducerRef
-from app.services.cloud.vm_credentials import PickedUp, VmCredentials
+from app.services.cloud.vm_credential_records import PickedUp
+from app.services.cloud.vm_credentials import VmCredentials
 
 router = APIRouter()
 

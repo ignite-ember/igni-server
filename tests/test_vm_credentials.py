@@ -17,7 +17,7 @@ import jwt
 import pytest
 
 from app.config import settings
-from app.services.cloud.vm_credentials import VM_CREDENTIAL, VM_SIGN_IN
+from app.services.cloud.vm_credential_grants import VM_CREDENTIAL, VM_SIGN_IN
 from tests.cloud_world import CloudOrg, platform
 from tests.conftest import audit_rows, auth_header, make_token
 
@@ -191,7 +191,7 @@ class TestALostReply:
         _, _, credential = await _person(client, acme)
         later = datetime.now(timezone.utc) + timedelta(days=91)
         monkeypatch.setattr(
-            'app.services.cloud.vm_credentials.datetime',
+            'app.services.cloud.vm_credential_grants.datetime',
             type('Later', (), {'now': staticmethod(lambda tz=None: later)}),
         )
 

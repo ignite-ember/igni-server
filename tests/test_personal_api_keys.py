@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import pytest
 
-from app.services.cloud.vm_credentials import VM_SIGN_IN
+from app.services.cloud.vm_credential_grants import VM_SIGN_IN
 from app.services.identity.api_keys import API_KEY
 from tests.cloud_world import CloudOrg
 from tests.conftest import audit_rows, auth_header

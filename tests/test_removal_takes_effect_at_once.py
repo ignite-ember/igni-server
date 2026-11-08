@@ -18,7 +18,7 @@ import pytest
 
 from app.config import settings
 from app.services.ai.schemas import ModelNotAvailableError
-from app.services.cloud.vm_credentials import VM_CREDENTIAL, VM_SIGN_IN
+from app.services.cloud.vm_credential_grants import VM_CREDENTIAL, VM_SIGN_IN
 from tests.cloud_world import CloudOrg, platform, shipped, token_for
 from tests.conftest import auth_header, make_token
 

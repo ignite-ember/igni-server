@@ -15,7 +15,7 @@ import jwt
 import pytest
 
 from app.config import settings
-from app.services.cloud.vm_credentials import VM_CREDENTIAL
+from app.services.cloud.vm_credential_grants import VM_CREDENTIAL
 from tests.cloud_world import CloudOrg, make_super_admin, platform, shipped, token_for
 from tests.conftest import auth_header
 

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.api.base_v1.schema.audit_detail import TokenGrantAudit
 from app.middlewares.request_audit import RequestAudit
-from app.services.cloud.vm_credentials import VM_GRANTS, VmCredentials
+from app.services.cloud.vm_credential_grants import VM_GRANTS, VmCredentialGrants
 from app.services.identity.api_keys import API_KEY, ApiKeys, ApiKeyString
 from app.services.identity.errors import OAuthError
 from app.services.identity.grants import IssuedTokens, RevocationRequest, TokenGrants, TokenRequest
@@ -30,7 +30,9 @@ async def token(request: Request) -> JSONResponse:
         else:
             # A VM's own credential, and the sign-in that issues a person's:
             # docs/service-identity.md §16.
-            issued = await (VmCredentials().grant(body) if body.grant_type in VM_GRANTS else TokenGrants().grant(body))
+            issued = await (
+                VmCredentialGrants().grant(body) if body.grant_type in VM_GRANTS else TokenGrants().grant(body)
+            )
     except ValidationError:
         return OAuthError.invalid_request('grant_type is required').response()
     except OAuthError as refusal:
