@@ -152,7 +152,7 @@ class ProducerFeed:
         caps = await VmCaps().get()
         changes = FeedChanges()
         for org_id in targets.orgs():
-            states = ProducerStates(org_id, caps)
+            states = ProducerStates(org_id, caps=caps)
             for kind in KINDS:
                 ids = set(targets.ids[org_id][kind]) if org_id in targets.ids else set()
                 if kind in targets.every.get(org_id, set()):
