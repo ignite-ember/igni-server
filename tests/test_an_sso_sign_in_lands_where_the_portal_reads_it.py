@@ -33,6 +33,7 @@ from app.services.auth.oidc import OidcClaims, OidcClient
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PORTAL_ROUTES = _ROOT / 'portal/src/App.tsx'
 _LOGIN_PAGE = _ROOT / 'portal/src/auth/LoginPage.tsx'
+_CODE_EXCHANGE = _ROOT / 'portal/src/auth/useSignInCodeExchange.ts'
 
 pytestmark = pytest.mark.anyio
 
@@ -80,5 +81,5 @@ def test_the_portal_has_that_page_and_it_reads_the_code():
     routes = _PORTAL_ROUTES.read_text()
     assert re.search(r'<Route\s+path="/login"\s+element=\{<LoginPage\s*/>\}', routes), 'no /login route'
     page = _LOGIN_PAGE.read_text()
-    assert "searchParams.get('code')" in page
-    assert "'/auth/exchange'" in page
+    assert "useSignInCodeExchange(searchParams.get('code')" in page, 'the page does not hand `code` to the exchange'
+    assert "'/auth/exchange'" in _CODE_EXCHANGE.read_text()

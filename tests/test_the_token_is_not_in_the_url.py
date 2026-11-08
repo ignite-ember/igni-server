@@ -346,6 +346,8 @@ class TestNoRedirectCarriesAToken:
 
     def test_the_portal_exchanges_rather_than_reading_a_token(self):
         source = (_ROOT / 'portal/src/auth/LoginPage.tsx').read_text()
+        exchange = (_ROOT / 'portal/src/auth/useSignInCodeExchange.ts').read_text()
 
-        assert "'/auth/exchange'" in source
+        assert 'useSignInCodeExchange(' in source
+        assert "'/auth/exchange'" in exchange
         assert "searchParams.get('token')" not in source, 'the portal still reads a token from the URL'
