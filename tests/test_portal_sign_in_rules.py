@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -17,6 +18,7 @@ from app.services.identity.portal_sign_in import (
     NotAnOrganisationMember,
     PortalSignIn,
     RedirectNotRegistered,
+    SignInRefused,
 )
 from app.services.identity.sign_in_refusals import SignInRefusals
 
@@ -46,8 +48,10 @@ class _Codes:
         return 'the-code'
 
 
-def _sign_in(*, approved: bool = True, codes: _Codes | None = None) -> PortalSignIn:
-    client = SimpleNamespace(client_id='svc', name='CodeIndex', redirect_uris=[REDIRECT_URI]) if approved else None
+def _sign_in(
+    *, approved: bool = True, codes: _Codes | None = None, redirect_uris: list[str] | None = [REDIRECT_URI]
+) -> PortalSignIn:
+    client = SimpleNamespace(client_id='svc', name='CodeIndex', redirect_uris=redirect_uris) if approved else None
     return PortalSignIn(registry=_Registry(client), organisations=_Organisations(), codes=codes or _Codes())  # type: ignore[arg-type]
 
 
@@ -104,6 +108,62 @@ async def test_each_rule_refuses(sign_in, request_, refusal):
         await sign_in().authorize(ACCOUNT, request_)
 
 
+async def test_a_redirect_without_a_query_gets_one_and_an_empty_state_is_left_out():
+    bare = 'https://codeindex.example.com/cb'
+
+    redirect = await _sign_in(redirect_uris=[bare]).authorize(ACCOUNT, _request(redirect_uri=bare, state=''))
+
+    assert redirect.redirect_to == f'{bare}?code=the-code'
+
+
+async def test_a_session_with_no_issue_time_is_bound_to_now():
+    codes = _Codes()
+    before = int(datetime.now(timezone.utc).timestamp())
+
+    await _sign_in(codes=codes).authorize(PortalAccount(user_id='user-1'), _request())
+
+    assert before <= codes.issued[0].session_issued_at <= int(datetime.now(timezone.utc).timestamp())
+
+
+@pytest.mark.parametrize(
+    ('sign_in', 'redirect_uri', 'refusal'),
+    [
+        (lambda: _sign_in(approved=False), REDIRECT_URI, ClientNotApproved),
+        (_sign_in, 'https://evil.example.com/cb', RedirectNotRegistered),
+        (lambda: _sign_in(redirect_uris=None), REDIRECT_URI, RedirectNotRegistered),
+    ],
+)
+async def test_the_page_is_refused_before_the_person_chooses(sign_in, redirect_uri, refusal):
+    with pytest.raises(refusal):
+        await sign_in().describe(ACCOUNT, client_id='svc', redirect_uri=redirect_uri)
+
+
+@pytest.mark.parametrize(
+    ('sign_in', 'request_', 'refusal'),
+    [
+        (
+            lambda **kw: _sign_in(approved=False, **kw),
+            _request(redirect_uri='https://evil.example.com/cb', code_challenge_method='plain', organisation='org-2'),
+            ClientNotApproved,
+        ),
+        (
+            _sign_in,
+            _request(redirect_uri='https://evil.example.com/cb', code_challenge_method='plain', organisation='org-2'),
+            RedirectNotRegistered,
+        ),
+        (_sign_in, _request(code_challenge_method='plain', organisation='org-2'), ChallengeMethodRefused),
+    ],
+    ids=['client-first', 'then-redirect', 'then-method'],
+)
+async def test_the_first_rule_broken_is_the_one_given_and_no_code_is_issued(sign_in, request_, refusal):
+    codes = _Codes()
+
+    with pytest.raises(refusal):
+        await sign_in(codes=codes).authorize(ACCOUNT, request_)
+
+    assert codes.issued == []
+
+
 @pytest.mark.parametrize(
     ('refusal', 'status_code', 'detail'),
     [
@@ -124,3 +184,9 @@ def test_each_refusal_is_the_portals_answer(refusal, status_code, detail):
 def test_anything_else_passes_through_the_refusals():
     with pytest.raises(RuntimeError, match='redis is down'), SignInRefusals():
         raise RuntimeError('redis is down')
+
+
+def test_a_refusal_it_has_no_answer_for_is_not_given_one():
+    """Only the four known refusals become a 4xx; anything else is left to be the server error it is."""
+    with pytest.raises(SignInRefused), SignInRefusals():
+        raise SignInRefused('unforeseen')
