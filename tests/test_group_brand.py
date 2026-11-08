@@ -117,6 +117,13 @@ class TestStoringIt:
         assert GroupTheme.from_column('{"accent": "red; }body{"}') is None
         assert GroupTheme.from_column(None) is None
 
+    @pytest.mark.parametrize('raw', ['[]', 'null', '1', '"#abc"'])
+    def test_a_row_that_is_not_an_object_serves_the_default_palette(self, raw):
+        assert GroupTheme.from_column(raw) is None
+
+    def test_a_row_naming_a_field_igni_does_not_know_serves_the_default_palette(self):
+        assert GroupTheme.from_column('{"accent": "#abc", "font": "Comic Sans"}') is None
+
 
 class TestThroughTheApi:
     async def test_a_group_can_be_created_with_a_brand(self, client, admin):
