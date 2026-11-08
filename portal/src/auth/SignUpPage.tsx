@@ -14,9 +14,10 @@ import {
 } from '@primer/react'
 import { useMutation } from '@tanstack/react-query'
 import client from '../api/client'
+import { refusalOf } from '../api/refusal'
 import { useAuth } from './useAuth'
 import { IgniLogo } from '../components/IgniLogo'
-import { OtherWaysIn, type OAuthProvider } from './OtherWaysIn'
+import { OtherWaysIn } from './OtherWaysIn'
 import { useAuthMethods } from './useAuthMethods'
 import './LoginPage.css'
 
@@ -47,10 +48,7 @@ export function SignUpPage() {
       setStep('code')
     },
     onError: (err: unknown) => {
-      const message =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail || 'Failed to send code'
-      setError(message)
+      setError(refusalOf(err, 'Failed to send code'))
     },
   })
 
@@ -127,20 +125,6 @@ export function SignUpPage() {
   // without Google (every air-gapped one) was a button to an error.
   const { data: methods } = useAuthMethods()
 
-  const handleOAuth = (provider: OAuthProvider) => {
-    const params = returnTo !== '/select-org'
-      ? `?returnTo=${encodeURIComponent(returnTo)}`
-      : ''
-    window.location.href = `/v1/auth/${provider}${params}`
-  }
-
-  const handleSso = () => {
-    const params = returnTo !== '/select-org'
-      ? `?returnTo=${encodeURIComponent(returnTo)}`
-      : ''
-    window.location.href = `${methods?.sso.start_url ?? '/v1/auth/oidc'}${params}`
-  }
-
   const headingText =
     step === 'email'
       ? 'Create your igni account'
@@ -195,7 +179,7 @@ export function SignUpPage() {
               </Stack>
             </form>
 
-            <OtherWaysIn methods={methods} onOAuth={handleOAuth} onSso={handleSso} />
+            <OtherWaysIn methods={methods} returnTo={returnTo} />
           </Stack>
         )}
 
