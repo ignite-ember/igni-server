@@ -18,12 +18,15 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import NullPool
 
+from app.db.sql.advisory_locks import AdvisoryLockDB
 from app.db.sql.models.tenant import ACTIVE, DETACHED, Tenant
+from app.db.sql.organizations import OrganizationDB
 from app.db.sql.schemas.tenancy import OrganisationDetached, TenantRef
+from app.db.sql.tenancy import TenantSessions
 from app.db.sql.tenant_migrator import TenantMigrator
 from app.db.sql.tenant_names import TenantNames
-from app.db.sql.tenant_registry import TenantRegistryDB
-from tests.conftest import TEST_DB_URL_SYNC
+from app.db.sql.tenant_registry import TENANT_LOCK, TenantRegistryDB
+from tests.conftest import add_member, create_org, create_user, TEST_DB_URL_SYNC
 
 
 def _registry_rows() -> list[TenantRef]:
@@ -176,3 +179,120 @@ class TestTenantNames:
 
     def test_without_a_url_it_follows_the_settings(self):
         assert TenantNames().base_name() == make_url(TEST_DB_URL_SYNC).database
+
+
+class TestARegistryEntryRoutes:
+    def test_an_active_entry_routes_to_its_database(self):
+        ref = TenantRef(org_id='org-1', number=3, database='ember_test_t3', state=ACTIVE)
+
+        assert ref.route() == 'ember_test_t3'
+
+    def test_a_detached_entry_refuses_by_organisation(self):
+        ref = TenantRef(org_id='org-1', number=3, database='ember_test_t3', state=DETACHED)
+
+        with pytest.raises(OrganisationDetached) as refused:
+            ref.route()
+        assert refused.value.args == ('org-1',)
+
+
+class TestASessionOpensItsOwnOrganisationsDatabase:
+    async def test_each_organisation_s_session_is_on_its_own_database(self):
+        first, second = str(uuid.uuid4()), str(uuid.uuid4())
+
+        seen = []
+        for org_id in (first, second):
+            async with TenantSessions().session_scope(org_id) as session:
+                seen.append(str((await session.execute(text('SELECT current_database()'))).scalar_one()))
+
+        names = TenantNames()
+        assert seen == [names.name(1), names.name(2)]
+
+    async def test_a_detached_organisation_gets_no_session(self):
+        org_id = str(uuid.uuid4())
+        await TenantRegistryDB().database_of(org_id)
+        await TenantRegistryDB().detach(org_id)
+
+        with pytest.raises(OrganisationDetached):
+            async with TenantSessions().session_scope(org_id):
+                pass
+
+
+class TestWhichOrganisationsAPersonReaches:
+    """What `OrganizationDB` answers for data that starts from a person, not an organisation.
+
+    A person is a current member of one organisation at most, so the
+    other rows here are a membership that ended (still a row, not a
+    current one) and other people in organisations without a database.
+    """
+
+    @pytest.fixture
+    async def orgs(self, db):
+        await create_user(db, user_id='owner', email='owner@example.com')
+        for user_id in ('u-member', 'u-in-unprovisioned', 'u-in-detached'):
+            await create_user(db, user_id=user_id, email=f'{user_id}@example.com')
+        orgs = {}
+        for slug in ('a-active', 'b-ended', 'c-unprovisioned', 'd-detached'):
+            orgs[slug] = str((await create_org(db, owner_user_id='owner', slug=slug, display_name=slug)).id)
+        await add_member(db, org_id=orgs['a-active'], user_id='u-member')
+        await add_member(db, org_id=orgs['b-ended'], user_id='u-member', status='removed')
+        await add_member(db, org_id=orgs['c-unprovisioned'], user_id='u-in-unprovisioned')
+        await add_member(db, org_id=orgs['d-detached'], user_id='u-in-detached')
+        await db.commit()
+        for slug in ('a-active', 'b-ended', 'd-detached'):
+            await TenantRegistryDB().database_of(orgs[slug])
+        await TenantRegistryDB().detach(orgs['d-detached'])
+        return orgs
+
+    async def test_member_org_ids_are_the_current_memberships_unless_asked_for_all(self, orgs):
+        assert await OrganizationDB().member_org_ids('u-member') == [orgs['a-active']]
+        assert await OrganizationDB().member_org_ids('u-member', active_only=False) == sorted(
+            [orgs['a-active'], orgs['b-ended']]
+        )
+
+    async def test_provisioned_ones_leave_out_the_unprovisioned_and_the_detached(self, orgs):
+        assert await OrganizationDB().provisioned_member_org_ids('u-member') == [orgs['a-active']]
+        assert await OrganizationDB().provisioned_member_org_ids('u-in-unprovisioned') == []
+        assert await OrganizationDB().provisioned_member_org_ids('u-in-detached') == []
+        # Though both are still current memberships.
+        assert await OrganizationDB().member_org_ids('u-in-unprovisioned') == [orgs['c-unprovisioned']]
+        assert await OrganizationDB().member_org_ids('u-in-detached') == [orgs['d-detached']]
+
+    async def test_reading_them_provisions_nothing(self, orgs):
+        await OrganizationDB().provisioned_member_org_ids('u-in-unprovisioned')
+
+        assert orgs['c-unprovisioned'] not in {r.org_id for r in _registry_rows()}
+
+
+class TestTheProvisioningLock:
+    """`AdvisoryLockDB.holding`, which `TenantRegistryDB` provisions under."""
+
+    @staticmethod
+    def _another_process_can_take(key: int) -> bool:
+        engine = create_engine(TEST_DB_URL_SYNC, poolclass=NullPool)
+        try:
+            with engine.connect() as conn:
+                taken = bool(conn.execute(text('SELECT pg_try_advisory_lock(:k)'), {'k': key}).scalar_one())
+                if taken:
+                    conn.execute(text('SELECT pg_advisory_unlock(:k)'), {'k': key})
+                return taken
+        finally:
+            engine.dispose()
+
+    async def test_it_is_held_for_the_block_and_given_back_after(self):
+        key = TENANT_LOCK + 1
+
+        async with AdvisoryLockDB().holding(key) as connection:
+            assert not self._another_process_can_take(key)
+            # The holder's own queries run on the connection that holds it.
+            assert (await connection.execute(text('SELECT 1'))).scalar_one() == 1
+
+        assert self._another_process_can_take(key)
+
+    async def test_it_is_given_back_when_the_block_fails(self):
+        key = TENANT_LOCK + 2
+
+        with pytest.raises(RuntimeError):
+            async with AdvisoryLockDB().holding(key):
+                raise RuntimeError('provisioning failed')
+
+        assert self._another_process_can_take(key)
