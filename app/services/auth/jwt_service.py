@@ -21,7 +21,7 @@ from pydantic import BaseModel, ValidationError
 from app.config import settings
 from app.security import jose
 from app.services.auth.token_claims import CustomClaims, TokenClaims, VerifiedClaims
-from app.services.identity.key_ring import KeyRing, SigningKeys
+from app.services.identity.key_ring import KeyRing, ProcessSigningKeys
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class TokenResponse(BaseModel):
 class JWTService:
     """Mints and checks tokens with the process's key ring.
 
-    Holds no state of its own: the ring is `SigningKeys`' and the issuer
+    Holds no state of its own: the ring is `ProcessSigningKeys`' and the issuer
     is `settings.public_base_url`, both read at the moment of use, so a
     key reload or a test's setting is seen without rebuilding anything.
     """
@@ -78,8 +78,8 @@ class JWTService:
     #: refused before any key is looked up.
     ALGORITHMS = ('RS256',)
 
-    def __init__(self, ring: Callable[[], KeyRing] = SigningKeys.ring) -> None:
-        self._ring = ring
+    def __init__(self, ring: Callable[[], KeyRing] | None = None) -> None:
+        self._ring = ring or ProcessSigningKeys().ring
 
     @property
     def issuer(self) -> str:

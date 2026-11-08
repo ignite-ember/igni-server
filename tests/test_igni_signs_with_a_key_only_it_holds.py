@@ -32,7 +32,7 @@ from app.config import settings
 from app.db.sql.signing_keys import SigningKeyDB
 from app.services.auth.jwt_service import JWTService, TokenUse
 from app.services.identity.jwk import PublicJwk
-from app.services.identity.key_ring import KeyRing, SigningKeys
+from app.services.identity.key_ring import KeyRing, ProcessSigningKeys, SigningKeys
 from app.services.secrets import decrypt_secret
 from tests.conftest import TEST_DB_URL_SYNC
 
@@ -88,7 +88,7 @@ class TestTheKeyIsTheServers:
         assert len(_rows()) == 1
 
     async def test_loading_signs_with_it(self, encryption_key):
-        ring = await SigningKeys.load()
+        ring = await SigningKeys().load()
 
         assert ring.kid == _rows()[0]['kid']
 
@@ -144,7 +144,7 @@ class TestAForgeryIsRefused:
         """The classic RS256-to-HS256 confusion: sign with HMAC using the
         published key as the secret. Refused by the pinned algorithm list
         before any key is consulted."""
-        public = SigningKeys.ring().published.keys[0]
+        public = ProcessSigningKeys().ring().published.keys[0]
         now = int(datetime.now(timezone.utc).timestamp())
         claims = {
             'sub': 'somebody',
@@ -167,9 +167,9 @@ class TestAForgeryIsRefused:
         assert JWTService().decode_token(forged).user_id is None
 
     def test_alg_none(self):
-        header = base64.urlsafe_b64encode(json.dumps({'alg': 'none', 'kid': SigningKeys.ring().kid}).encode()).rstrip(
-            b'='
-        )
+        header = base64.urlsafe_b64encode(
+            json.dumps({'alg': 'none', 'kid': ProcessSigningKeys().ring().kid}).encode()
+        ).rstrip(b'=')
         now = int(datetime.now(timezone.utc).timestamp())
         body = base64.urlsafe_b64encode(
             json.dumps(

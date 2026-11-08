@@ -26,7 +26,7 @@ from app.db.sql.models.organization import Organization
 from app.db.sql.models.user import User
 from app.db.sql.tenancy import TenantSessions
 from app.services.auth.jwt_service import JWTService
-from app.services.identity.key_ring import KeyRing, SigningKeys
+from app.services.identity.key_ring import KeyRing, ProcessSigningKeys
 from tests.egress_guard import EgressGuard, InternalNetwork
 
 #: `IGNI_TEST_PG_PORT` moves the suite off 5432 so it can run beside another
@@ -235,7 +235,7 @@ _ensure_tables()
 #: One key for the whole run. Generating RSA keys is not free, and no
 #: test needs a different one — the ones about keys build their own.
 TEST_RING = KeyRing.generated()
-SigningKeys.install(TEST_RING)
+ProcessSigningKeys().install(TEST_RING)
 _jwt = JWTService()
 
 
@@ -322,7 +322,7 @@ def _patch_settings(monkeypatch):
     monkeypatch.setattr(Settings, 'postgres_url', property(lambda self: TEST_DB_URL_ASYNC))
 
     # The run's signing keys, in case a test replaced them.
-    SigningKeys.install(TEST_RING)
+    ProcessSigningKeys().install(TEST_RING)
 
     # Ensure portal_auth_bypass is off
     from app.config import settings

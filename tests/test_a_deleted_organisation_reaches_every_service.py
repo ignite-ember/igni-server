@@ -17,7 +17,7 @@ import pytest
 from app.db.sql.organisation_deletion_notices import OrganisationDeletionNoticeDB
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.services.auth.jwt_service import JWTService
-from app.services.identity.key_ring import SigningKeys
+from app.services.identity.key_ring import ProcessSigningKeys
 from app.services.identity.organisation_deletions import LEASE, OrganisationDeletions
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import RegisteredService
@@ -40,7 +40,7 @@ class _Services:
 
     def claims(self, request: httpx.Request, audience: str) -> dict:
         token = request.headers['authorization'].removeprefix('Bearer ')
-        key = SigningKeys.ring().published.keys[0].as_dict()
+        key = ProcessSigningKeys().ring().published.keys[0].as_dict()
         return jwt.decode(token, jwt.PyJWK(key), algorithms=['RS256'], audience=audience, issuer=JWTService().issuer)
 
 

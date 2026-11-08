@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.services.auth.jwt_service import JWTService
 from app.services.identity.assertions import ASSERTION_TYPE
-from app.services.identity.key_ring import RELOAD_EVERY, SigningKeys
+from app.services.identity.key_ring import ProcessSigningKeys, RELOAD_EVERY
 from app.services.identity.token_clients import TokenClients
 from app.services.identity.token_requests import GRANT_TYPES
 
@@ -77,4 +77,4 @@ async def jwks(response: Response) -> dict[str, list[dict[str, str]]]:
     # Cacheable for as long as a replica keeps its own copy: a staged
     # key is published for twice that before anything signs with it.
     response.headers['Cache-Control'] = f'public, max-age={int(RELOAD_EVERY.total_seconds())}'
-    return {'keys': [key.as_dict() for key in SigningKeys.ring().published.keys]}
+    return {'keys': [key.as_dict() for key in ProcessSigningKeys().ring().published.keys]}

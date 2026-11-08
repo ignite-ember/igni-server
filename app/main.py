@@ -30,7 +30,7 @@ from app.services.cloud.producer_feed import ProducerFeed
 from app.services.deployment_licence import DeploymentLicence, LicenceDailyAudit
 from app.services.identity.extension_assets import ASSET_UPLOAD_PATH, MAX_ASSET_BYTES
 from app.services.identity.extension_bundle import EXTENSION_UPLOAD_PATH, MAX_ARCHIVE_BYTES
-from app.services.identity.key_ring import SigningKeys
+from app.services.identity.key_ring import ProcessSigningKeys
 from app.services.identity.organisation_deletions import OrganisationDeletions
 from app.services.retention import Retention
 
@@ -54,8 +54,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Not inside a try either: a server that cannot sign cannot sign
     # anybody in. Generates the deployment's first key on first start.
-    await SigningKeys.load()
-    key_reload = asyncio.create_task(SigningKeys.reload_forever(), name='signing-key-reload')
+    signing_keys = ProcessSigningKeys()
+    await signing_keys.load()
+    key_reload = asyncio.create_task(signing_keys.reload_forever(), name='signing-key-reload')
 
     # A warning, not a gate: how many replicas share the server is not
     # something one process knows. It states both numbers in the log

@@ -46,7 +46,7 @@ from datetime import datetime, timezone
 from app.api.base_v1.schema.portal.group_pack import OrgGroupPack
 from app.security import jose
 from app.services.auth.jwt_service import JWTService
-from app.services.identity.key_ring import KeyRing, SigningKeys
+from app.services.identity.key_ring import KeyRing, ProcessSigningKeys
 
 #: The JWS `typ` header. Distinct from a token's, so neither is mistaken
 #: for the other by anything that looks at the header first.
@@ -60,8 +60,8 @@ PACK_USE = 'group_policy'
 class GroupPackSigner:
     """Signs packs with the process's key ring; holds no state of its own."""
 
-    def __init__(self, ring: Callable[[], KeyRing] = SigningKeys.ring) -> None:
-        self._ring = ring
+    def __init__(self, ring: Callable[[], KeyRing] | None = None) -> None:
+        self._ring = ring or ProcessSigningKeys().ring
 
     @property
     def issuer(self) -> str:
