@@ -12,6 +12,7 @@ from app.db.sql.models.app_space import AppSpace, SPACE
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.spaces import SpacesDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 
 
 class SpaceTokens:
@@ -34,5 +35,5 @@ class SpaceTokens:
             audience=audience or self._tokens.issuer,
             use=TokenUse.SPACE,
             lifetime=lifetime,
-            claims={'org': org_id, 'kind': SPACE, 'app': space.app_id, 'external_id': space.external_id},
+            claims=CustomClaims(org=org_id, kind=SPACE, app=space.app_id, external_id=space.external_id),
         )

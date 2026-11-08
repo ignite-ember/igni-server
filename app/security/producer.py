@@ -74,8 +74,8 @@ class Producers:
         payload = tokens.verify(token, audience=tokens.issuer, use=TokenUse.APP)
         if payload is None:
             return None
-        client = await ClientRegistry().approved(str(payload['sub']), kind=APP)
-        if client is None or client.org_id != payload.get('org'):
+        client = await ClientRegistry().approved(payload.sub, kind=APP)
+        if client is None or client.org_id != payload.org:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail='This app is no longer registered',
@@ -90,8 +90,8 @@ class Producers:
         payload = tokens.verify(token, audience=tokens.issuer, use=TokenUse.SPACE)
         if payload is None:
             return None
-        org_id = str(payload.get('org') or '')
-        space = await SpaceTokens.live(org_id, str(payload['sub']), app_id=str(payload.get('app') or ''))
+        org_id = payload.org or ''
+        space = await SpaceTokens.live(org_id, payload.sub, app_id=payload.app or '')
         if space is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

@@ -14,6 +14,7 @@ import pytest
 
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import RegisteredService
 
@@ -137,7 +138,7 @@ class TestOnlyAServiceToken:
             audience=two_orgs['service'].client_id,
             use=TokenUse.USER,
             lifetime=timedelta(minutes=5),
-            claims={'org': two_orgs['acme']},
+            claims=CustomClaims(org=two_orgs['acme']),
         )
 
         response = await client.get('/directory/members', headers=auth_header(user_token))

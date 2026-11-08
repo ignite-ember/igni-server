@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 from app.db.sql.models.registered_client import RegisteredClient
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class ServiceSubjects:
             audience=service.base_url,
             use=TokenUse.IGNI,
             lifetime=CALL_TOKEN_LIFETIME,
-            claims={'org': org_id},
+            claims=CustomClaims(org=org_id),
         )
         return {'Authorization': f'Bearer {token}'}
 

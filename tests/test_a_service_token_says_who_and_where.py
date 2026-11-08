@@ -20,6 +20,7 @@ from app.db.sql.account_sessions import AccountSessionsDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 from app.services.identity.assertions import ASSERTION_TYPE
 from app.services.identity.grants import ACCESS_TOKEN_TYPE, TOKEN_EXCHANGE
 from app.services.identity.jwk import RsaKeyPair
@@ -271,7 +272,7 @@ class TestTheCliTradesItsSession:
             audience=world['service'].client_id,
             use=TokenUse.USER,
             lifetime=timedelta(minutes=5),
-            claims={'org': world['org']},
+            claims=CustomClaims(org=world['org']),
         )
 
         response = await _token(client, self._exchange(world, for_service))
@@ -576,7 +577,7 @@ class TestAServiceSigningSomebodyOutRevokesTheSignIn:
             audience=JWTService().issuer,
             use=TokenUse.REFRESH,
             lifetime=timedelta(days=1),
-            claims={'org': world['org'], 'azp': world['service'].client_id},
+            claims=CustomClaims(org=world['org'], azp=world['service'].client_id),
         )
 
         response = await _token(client, self._renew(world, unnamed))

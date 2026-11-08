@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from app.db.sql.organisation_deletion_notices import DueNotice, OrganisationDeletionNoticeDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class OrganisationDeletions:
             audience=notice.base_url,
             use=TokenUse.IGNI,
             lifetime=CALL_TOKEN_LIFETIME,
-            claims={'org': notice.org_id},
+            claims=CustomClaims(org=notice.org_id),
         )
         try:
             response = await client.delete(

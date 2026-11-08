@@ -32,7 +32,7 @@ class PlatformCaller(BaseModel):
 async def require_platform(request: Request, token: str | None = Depends(_bearer)) -> PlatformCaller:
     tokens = JWTService()
     payload = tokens.verify(token or '', audience=tokens.issuer, use=TokenUse.PLATFORM)
-    client = await ClientRegistry().approved(str(payload['sub']), kind=PLATFORM) if payload else None
+    client = await ClientRegistry().approved(payload.sub, kind=PLATFORM) if payload else None
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

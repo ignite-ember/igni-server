@@ -60,6 +60,7 @@ from app.db.sql.vm_credentials import Rotation, VmCredentialsDB
 from app.security.producer import ProducerCaller, ProducerRef
 from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, PERSON, TokenUse
+from app.services.auth.token_claims import CustomClaims
 from app.services.cloud.volume_sizes import VolumeSizes
 from app.services.identity.errors import OAuthError
 from app.services.identity.grants import IssuedTokens, PersonInOrganisation, TokenRequest
@@ -307,7 +308,7 @@ class VmCredentials:
                 audience=tokens.issuer,
                 use=TokenUse.APP,
                 lifetime=TOKEN_LIFETIME,
-                claims={'org': org_id, 'kind': APP, 'name': client.name if client else ''},
+                claims=CustomClaims(org=org_id, kind=APP, name=client.name if client else ''),
             )
         else:
             organisation = await OrganizationDB().get_by_id(org_id)

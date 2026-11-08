@@ -48,6 +48,7 @@ from app.security.membership_sessions import MembershipSessions
 from app.security.service_caller import REVOCATIONS_SCOPE
 from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 from app.services.identity.assertions import ClientAssertions
 from app.services.identity.errors import OAuthError
 from app.services.identity.registry import ClientRegistry
@@ -155,15 +156,17 @@ class PersonInOrganisation(BaseModel):
             super_admin=bool(user.is_super_admin),
         )
 
-    def claims(self) -> dict[str, object]:
-        return {
-            'org': self.org_id,
-            'org_name': self.org_name,
-            'org_role': self.org_role,
-            'email': self.email,
-            'name': self.name,
-            'super_admin': self.super_admin,
-        }
+    def claims(self, *, azp: str | None = None) -> CustomClaims:
+        """What a `user` token for this person carries; *azp* names the client it was issued to."""
+        return CustomClaims(
+            org=self.org_id,
+            org_name=self.org_name,
+            org_role=self.org_role,
+            email=self.email,
+            name=self.name,
+            super_admin=self.super_admin,
+            azp=azp,
+        )
 
 
 class Pkce:
@@ -235,12 +238,12 @@ class TokenGrants:
                     'only refresh tokens can be revoked; an access token expires within ten minutes',
                 )
             return
-        if payload.get('azp') != client.client_id:
+        if payload.azp != client.client_id:
             raise OAuthError.invalid_grant('this refresh token was not issued to this client')
-        grant_id = str(payload.get('grant') or '')
+        grant_id = payload.grant or ''
         if not grant_id:
             return
-        user_id = str(payload.get('sub') or '')
+        user_id = payload.sub
         await RevokedGrantDB().revoke(
             grant_id=grant_id,
             client_id=client.client_id,
@@ -292,7 +295,7 @@ class TokenGrants:
                 audience=self._tokens.issuer,
                 use=TokenUse.SERVICE,
                 lifetime=ACCESS_LIFETIME,
-                claims={'org': str(organisation.id)},
+                claims=CustomClaims(org=str(organisation.id)),
             ),
             expires_in=int(ACCESS_LIFETIME.total_seconds()),
         )
@@ -306,7 +309,7 @@ class TokenGrants:
                 audience=self._tokens.issuer,
                 use=TokenUse.SERVICE,
                 lifetime=ACCESS_LIFETIME,
-                claims={'scope': REVOCATIONS_SCOPE},
+                claims=CustomClaims(scope=REVOCATIONS_SCOPE),
             ),
             expires_in=int(ACCESS_LIFETIME.total_seconds()),
         )
@@ -323,7 +326,7 @@ class TokenGrants:
                 audience=self._tokens.issuer,
                 use=TokenUse.APP,
                 lifetime=ACCESS_LIFETIME,
-                claims={'org': org_id, 'kind': APP, 'name': client.name},
+                claims=CustomClaims(org=org_id, kind=APP, name=client.name),
             ),
             expires_in=int(ACCESS_LIFETIME.total_seconds()),
         )
@@ -359,13 +362,13 @@ class TokenGrants:
     async def _refresh(self, request: TokenRequest) -> IssuedTokens:
         client = await self._client(request)
         payload = self._tokens.verify(request.refresh_token or '', audience=self._tokens.issuer, use=TokenUse.REFRESH)
-        if payload is None or payload.get('azp') != client.client_id:
+        if payload is None or payload.azp != client.client_id:
             raise OAuthError.invalid_grant('this refresh token is not valid for this client')
-        grant_id = str(payload.get('grant') or '')
+        grant_id = payload.grant or ''
         if not grant_id or await RevokedGrantDB().is_revoked(grant_id):
             raise OAuthError.invalid_grant('this sign-in has been revoked')
         person = await PersonInOrganisation.check(
-            str(payload['sub']), str(payload.get('org') or ''), issued_at=int(payload['iat']), subjects=self._subjects
+            payload.sub, payload.org or '', issued_at=payload.iat, subjects=self._subjects
         )
         return self._for_person(client, person, grant_id=grant_id)
 
@@ -393,7 +396,7 @@ class TokenGrants:
             claims.user_id, org_id, issued_at=claims.issued_at, subjects=self._subjects
         )
         issued = IssuedTokens(
-            access_token=self._access(audience, person, claims={}),
+            access_token=self._access(audience, person),
             expires_in=int(ACCESS_LIFETIME.total_seconds()),
             issued_token_type=ACCESS_TOKEN_TYPE,
         )
@@ -411,7 +414,8 @@ class TokenGrants:
         space_claims = None if app else self._tokens.verify(token, audience=self._tokens.issuer, use=TokenUse.SPACE)
         if app is None and space_claims is None:
             raise OAuthError.invalid_grant('subject_token must be a valid igni session, app token or space token')
-        org_id = str((app or space_claims or {}).get('org') or '')
+        producer = app or space_claims
+        org_id = (producer.org if producer else None) or ''
         if request.organisation and request.organisation != org_id:
             raise OAuthError.invalid_target('this token is for a different organisation')
         try:
@@ -419,13 +423,13 @@ class TokenGrants:
         except ValueError as exc:
             raise OAuthError.invalid_target(str(exc)) from exc
         if space_claims is not None:
-            space = await SpaceTokens.live(org_id, str(space_claims['sub']), app_id=str(space_claims.get('app') or ''))
+            space = await SpaceTokens.live(org_id, space_claims.sub, app_id=space_claims.app or '')
             if space is None:
                 raise OAuthError.invalid_grant('this space no longer exists')
             access = SpaceTokens(self._tokens).sign(org_id, space, lifetime=ACCESS_LIFETIME, audience=audience)
         else:
             assert app is not None
-            client = await ClientRegistry().approved(str(app['sub']), kind=APP)
+            client = await ClientRegistry().approved(app.sub, kind=APP)
             if client is None or client.org_id != org_id:
                 raise OAuthError.invalid_grant('this app is no longer registered')
             access = self._tokens.sign(
@@ -433,7 +437,7 @@ class TokenGrants:
                 audience=audience,
                 use=TokenUse.APP,
                 lifetime=ACCESS_LIFETIME,
-                claims={'org': org_id, 'kind': APP, 'name': client.name},
+                claims=CustomClaims(org=org_id, kind=APP, name=client.name),
             )
         return IssuedTokens(
             access_token=access, expires_in=int(ACCESS_LIFETIME.total_seconds()), issued_token_type=ACCESS_TOKEN_TYPE
@@ -444,8 +448,8 @@ class TokenGrants:
         payload = self._tokens.verify(request.subject_token or '', audience=self._tokens.issuer, use=TokenUse.APP)
         if payload is None:
             raise OAuthError.invalid_grant("subject_token must be the app's own token")
-        org_id = str(payload.get('org') or '')
-        space = await SpaceTokens.live(org_id, request.space or '', app_id=str(payload['sub']))
+        org_id = payload.org or ''
+        space = await SpaceTokens.live(org_id, request.space or '', app_id=payload.sub)
         if space is None:
             raise OAuthError.invalid_grant('no such space of this app')
         logger.info('App %s acts as its space %s', space.app_id, space.id)
@@ -455,13 +459,13 @@ class TokenGrants:
             issued_token_type=ACCESS_TOKEN_TYPE,
         )
 
-    def _access(self, audience: str, person: PersonInOrganisation, *, claims: dict[str, object]) -> str:
+    def _access(self, audience: str, person: PersonInOrganisation, *, azp: str | None = None) -> str:
         return self._tokens.sign(
             subject=person.user_id,
             audience=audience,
             use=TokenUse.USER,
             lifetime=ACCESS_LIFETIME,
-            claims={**person.claims(), **claims},
+            claims=person.claims(azp=azp),
         )
 
     def _for_person(self, client: RegisteredClient, person: PersonInOrganisation, *, grant_id: str) -> IssuedTokens:
@@ -475,10 +479,10 @@ class TokenGrants:
             audience=self._tokens.issuer,
             use=TokenUse.REFRESH,
             lifetime=REFRESH_LIFETIME,
-            claims={'org': person.org_id, 'azp': client.client_id, 'grant': grant_id, 'jti': uuid.uuid4().hex},
+            claims=CustomClaims(org=person.org_id, azp=client.client_id, grant=grant_id, jti=uuid.uuid4().hex),
         )
         return IssuedTokens(
-            access_token=self._access(client.base_url, person, claims={'azp': client.client_id}),
+            access_token=self._access(client.base_url, person, azp=client.client_id),
             expires_in=int(ACCESS_LIFETIME.total_seconds()),
             refresh_token=refresh,
         )
