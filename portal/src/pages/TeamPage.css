@@ -6,6 +6,10 @@
   background-color: var(--bgColor-muted);
 }
 
+.team-skeleton-row {
+  border-bottom: var(--borderWidth-thin, 1px) solid var(--borderColor-muted);
+}
+
 /* Full-width table */
 .team-table {
   max-width: 100%;
