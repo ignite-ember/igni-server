@@ -18,7 +18,7 @@ from app.db.sql.service_extensions import ServiceExtensionDB
 from app.security.producer import ProducerCaller
 from app.services.identity.asset_download import AssetDownload
 from app.services.identity.extension_assets import BundleAssets, ExtensionAssets
-from app.services.identity.extensions import Manifest
+from app.services.identity.extension_manifest import Manifest
 from app.services.identity.jwk import JwkSet
 from app.services.identity.priority import ExtensionPriority
 from app.services.portal.group_extensions import Entitlement, GroupExtensions

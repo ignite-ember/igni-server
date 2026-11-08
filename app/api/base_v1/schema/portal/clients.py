@@ -11,8 +11,9 @@ from pydantic import BaseModel
 
 from app.db.sql.models.service_extension import ServiceExtension
 from app.services.identity.client_review import ClientDossier, ReviewedClient
+from app.services.identity.extension_manifest import Manifest, PluginSummary
 from app.services.identity.extension_review import ExtensionReview
-from app.services.identity.extensions import HeldUpdate, Manifest, PluginSummary
+from app.services.identity.extensions import HeldUpdate
 
 
 class ExtensionSummary(BaseModel):

@@ -19,7 +19,7 @@ import tomllib
 
 import pytest
 
-from app.services.identity.extensions import Manifest
+from app.services.identity.extension_manifest import Manifest
 from app.services.identity.impact import ExtensionImpact
 
 _E2E = Path(__file__).resolve().parent.parent / 'tools' / 'e2e_journey'

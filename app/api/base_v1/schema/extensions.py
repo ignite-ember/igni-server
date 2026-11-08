@@ -9,8 +9,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_serializer, SerializerFunctionWrapHandler
 
-from app.services.identity.extension_grants import AddedGrant
 from app.services.identity.extensions import Publication
+from app.services.identity.grants_comparison import AddedGrant
 from app.services.identity.jwk import JwkSet
 
 

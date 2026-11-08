@@ -13,7 +13,7 @@ put on people's machines. Distribution waits for approval.
 
 Approval covers what the super admin saw. Once the service is approved,
 a new version that asks for the same or less
-(`app.services.identity.extension_grants`) goes live at once; one that
+(`app.services.identity.grants_comparison`) goes live at once; one that
 asks for **more** is held: machines keep receiving the approved version,
 and a super admin approves or rejects the held one on the Services page
 (`HeldUpdates`). A newer upload replaces a held one. The upload still
@@ -42,17 +42,18 @@ import re
 import tarfile
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator, ValidationError
+from pydantic import BaseModel, ValidationError
 import yaml
 
-from app.api.base_v1.schema.vm_profile_requests import ManifestVm
 from app.db.sql.models.registered_client import APPROVED, RegisteredClient, SERVICE
 from app.db.sql.models.service_extension import HELD, LIVE, ServiceExtension
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.service_extensions import ServiceExtensionDB
 from app.security import jose
 from app.services.identity.extension_assets import AssetRefused, BundleAssets, ExtensionAssets
-from app.services.identity.extension_grants import AddedGrant, compare_grants, ExtensionGrants, GrantsComparison
+from app.services.identity.extension_grants import ExtensionGrants
+from app.services.identity.extension_manifest import AgentOverride, Manifest, PluginAgent, PluginSkill, PluginSummary
+from app.services.identity.grants_comparison import AddedGrant, GrantsComparison
 from app.services.identity.impact import ExtensionImpact, IgniCommands, ImpactRefused
 from app.services.identity.jwk import JwkSet, PublicJwk
 
@@ -86,59 +87,6 @@ class BundleClaim(BaseModel):
     extension: str
     version: str
     sha256: str
-
-
-class Manifest(BaseModel):
-    """The parts of an extension manifest igni reads. The rest is kept as sent."""
-
-    model_config = ConfigDict(extra='allow')
-
-    id: str = Field(min_length=1, max_length=200)
-    version: str = Field(min_length=1, max_length=100)
-    name: str = ''
-    description: str = ''
-    vendor: str = ''
-    contributes: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode='before')
-    @classmethod
-    def _vm_is_readable(cls, data: Any) -> Any:
-        """`vm`, what its VMs in igni's cloud would get, kept as sent but refused when malformed (§12.3)."""
-        if isinstance(data, dict) and data.get('vm') is not None:
-            ManifestVm.model_validate(data['vm'])
-        return data
-
-
-class PluginAgent(BaseModel):
-    """One of the plugin's own agents, under the extension's namespace."""
-
-    file: str
-    name: str
-    description: str = ''
-
-
-class AgentOverride(BaseModel):
-    """An agent this extension overrides, as its own file defines it while it runs."""
-
-    #: The agent's name, as igni knows it: `explorer`.
-    agent: str
-    file: str
-    description: str = ''
-    #: Takes no other extension's edits.
-    exclusive: bool = False
-    #: The condition it waits on, if any.
-    when: str | None = None
-
-
-class PluginSkill(BaseModel):
-    name: str
-    description: str = ''
-
-
-class PluginSummary(BaseModel):
-    agents: list[PluginAgent] = Field(default_factory=list)
-    agent_overrides: list[AgentOverride] = Field(default_factory=list)
-    skills: list[PluginSkill] = Field(default_factory=list)
 
 
 class ExtensionBundle:
@@ -294,9 +242,9 @@ def grants_of(extension: ServiceExtension | None) -> ExtensionGrants:
         return ExtensionGrants()
     try:
         return ExtensionGrants.of(
-            dict(extension.manifest), impact=dict(extension.impact or {}), plugin=dict(extension.plugin)
+            Manifest.model_validate(extension.manifest), PluginSummary.model_validate(extension.plugin)
         )
-    except ImpactRefused:
+    except (ImpactRefused, ValidationError):
         return ExtensionGrants()
 
 
@@ -356,7 +304,7 @@ class ServiceExtensions:
         # service's upload is what they will see; a first upload has
         # nothing to be compared with, as before.
         live = await self._store.of(client_id) if client.state == APPROVED else None
-        comparison = compare_grants(grants_of(live), grants_of(upload)) if live is not None else None
+        comparison = GrantsComparison.between(grants_of(live), grants_of(upload)) if live is not None else None
         if comparison is not None and comparison.wider:
             held = await self._store.held_of(client_id)
             if held is not None and held.sha256 == upload.sha256:
@@ -427,7 +375,7 @@ class HeldUpdates:
         if client is None:
             return None
         live = await self._store.of(row.client_id)
-        comparison = compare_grants(grants_of(live), grants_of(row))
+        comparison = GrantsComparison.between(grants_of(live), grants_of(row))
         return HeldUpdate(
             client_id=row.client_id,
             service=client.name,
