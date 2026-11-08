@@ -561,6 +561,11 @@ export interface OrgGroupEntry {
 export interface OrgGroupEntryList {
   entries: OrgGroupEntry[]
   total: number
+  /**
+   * After a create or update: anything worth saying about what was just
+   * written, such as a mistyped tool name. The write still succeeded.
+   */
+  warnings?: string[]
 }
 
 /** One approved extension, and whether this group's people get it (off by default). */

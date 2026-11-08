@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Banner,
@@ -14,59 +14,28 @@ import {
 import { ArrowLeftIcon } from '@primer/octicons-react'
 import { useNavigate, useParams, Link as RouterLink } from 'react-router-dom'
 import client from '../api/client'
-import { closestTool, unknownTools } from '../lib/agentTools'
+import { refusalOf } from '../api/refusal'
+import { unknownTools } from '../lib/agentTools'
+import { useKnownTools } from '../hooks/useKnownTools'
 import './cards.css'
 import { AgentModelField } from '../components/AgentModelField'
 import { ContentEditor } from '../components/ContentEditor'
-import type { OrgGroupDetail, OrgGroupEntry } from '../types'
+import { DeleteEntry } from '../components/entry/DeleteEntry'
+import { ToolWarning } from '../components/entry/ToolWarning'
+import type { OrgGroupDetail, OrgGroupEntry, OrgGroupEntryList } from '../types'
 import { KIND_BY_ID, type ContentType } from '../lib/entryKinds'
-
-/**
- * The tool names this deployment offers.
- *
- * From the server, so the live warning and the one on save check
- * against the same list rather than two copies that can disagree.
- */
-function useKnownTools(kind: string): string[] {
-  const toolsQuery = useQuery({
-    queryKey: ['agent-tools'],
-    queryFn: () => client.get<{ tools: string[] }>('/portal/agent-tools').then((r) => r.data),
-    enabled: kind === 'agents',
-    staleTime: 5 * 60 * 1000,
-  })
-  return kind === 'agents' ? (toolsQuery.data?.tools ?? []) : []
-}
-
-/** The inline note under the editor, or nothing. */
-function ToolWarning({ names, known }: { names: string[]; known: string[] }) {
-  if (names.length === 0) return null
-  return (
-    <Text size="small" className="entry-tool-warning">
-      {names
-        .map((name) => {
-          const guess = closestTool(name, known)
-          return guess ? `${name} — did you mean ${guess}?` : name
-        })
-        .join(' · ')}{' '}
-      {names.length === 1 ? 'is not a tool igni knows' : 'are not tools igni knows'}. This agent
-      will fail when something calls it.
-    </Text>
-  )
-}
 
 export function EditEntryPage() {
   const { id: groupId, entryId } = useParams<{ id: string; entryId: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
+  // The API answers entries a group at a time; sharing the group page's
+  // query means opening an entry from there reads the list it already has.
   const entryQuery = useQuery({
-    queryKey: ['entry', groupId, entryId],
-    queryFn: async () => {
-      const list = await client
-        .get<{ entries: OrgGroupEntry[] }>(`/portal/groups/${groupId}/entries`)
-        .then((r) => r.data)
-      return list.entries.find((o) => o.id === entryId) ?? null
-    },
+    queryKey: ['group-entries', groupId],
+    queryFn: () => client.get<OrgGroupEntryList>(`/portal/groups/${groupId}/entries`).then((r) => r.data),
+    select: (list) => list.entries.find((entry) => entry.id === entryId) ?? null,
     enabled: !!groupId && !!entryId,
   })
 
@@ -99,20 +68,17 @@ export function EditEntryPage() {
     )
   }
 
-  const entry = entryQuery.data
-
   return (
     <EditEntryForm
       groupId={groupId!}
       groupName={groupQuery.data?.name}
       groupDefaultModel={groupQuery.data?.default_model}
       readOnly={!!groupQuery.data?.is_default}
-      entry={entry}
-      onSaved={() => {
+      entry={entryQuery.data}
+      onDone={() => {
         queryClient.invalidateQueries({ queryKey: ['group-entries', groupId] })
         navigate(`/groups/${groupId}?tab=entries`)
       }}
-      onClose={() => navigate(`/groups/${groupId}?tab=entries`)}
     />
   )
 }
@@ -129,76 +95,53 @@ interface EditEntryFormProps {
    */
   readOnly: boolean
   entry: OrgGroupEntry
-  onSaved: () => void
-  onClose: () => void
+  /** Saved without warnings, or deleted: back to the group's entries. */
+  onDone: () => void
 }
 
-function EditEntryForm({
-  groupId,
-  groupName,
-  groupDefaultModel,
-  readOnly,
-  entry,
-  onSaved,
-}: EditEntryFormProps) {
-  const queryClient = useQueryClient()
-  const [feedbackBanner, setFeedbackBanner] = useState<{ variant: 'success' | 'critical'; message: string } | null>(null)
-  const [entryName, setEntryName] = useState(entry.entry_name)
+function EditEntryForm({ groupId, groupName, groupDefaultModel, readOnly, entry, onDone }: EditEntryFormProps) {
   const [content, setContent] = useState(entry.content)
   const [enabled, setEnabled] = useState(entry.enabled)
   const [model, setModel] = useState<string | null>(entry.model)
-  const [nameError, setNameError] = useState<string | null>(null)
   const [contentError, setContentError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
+  const [deleteRefusal, setDeleteRefusal] = useState<string | null>(null)
 
   const kind = entry.kind
   const spec = KIND_BY_ID[kind]
   const knownTools = useKnownTools(kind)
   const badTools = unknownTools(content, knownTools)
-  const contentType: ContentType = (entry.content_type as ContentType) ?? spec?.contentType ?? 'markdown'
+  const contentType: ContentType = entry.content_type ?? spec?.contentType ?? 'markdown'
+  const entriesPath = `/groups/${groupId}?tab=entries`
 
   const updateMutation = useMutation({
     mutationFn: () =>
-      client.patch(`/portal/groups/${groupId}/entries/${entry.id}`, {
-        content,
-        enabled,
-        // An empty string clears it: null already means "not supplied"
-        // on a partial update.
-        ...(kind === 'agents' ? { model: model ?? '' } : {}),
-      }).then((r) => r.data),
-    onSuccess: (data: { warnings?: string[] }) => {
+      client
+        .patch<OrgGroupEntryList>(`/portal/groups/${groupId}/entries/${entry.id}`, {
+          content,
+          enabled,
+          // An empty string clears it: null already means "not supplied"
+          // on a partial update.
+          ...(kind === 'agents' ? { model: model ?? '' } : {}),
+        })
+        .then((r) => r.data),
+    onSuccess: (data) => {
       // See NewEntryPage: a warning nobody reads is not a warning.
-      if (data?.warnings?.length) {
+      if (data.warnings?.length) {
         setWarnings(data.warnings)
         return
       }
-      showFeedback('success', 'Entry updated')
-      onSaved()
+      onDone()
     },
-    onError: (err: unknown) => {
-      const e = err as { response?: { data?: { detail?: string } } }
-      const detail = e.response?.data?.detail
-      setContentError(detail ?? 'Failed to update entry')
-    },
+    onError: (err) => setContentError(refusalOf(err, 'Failed to update entry')),
   })
-
-  const showFeedback = useCallback((variant: 'success' | 'critical', message: string) => {
-    setFeedbackBanner({ variant, message })
-    setTimeout(() => setFeedbackBanner(null), 5000)
-  }, [])
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault()
-    const trimmed = entryName.trim()
-    if (!trimmed) {
-      setNameError('Entry name is required')
-      return
-    }
     if (!content.trim()) {
       setContentError('Content is required')
       return
     }
-    setNameError(null)
     setContentError(null)
     updateMutation.mutate()
   }
@@ -210,20 +153,13 @@ function EditEntryForm({
         {groupName ? (
           <Breadcrumbs.Item href={`/groups/${groupId}`}>{groupName}</Breadcrumbs.Item>
         ) : null}
-        <Breadcrumbs.Item href={`/groups/${groupId}?tab=entries`}>
-          Entries
-        </Breadcrumbs.Item>
+        <Breadcrumbs.Item href={entriesPath}>Entries</Breadcrumbs.Item>
         <Breadcrumbs.Item selected>{entry.entry_name}</Breadcrumbs.Item>
       </Breadcrumbs>
 
       <PageHeader>
         <PageHeader.TitleArea>
-          <Button
-            variant="invisible"
-            as={RouterLink}
-            to={`/groups/${groupId}?tab=entries`}
-            aria-label="Back to entries"
-          >
+          <Button variant="invisible" as={RouterLink} to={entriesPath} aria-label="Back to entries">
             <ArrowLeftIcon />
           </Button>
           <PageHeader.Title as="h1">{entry.entry_name}</PageHeader.Title>
@@ -254,28 +190,23 @@ function EditEntryForm({
         />
       ))}
 
-      {feedbackBanner && (
+      {deleteRefusal && (
         <Banner
-          variant={feedbackBanner.variant}
-          title={feedbackBanner.message}
-          onDismiss={() => setFeedbackBanner(null)}
+          variant="critical"
+          title="Entry not deleted"
+          description={deleteRefusal}
+          onDismiss={() => setDeleteRefusal(null)}
         />
       )}
 
       <form onSubmit={handleSubmit}>
         <Stack direction="vertical" gap="normal" style={{ maxWidth: 800 }}>
+          {/* The API has no rename: an entry is known by its name to every
+              synced machine. Shown so you know which one this is. */}
           <FormControl>
             <FormControl.Label>Entry name</FormControl.Label>
-            <TextInput
-              value={entryName}
-              onChange={(e) => { setEntryName(e.currentTarget.value); setNameError(null) }}
-              placeholder="e.g. code-reviewer, github-mcp"
-              validationStatus={nameError ? 'error' : undefined}
-              readOnly={readOnly}
-              autoFocus={!readOnly}
-              block
-            />
-            {nameError && <FormControl.Validation variant="error">{nameError}</FormControl.Validation>}
+            <TextInput value={entry.entry_name} readOnly block />
+            {!readOnly && <FormControl.Caption>An entry's name cannot be changed.</FormControl.Caption>}
           </FormControl>
 
           {kind === 'agents' && (
@@ -301,17 +232,14 @@ function EditEntryForm({
           />
 
           <FormControl disabled={readOnly}>
-            <Checkbox
-              checked={enabled}
-              onChange={(e) => setEnabled(e.currentTarget.checked)}
-            />
+            <Checkbox checked={enabled} onChange={(e) => setEnabled(e.currentTarget.checked)} />
             <FormControl.Label>Enabled</FormControl.Label>
             <FormControl.Caption>When disabled, this entry is skipped at runtime.</FormControl.Caption>
           </FormControl>
 
           <Stack direction="horizontal" gap="condensed">
             {readOnly ? (
-              <Button as={RouterLink} to={`/groups/${groupId}?tab=entries`}>
+              <Button as={RouterLink} to={entriesPath}>
                 Back
               </Button>
             ) : (
@@ -319,27 +247,16 @@ function EditEntryForm({
                 <Button type="submit" variant="primary" disabled={updateMutation.isPending}>
                   {updateMutation.isPending ? 'Saving…' : 'Save entry'}
                 </Button>
-                <Button as={RouterLink} to={`/groups/${groupId}?tab=entries`} disabled={updateMutation.isPending}>
+                <Button as={RouterLink} to={entriesPath} disabled={updateMutation.isPending}>
                   Cancel
                 </Button>
-                <Button
-                  type="button"
-                  variant="danger"
+                <DeleteEntry
+                  groupId={groupId}
+                  entry={entry}
                   disabled={updateMutation.isPending}
-                  onClick={async () => {
-                    if (!window.confirm(`Delete entry "${entry.entry_name}"?`)) return
-                    try {
-                      await client.delete(`/portal/groups/${groupId}/entries/${entry.id}`)
-                      queryClient.invalidateQueries({ queryKey: ['group-entries', groupId] })
-                      showFeedback('success', 'Entry deleted')
-                      onSaved()
-                    } catch {
-                      showFeedback('critical', 'Failed to delete entry')
-                    }
-                  }}
-                >
-                  Delete
-                </Button>
+                  onDeleted={onDone}
+                  onRefused={setDeleteRefusal}
+                />
               </>
             )}
           </Stack>

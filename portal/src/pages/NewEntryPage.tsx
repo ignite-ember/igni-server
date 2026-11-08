@@ -14,7 +14,9 @@ import {
 } from '@primer/react'
 import { ArrowLeftIcon } from '@primer/octicons-react'
 import client from '../api/client'
-import { closestTool, unknownTools } from '../lib/agentTools'
+import { unknownTools } from '../lib/agentTools'
+import { useKnownTools } from '../hooks/useKnownTools'
+import { ToolWarning } from '../components/entry/ToolWarning'
 import './cards.css'
 import { AgentModelField } from '../components/AgentModelField'
 import type { OrgGroupDetail } from '../types'
@@ -23,39 +25,6 @@ import { ContentEditor } from '../components/ContentEditor'
 
 type EntryKind = string
 
-
-/**
- * The tool names this deployment offers.
- *
- * From the server, so the live warning and the one on save check
- * against the same list rather than two copies that can disagree.
- */
-function useKnownTools(kind: string): string[] {
-  const toolsQuery = useQuery({
-    queryKey: ['agent-tools'],
-    queryFn: () => client.get<{ tools: string[] }>('/portal/agent-tools').then((r) => r.data),
-    enabled: kind === 'agents',
-    staleTime: 5 * 60 * 1000,
-  })
-  return kind === 'agents' ? (toolsQuery.data?.tools ?? []) : []
-}
-
-/** The inline note under the editor, or nothing. */
-function ToolWarning({ names, known }: { names: string[]; known: string[] }) {
-  if (names.length === 0) return null
-  return (
-    <Text size="small" className="entry-tool-warning">
-      {names
-        .map((name) => {
-          const guess = closestTool(name, known)
-          return guess ? `${name} — did you mean ${guess}?` : name
-        })
-        .join(' · ')}{' '}
-      {names.length === 1 ? 'is not a tool igni knows' : 'are not tools igni knows'}. This agent
-      will fail when something calls it.
-    </Text>
-  )
-}
 
 export function NewEntryPage() {
   const { id: groupId } = useParams<{ id: string }>()
