@@ -27,7 +27,7 @@ from app.security.database_checks import DatabaseChecks
 from app.security.startup_checks import SettingsChecks
 from app.services.ai.pool_manager import PoolManager
 from app.services.cloud.producer_feed import ProducerFeed
-from app.services.deployment_licence import LicenceDailyAudit
+from app.services.deployment_licence import DeploymentLicence, LicenceDailyAudit
 from app.services.identity.extension_assets import ASSET_UPLOAD_PATH, MAX_ASSET_BYTES
 from app.services.identity.extensions import EXTENSION_UPLOAD_PATH, MAX_ARCHIVE_BYTES
 from app.services.identity.key_ring import SigningKeys
@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # The paid modules' licence: once a day while one is expiring, lapsed
     # or read-only, the deployment's audit trail says so. igni server
     # only reports the licence; each module enforces it itself.
-    licence_daily_audit = LicenceDailyAudit()
+    licence_daily_audit = LicenceDailyAudit(licence=DeploymentLicence.of_app(app))
     licence_daily_audit.start()
 
     # Clock skew (B8). Session revocation, the audit trail's ordering and

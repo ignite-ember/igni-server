@@ -35,7 +35,7 @@ class LicenceDailyAudit:
     def __init__(
         self,
         *,
-        licence: Callable[[], DeploymentLicence] = DeploymentLicence.current,
+        licence: DeploymentLicence,
         audit: AuditEventDB | None = None,
         locks: AdvisoryLockDB | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
@@ -48,13 +48,13 @@ class LicenceDailyAudit:
 
     async def run_once(self) -> bool:
         """Record today's event if one is due and none is there yet. True when this call wrote it."""
-        notice = self._licence().notice()
+        notice = self._licence.notice()
         if not notice.warnings:
             return False
         if not await self._locks.try_acquire(_LOCK_KEY):
             return False
         try:
-            overview = self._licence().overview()
+            overview = self._licence.overview()
             target = overview.licence_id or 'none'
             midnight = self._now().replace(hour=0, minute=0, second=0, microsecond=0)
             today = await self._audit.list_events(org_id=None, target_id=target, since=midnight, limit=1000)

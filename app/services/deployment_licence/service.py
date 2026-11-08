@@ -19,7 +19,9 @@ import logging
 import os
 from pathlib import Path
 import tempfile
-from typing import ClassVar
+
+from fastapi import Request
+from starlette.applications import Starlette
 
 from app.config import settings
 from app.services.deployment_licence.schemas import LicenceNotice, LicenceOverview, LicenceWarning
@@ -56,23 +58,22 @@ class LicencePathReadOnly(Exception):
 class DeploymentLicence:
     """The licence file igni server shares with the paid modules."""
 
-    _current: ClassVar[DeploymentLicence | None] = None
-
     def __init__(self, source: LicenceFile) -> None:
         self._source = source
 
     @classmethod
-    def current(cls) -> DeploymentLicence:
-        """The process's one, built from settings on first use."""
-        if cls._current is None:
-            verifier = LicenceVerifier(TrustedKeys.for_environment(settings.app_env))
-            cls._current = cls(LicenceFile(Path(settings.igni_licence_file), verifier=verifier))
-        return cls._current
+    def from_settings(cls) -> DeploymentLicence:
+        """The licence at the configured path, verified against this environment's keys."""
+        verifier = LicenceVerifier(TrustedKeys.for_environment(settings.app_env))
+        return cls(LicenceFile(Path(settings.igni_licence_file), verifier=verifier))
 
     @classmethod
-    def use(cls, licence: DeploymentLicence | None) -> None:
-        """Run on `licence` (a test's, with its own key and clock); None goes back to settings."""
-        cls._current = licence
+    def of_app(cls, app: Starlette) -> DeploymentLicence:
+        """The app's instance, built on first use, so its cached reading is shared by every request."""
+        licence: DeploymentLicence | None = getattr(app.state, 'deployment_licence', None)
+        if licence is None:
+            licence = app.state.deployment_licence = cls.from_settings()
+        return licence
 
     def statuses(self) -> list[ModuleStatus]:
         return [self._source.status(module) for module in Module]
@@ -140,3 +141,8 @@ class DeploymentLicence:
         except OSError as exc:
             Path(temporary).unlink(missing_ok=True)
             raise LicencePathReadOnly(str(path)) from exc
+
+
+def deployment_licence(request: Request) -> DeploymentLicence:
+    """The FastAPI dependency; tests replace it through `app.dependency_overrides`."""
+    return DeploymentLicence.of_app(request.app)

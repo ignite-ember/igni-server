@@ -17,7 +17,7 @@ import pytest
 
 from app.db.sql.advisory_locks import AdvisoryLockDB
 from app.db.sql.audit_events import AuditEventDB
-from app.services.deployment_licence import DAILY_ROUTE, DeploymentLicence, LicenceDailyAudit
+from app.services.deployment_licence import DAILY_ROUTE, deployment_licence, DeploymentLicence, LicenceDailyAudit
 from app.services.licence import Base64Url, Entitlement, Module
 from tests.conftest import audit_rows, auth_header, create_user, make_token
 from tests.licence_kit import EXPIRES, FakeClock, licence_file, payload, signed
@@ -29,11 +29,17 @@ def clock() -> FakeClock:
 
 
 @pytest.fixture
-def licence_path(tmp_path: Path, clock: FakeClock) -> Iterator[Path]:
-    path = tmp_path / 'licence' / 'licence.json'
-    DeploymentLicence.use(DeploymentLicence(licence_file(path, clock)))
-    yield path
-    DeploymentLicence.use(None)
+def licence_path(tmp_path: Path) -> Path:
+    return tmp_path / 'licence' / 'licence.json'
+
+
+@pytest.fixture
+def licence(app, licence_path: Path, clock: FakeClock) -> Iterator[DeploymentLicence]:
+    """The deployment's licence on the test's key and clock, served to every request."""
+    instance = DeploymentLicence(licence_file(licence_path, clock))
+    app.dependency_overrides[deployment_licence] = lambda: instance
+    yield instance
+    app.dependency_overrides.pop(deployment_licence, None)
 
 
 async def _person(db, *, super_admin: bool) -> dict[str, str]:
@@ -42,14 +48,14 @@ async def _person(db, *, super_admin: bool) -> dict[str, str]:
     return auth_header(make_token(str(user.user_id)))
 
 
-async def test_without_a_licence_there_is_no_banner_and_the_base_works(client, db, licence_path) -> None:
+async def test_without_a_licence_there_is_no_banner_and_the_base_works(client, db, licence_path, licence) -> None:
     person = await _person(db, super_admin=False)
 
     assert (await client.get('/portal/licence/notice', headers=person)).json() == {'warnings': []}
     assert (await client.get('/portal/me', headers=person)).status_code == 200
 
 
-async def test_a_super_admin_installs_a_licence_and_sees_each_module(client, db, licence_path) -> None:
+async def test_a_super_admin_installs_a_licence_and_sees_each_module(client, db, licence_path, licence) -> None:
     admin = await _person(db, super_admin=True)
     envelope = json.loads(signed(payload()))
 
@@ -75,7 +81,7 @@ async def test_a_super_admin_installs_a_licence_and_sees_each_module(client, db,
     assert audit_rows(route='/v1/portal/licence')[0]['method'] == 'PUT'
 
 
-async def test_an_altered_licence_is_refused_and_nothing_is_installed(client, db, licence_path) -> None:
+async def test_an_altered_licence_is_refused_and_nothing_is_installed(client, db, licence_path, licence) -> None:
     admin = await _person(db, super_admin=True)
     envelope = json.loads(signed(payload()))
     body = json.loads(Base64Url.decode(envelope['payload']))
@@ -92,7 +98,7 @@ async def test_an_altered_licence_is_refused_and_nothing_is_installed(client, db
     assert not licence_path.exists()
 
 
-async def test_only_a_super_admin_sees_or_installs_the_licence(client, db, licence_path) -> None:
+async def test_only_a_super_admin_sees_or_installs_the_licence(client, db, licence_path, licence) -> None:
     member = await _person(db, super_admin=False)
 
     assert (await client.get('/portal/licence', headers=member)).status_code == 403
@@ -100,7 +106,7 @@ async def test_only_a_super_admin_sees_or_installs_the_licence(client, db, licen
     assert not licence_path.exists()
 
 
-async def test_everybody_sees_the_banner_while_a_licence_has_lapsed(client, db, licence_path, clock) -> None:
+async def test_everybody_sees_the_banner_while_a_licence_has_lapsed(client, db, licence_path, licence, clock) -> None:
     licence_path.parent.mkdir(parents=True)
     licence_path.write_bytes(
         signed(
@@ -129,12 +135,12 @@ async def test_everybody_sees_the_banner_while_a_licence_has_lapsed(client, db, 
     }
 
 
-async def test_the_audit_trail_records_a_lapsed_licence_once_a_day(licence_path, clock) -> None:
+async def test_the_audit_trail_records_a_lapsed_licence_once_a_day(licence_path, licence, clock) -> None:
     licence_path.parent.mkdir(parents=True)
     licence_path.write_bytes(signed(payload()))
     clock.set(EXPIRES + timedelta(days=200))
     # The licence runs on the test's clock; the day is the audit trail's own (real) one.
-    job = LicenceDailyAudit(audit=AuditEventDB(), locks=AdvisoryLockDB())
+    job = LicenceDailyAudit(licence=licence, audit=AuditEventDB(), locks=AdvisoryLockDB())
 
     assert await job.run_once() is True
     assert await job.run_once() is False
@@ -150,9 +156,9 @@ async def test_the_audit_trail_records_a_lapsed_licence_once_a_day(licence_path,
     assert rows[0]['detail']['modules'][0]['state'] == 'read_only'
 
 
-async def test_no_audit_record_while_nothing_needs_attention(licence_path, clock) -> None:
+async def test_no_audit_record_while_nothing_needs_attention(licence_path, licence) -> None:
     licence_path.parent.mkdir(parents=True)
     licence_path.write_bytes(signed(payload()))
 
-    assert await LicenceDailyAudit().run_once() is False
+    assert await LicenceDailyAudit(licence=licence).run_once() is False
     assert audit_rows(route=DAILY_ROUTE) == []
