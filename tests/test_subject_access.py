@@ -35,6 +35,9 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from app.config import settings
+from app.db.sql.models.audit_event import AuditEvent
+from app.db.sql.models.org_group import OrgGroup
+from app.db.sql.models.org_group_member import OrgGroupMember
 from app.db.sql.schemas.subject_access import AccountRow, AuditEventRow, GroupMembershipRow, ModelUsageRow
 from app.db.sql.schemas.subject_access_created import ThingsTheyCreated
 from app.db.sql.subject_access import ACTIVITY_LIMIT, SubjectAccessDB
@@ -61,6 +64,7 @@ from tests.conftest import (
     create_org,
     create_user,
     make_token,
+    put_in_org,
     TEST_DB_URL_SYNC,
 )
 
@@ -555,6 +559,42 @@ class TestTheExport:
         assert attempts[0].forwarded_for == '203.0.113.9'
         assert attempts[0].user_agent == 'Mozilla/5.0 (a browser they used)'
 
+    async def test_without_an_organisation_only_the_deployment_wide_sections_are_read(self, person):
+        """An administrator with no organisation reads nothing that is an
+        organisation's to disclose, and the report says so."""
+        report = await SubjectAccessService(services=_RecordingServices()).export(email=person['email'])
+
+        assert list(report.sections.model_dump(exclude_none=True)) == [
+            'account',
+            'deployment_role',
+            'organisation_memberships',
+            'organisations_owned',
+            'authentication_attempts',
+        ]
+        assert report.scope == _DEPLOYMENT_SCOPE
+
+    async def test_with_an_organisation_every_section_is_read_in_the_order_it_always_went_out(self, person):
+        """And a services answer with nothing in it leaves `services` out
+        rather than sending an empty map."""
+        report = await SubjectAccessService(services=_RecordingServices()).export(
+            email=person['email'], org_id=person['org_id']
+        )
+
+        wire = report.model_dump(mode='json', by_alias=True)
+        assert list(wire['sections']) == [
+            'account',
+            'deployment_role',
+            'organisation_memberships',
+            'organisations_owned',
+            'group_memberships',
+            'model_usage',
+            'own_activity',
+            'things_they_created',
+            'authentication_attempts',
+        ]
+        assert wire['sections']['account'][0]['email'] == person['email']
+        assert wire['scope'] == _ORGANISATION_SCOPE.format(org_id=person['org_id'])
+
 
 class TestTheEndpoint:
     @pytest.fixture
@@ -562,7 +602,11 @@ class TestTheEndpoint:
         user = await create_user(db, email=f'admin-{uuid.uuid4().hex[:6]}@example.com')
         org = await create_org(db, owner_user_id=str(user.user_id), slug=f'a-{uuid.uuid4().hex[:6]}')
         await add_member(db, str(org.id), str(user.user_id), role='admin')
-        return {'token': make_token(str(user.user_id), org_id=str(org.id), org_name='A')}
+        return {
+            'token': make_token(str(user.user_id), org_id=str(org.id), org_name='A'),
+            'email': user.email,
+            'user_id': str(user.user_id),
+        }
 
     async def test_an_admin_can_export(self, client, admin):
         response = await client.post(
@@ -624,6 +668,80 @@ class TestTheEndpoint:
         assert '@router.post(' in source
         assert '@router.get(' not in source
         assert 'Query(' not in source, 'the address must arrive in the body, not the URL'
+
+    async def test_the_audit_detail_counts_the_sections_that_were_sent(self, client, admin):
+        """Asked about the administrator themselves: an account, and the
+        organisation's sections."""
+        response = await client.post(
+            '/portal/subject-access',
+            headers=auth_header(admin['token']),
+            json={'email': admin['email']},
+        )
+
+        assert response.status_code == 200, response.text
+        sent = response.json()['sections']
+        assert 'group_memberships' in sent, sent
+        (row,) = audit_rows(route='/v1/portal/subject-access')
+        assert row['detail']['subject_access'] == {
+            'subject': f'{admin["email"][0]}***@example.com',
+            'sections': len(sent),
+            'has_account': True,
+        }
+
+    async def test_an_address_with_no_account_is_audited_as_such(self, client, admin):
+        await client.post(
+            '/portal/subject-access',
+            headers=auth_header(admin['token']),
+            json={'email': 'nobody@example.com'},
+        )
+
+        (row,) = audit_rows(route='/v1/portal/subject-access')
+        assert row['detail']['subject_access'] == {'subject': 'n***@example.com', 'sections': 3, 'has_account': False}
+
+    async def test_it_is_logged_with_the_address_masked(self, client, admin, caplog):
+        caplog.set_level('INFO', logger='app.api.base_v1.endpoints.portal.subject_access')
+
+        await client.post(
+            '/portal/subject-access',
+            headers=auth_header(admin['token']),
+            json={'email': 'logged@example.com'},
+        )
+
+        assert f'Subject access export by {admin["user_id"]} for l***@example.com (3 sections)' in caplog.text
+        assert 'logged@example.com' not in caplog.text
+
+    async def test_something_that_is_not_an_address_is_refused_before_anything_is_read(self, client, admin):
+        response = await client.post(
+            '/portal/subject-access',
+            headers=auth_header(admin['token']),
+            json={'email': 'not-an-email'},
+        )
+
+        assert response.status_code == 422, response.text
+
+    async def test_the_withheld_columns_go_out_in_their_order(self, client, admin):
+        response = await client.post(
+            '/portal/subject-access',
+            headers=auth_header(admin['token']),
+            json={'email': 'anybody@example.com'},
+        )
+
+        assert list(response.json()['withheld'].items()) == list(_WITHHELD_AS_IT_ALWAYS_WENT_OUT.items())
+
+    def test_the_published_schema_declares_every_part_of_the_report(self, app):
+        """The one contract a regulator might read is described in full:
+        the context, its retention under its wire spelling, and each
+        section by name, with nothing undeclared."""
+        schemas = app.openapi()['components']['schemas']
+        report = schemas['SubjectAccessReport']
+
+        assert report['properties']['processing'] == {'$ref': '#/components/schemas/ProcessingContext'}
+        assert report['properties']['sections'] == {'$ref': '#/components/schemas/SubjectAccessSections'}
+        assert schemas['ProcessingContext']['properties']['retention'] == {'$ref': '#/components/schemas/Retention'}
+        assert schemas['Retention']['required'] == ['audit_events', 'everything else']
+        assert list(schemas['SubjectAccessSections']['properties']) == list(SubjectAccessSections.model_fields)
+        for name in ('SubjectAccessReport', 'ProcessingContext', 'Retention', 'SubjectAccessSections'):
+            assert schemas[name]['additionalProperties'] is False, name
 
 
 #: The `SubjectAccessDB` reads that take a cap, found from their
@@ -878,3 +996,388 @@ class TestEachServiceUsesItsOwnDatabase:
 
         assert a.sections.account == [_account(email='first@example.com')]
         assert b.sections.account == [_account(email='second@example.com')]
+
+
+_WITHHELD_AS_IT_ALWAYS_WENT_OUT = {
+    'users.hashed_password': (
+        'A password hash, excluded deliberately. It is not meaningful personal data and '
+        'disclosing it would help an attacker who persuaded an administrator to run this '
+        'export.'
+    ),
+    'user_roles.email_verification_token': ('A single-use token, excluded for the same reason.'),
+    'registered_clients.decided_by_user_id': (
+        'Which super admin approved or revoked a service registered with this deployment. The '
+        'same decision is in your own audit activity above.'
+    ),
+    'extension_priority.set_by_user_id': (
+        'Which super admin set the priority order of extensions, which decides which of two '
+        'has a contested part of igni. The same change is in your own audit activity above.'
+    ),
+    'service_attachments.content': (
+        'The bytes of files a service sent your agent. They are described above; the bytes '
+        "were the service's to send, are kept at most 14 days, and the copy imported into your "
+        'chat is in your igni.'
+    ),
+    'vm_credentials.secret_hash': (
+        "Hashes of your cloud VM's credentials. A hash cannot be used to sign in, but it is a "
+        'credential check, not information about you.'
+    ),
+    'vm_credentials.previous_hashes': (
+        "Hashes of your cloud VM's earlier credentials, kept to notice one being reused. Withheld for the same reason."
+    ),
+    'api_keys.secret_hash': (
+        'Hashes of your API keys. A hash cannot be used to act as you, but it is a credential '
+        'check, not information about you.'
+    ),
+    'producer_feed_marks.producer_id': (
+        "That something about you changed and the cloud's gateway has yet to be told: kept for "
+        "seconds, until its next poll, and saying nothing the gateway's feed above does not."
+    ),
+    'platform_vm_caps.updated_by_user_id': (
+        "Which super admin set the platform's caps on VM profiles. The same change is in your own audit activity above."
+    ),
+    'org_vm_quotas.updated_by_user_id': (
+        "Which super admin set an organisation's quota of awake VM time. The same change is in "
+        'your own audit activity above.'
+    ),
+    'producer_exports.content_oid': (
+        'An archive of your data in an organisation you were removed from, exported for that '
+        'organisation, which controls it, during its retention. Ask the organisation for it; '
+        'it is deleted when it expires.'
+    ),
+    'platform_retention.updated_by_user_id': (
+        "Which super admin set the platform's longest retention of removed members. The same "
+        'change is in your own audit activity above.'
+    ),
+    'org_retention.updated_by_user_id': (
+        "Which admin set an organisation's retention of removed members. The same change is in "
+        'your own audit activity above.'
+    ),
+    'platform_space_caps.updated_by_user_id': (
+        "Which super admin set the platform's caps on apps' spaces. The same change is in your "
+        'own audit activity above.'
+    ),
+    'org_space_quotas.updated_by_user_id': (
+        "Which admin set an organisation's limits on apps' spaces. The same change is in your own audit activity above."
+    ),
+    'app_spaces.external_id': (
+        "An app's own name for one of its users. It never names an igni account, so nothing of "
+        "yours is in it; the app's operator answers for its users."
+    ),
+    'audit_events.detail': (
+        'Per-route detail attached to your audit records. Withheld because on some routes it '
+        'describes a third party rather than you — an erasure you performed carries the '
+        'address of the person erased, an access review carries the member reviewed. The shape '
+        'differs per route, so there is no single rule for what to remove, and returning it '
+        "would disclose other people's data in the act of answering your request. Ask the "
+        'controller if you need a specific record explained.'
+    ),
+}
+
+
+_DEPLOYMENT_SCOPE = (
+    'Prepared without an organisation, so only records that are not '
+    "organisation-specific are included. Each organisation's own records — groups, "
+    'usage, activity — are not.'
+)
+
+_ORGANISATION_SCOPE = (
+    'Prepared by an administrator of organisation {org_id}, from its records. '
+    'Sections that are not organisation-specific — the account and sign-in '
+    'attempts — describe the person across this deployment. Another '
+    "organisation's records about the same address are not included: they are "
+    "that organisation's to disclose."
+)
+
+
+class _RecordingServices:
+    """The registered services, answering `sections`, and noting who asked."""
+
+    def __init__(self, *, sections: dict | None = None, missing: list[str] | None = None) -> None:
+        self._sections = sections or {}
+        self._missing = missing or []
+        self.asked: list[tuple[str, str]] = []
+
+    async def export(self, user_id: str, *, org_id: str) -> ExportAnswers:
+        self.asked.append((user_id, org_id))
+        return ExportAnswers(sections=self._sections, missing=self._missing)
+
+
+class _NoAccountDB(_FakeDB):
+    async def account(self, email: str) -> list[AccountRow]:
+        return []
+
+
+class TestTheWithheldColumnsGoOutAsTheyAlwaysDid:
+    """The reasons moved onto their columns, which are listed table by
+    table. The report's `withheld` keeps the order and the words the
+    export wrote by hand — the JSON must not change shape."""
+
+    def test_in_the_same_order_and_the_same_words(self):
+        reasons = ColumnRegistry().withheld_reasons()
+
+        assert list(reasons.items()) == list(_WITHHELD_AS_IT_ALWAYS_WENT_OUT.items())
+
+    def test_a_withheld_column_added_later_follows_the_others(self):
+        personal = {
+            'new_table.secret': ColumnClassification.withheld('A new secret.'),
+            **ColumnRegistry().personal(),
+        }
+
+        reasons = ColumnRegistry(personal=personal).withheld_reasons()
+
+        assert list(reasons) == [*_WITHHELD_AS_IT_ALWAYS_WENT_OUT, 'new_table.secret']
+
+    def test_a_column_that_is_not_personal_has_no_verdict(self):
+        registry = ColumnRegistry()
+
+        assert registry.verdict_of('users.email') is ColumnVerdict.INCLUDED
+        assert registry.verdict_of('org_invitations.email') is ColumnVerdict.DEAD
+        assert registry.verdict_of(next(iter(registry.not_personal()))) is None
+        assert registry.verdict_of('no_such_table.column') is None
+
+
+class TestTheContextIsWordedAsItAlwaysWas:
+    """What the subject reads about the processing, word for word."""
+
+    def test_the_fixed_sentences(self):
+        processing = ProcessingDescription().describe()
+
+        assert processing.controller == (
+            'The organisation operating this igni deployment. igni is self-hosted: '
+            'the software vendor holds none of this data and has no access to it.'
+        )
+        assert processing.purposes == [
+            'authenticating the person and deciding what they may access',
+            'recording who performed privileged actions, for security review',
+            'attributing group configuration to whoever made it',
+            'accounting for model usage',
+        ]
+        assert processing.categories == [
+            'identity and contact data (name, email address)',
+            'authentication metadata (method, last sign-in)',
+            'authorisation data (organisation membership, role, status)',
+            'activity records (audit events, model usage)',
+        ]
+        assert processing.source == (
+            'Provided by the person when they signed up or accepted an invitation, '
+            'or by an administrator who invited them.'
+        )
+        assert processing.rights == (
+            'Rectification and erasure are available; erasure via POST /v1/portal/erasure (GDPR Art. 17).'
+        )
+        assert processing.retention.everything_else == (
+            'kept until the account or the organisation is deleted, or the person exercises erasure'
+        )
+
+    def test_ses_with_no_region_names_the_sdk_default(self, monkeypatch):
+        monkeypatch.setattr(settings, 'email_enabled', True)
+        monkeypatch.setattr(settings, 'email_backend', 'ses')
+        monkeypatch.setattr(settings, 'ses_region', '')
+
+        recipients = ProcessingDescription().describe().recipients
+
+        assert recipients == ["Amazon SES in the AWS SDK's default region, for sign-in codes and invitations"]
+
+    def test_an_smtp_relay_is_named_by_its_host(self, monkeypatch):
+        monkeypatch.setattr(settings, 'email_enabled', True)
+        monkeypatch.setattr(settings, 'email_backend', 'smtp')
+        monkeypatch.setattr(settings, 'smtp_host', 'mail.corp.internal')
+
+        recipients = ProcessingDescription().describe().recipients
+
+        assert recipients == ['the SMTP relay at mail.corp.internal, for sign-in codes and invitations']
+
+
+class TestTheReportSaysWhoseRecordsTheseAre:
+    def test_a_deployment_wide_report_says_what_it_leaves_out(self):
+        report = _builder()
+        report.scoped_to(None)
+
+        assert report.build().scope == _DEPLOYMENT_SCOPE
+
+    def test_an_organisations_report_says_it_is_that_organisations(self):
+        report = _builder()
+        report.scoped_to('org-1')
+
+        assert report.build().scope == _ORGANISATION_SCOPE.format(org_id='org-1')
+
+    async def test_truncated_keeps_the_order_the_export_found_them_in(self):
+        report = await SubjectAccessService(db=_FakeDB(), services=_RecordingServices(missing=['CodeIndex'])).export(
+            email='someone@example.com', org_id='org-1'
+        )
+
+        assert list(report.truncated or {}) == ['model_usage', 'own_activity', 'CodeIndex', 'authentication_attempts']
+        assert report.truncated is not None
+        assert report.truncated['model_usage'] == (
+            f'{ACTIVITY_LIMIT} rows returned, which is the maximum this export produces. '
+            'There are more. Narrow the request or query the database directly '
+            'for the complete set.'
+        )
+        assert report.truncated['CodeIndex'] == (
+            'CodeIndex did not answer; what it holds about this person is missing from this '
+            'export. Ask again, or ask an operator to check it.'
+        )
+
+
+class TestWhatTheServicesAreAsked:
+    async def test_a_service_that_answered_is_under_its_name(self):
+        answered = {'CodeIndex': {'repositories': [{'name': 'igni'}]}}
+
+        report = await SubjectAccessService(db=_FakeDB(), services=_RecordingServices(sections=answered)).export(
+            email='someone@example.com', org_id='org-1'
+        )
+
+        assert report.sections.services == answered
+        assert list(report.model_dump(mode='json')['sections'])[-2:] == ['services', 'authentication_attempts']
+
+    async def test_nobody_is_asked_about_an_address_with_no_account(self):
+        services = _RecordingServices()
+
+        report = await SubjectAccessService(db=_NoAccountDB(), services=services).export(
+            email='someone@example.com', org_id='org-1'
+        )
+
+        assert services.asked == []
+        assert list(report.sections.model_dump(exclude_none=True)) == ['account', 'note', 'authentication_attempts']
+
+    async def test_nobody_is_asked_without_an_organisation(self):
+        services = _RecordingServices()
+
+        await SubjectAccessService(db=_FakeDB(), services=services).export(email='someone@example.com')
+
+        assert services.asked == []
+
+    async def test_an_account_in_an_organisation_is_asked_about_by_its_user_id(self):
+        services = _RecordingServices()
+
+        await SubjectAccessService(db=_FakeDB(), services=services).export(email='someone@example.com', org_id='org-1')
+
+        assert services.asked == [('u-1', 'org-1')]
+
+
+class TestTheSectionsCountAndOrder:
+    """What the audit trail records about an export, and the order the
+    sections go out in."""
+
+    def test_nothing_produced_counts_nothing(self):
+        sections = SubjectAccessSections()
+
+        assert sections.present_count() == 0
+        assert not sections.has_account()
+
+    def test_an_empty_account_and_its_note_both_count(self):
+        """The old count was the number of keys written, and an empty
+        account list was a key."""
+        sections = SubjectAccessSections(account=[], note='none', authentication_attempts=[])
+
+        assert sections.present_count() == 3
+        assert not sections.has_account()
+
+    def test_an_account_with_a_row_is_an_account(self):
+        assert SubjectAccessSections(account=[_account()]).has_account()
+
+    def test_the_sections_go_out_in_the_order_the_export_writes_them(self):
+        every = SubjectAccessSections(
+            authentication_attempts=[],
+            services={},
+            things_they_created=ThingsTheyCreated.model_validate({n: [] for n in ThingsTheyCreated.model_fields}),
+            own_activity=[],
+            model_usage=[],
+            group_memberships=[],
+            organisations_owned=[],
+            organisation_memberships=[],
+            deployment_role=[],
+            note='n',
+            account=[],
+        )
+
+        assert list(every.model_dump(mode='json')) == [
+            'account',
+            'note',
+            'deployment_role',
+            'organisation_memberships',
+            'organisations_owned',
+            'group_memberships',
+            'model_usage',
+            'own_activity',
+            'things_they_created',
+            'services',
+            'authentication_attempts',
+        ]
+        assert every.present_count() == 11
+
+
+class TestBothTrailsAreRead:
+    """The deployment's audit trail and the organisation's, merged newest
+    first and cut at the cap."""
+
+    @pytest.fixture
+    async def member(self, db):
+        user = await create_user(db, email=f'trails-{uuid.uuid4().hex[:8]}@example.com')
+        org = await create_org(db, owner_user_id=str(user.user_id), slug=f't-{uuid.uuid4().hex[:6]}')
+        return {'email': user.email, 'user_id': str(user.user_id), 'org_id': str(org.id)}
+
+    @staticmethod
+    def _in_the_deployment(member: dict, route: str, at: datetime) -> None:
+        _execute(
+            'INSERT INTO audit_events (id, occurred_at, actor_user_id, actor_email, method, route, '
+            "outcome, status_code) VALUES (:i, :at, :u, :e, 'POST', :r, 'allowed', 200)",
+            {'i': str(uuid.uuid4()), 'at': at, 'u': member['user_id'], 'e': member['email'], 'r': route},
+        )
+
+    @staticmethod
+    async def _in_the_organisation(member: dict, route: str, at: datetime) -> None:
+        await put_in_org(
+            member['org_id'],
+            AuditEvent(
+                id=str(uuid.uuid4()),
+                occurred_at=at,
+                actor_user_id=member['user_id'],
+                actor_email=member['email'],
+                method='POST',
+                route=route,
+                outcome='allowed',
+                status_code=200,
+            ),
+        )
+
+    async def _four_events(self, member: dict) -> None:
+        self._in_the_deployment(member, '/v1/first', datetime(2026, 1, 1, tzinfo=timezone.utc))
+        await self._in_the_organisation(member, '/v1/second', datetime(2026, 1, 2, tzinfo=timezone.utc))
+        self._in_the_deployment(member, '/v1/third', datetime(2026, 1, 3, tzinfo=timezone.utc))
+        await self._in_the_organisation(member, '/v1/fourth', datetime(2026, 1, 4, tzinfo=timezone.utc))
+
+    async def test_own_activity_is_newest_first_across_both_and_stops_at_the_cap(self, member):
+        await self._four_events(member)
+
+        rows = await SubjectAccessDB().own_activity(member['org_id'], user_id=member['user_id'], limit=3)
+
+        assert [row.route for row in rows] == ['/v1/fourth', '/v1/third', '/v1/second']
+
+    async def test_authentication_attempts_read_both_with_an_organisation(self, member):
+        await self._four_events(member)
+
+        rows = await SubjectAccessDB().authentication_attempts(member['org_id'], email=member['email'].upper())
+
+        assert [row.route for row in rows] == ['/v1/fourth', '/v1/third', '/v1/second', '/v1/first']
+
+    async def test_authentication_attempts_without_an_organisation_read_only_the_deployments(self, member):
+        await self._four_events(member)
+
+        rows = await SubjectAccessDB().authentication_attempts(None, email=member['email'], limit=1)
+
+        assert [row.route for row in rows] == ['/v1/third']
+
+    async def test_their_organisations_reads_are_its_own(self, member):
+        await put_in_org(
+            member['org_id'],
+            OrgGroup(id='g-1', org_id=member['org_id'], name='Legal', is_default=False, created_at=_AT, updated_at=_AT),
+            OrgGroupMember(id=str(uuid.uuid4()), group_id='g-1', user_id=member['user_id'], added_at=_AT),
+        )
+
+        db = SubjectAccessDB()
+        groups = await db.group_memberships(member['org_id'], user_id=member['user_id'])
+
+        assert [g.group_id for g in groups] == ['g-1']
+        assert await db.model_usage(member['org_id'], user_id=member['user_id']) == []
