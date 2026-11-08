@@ -283,6 +283,22 @@ describe('The node list', () => {
     await waitFor(() => expect(deleted).toBe(true))
   })
 
+  test('a refused removal says why instead of failing silently', async () => {
+    server.use(
+      http.delete('/v1/portal/inference/nodes/gpu-hand', () =>
+        HttpResponse.json({ detail: 'That node is still being edited.' }, { status: 409 }),
+      ),
+    )
+    respondWith(status({ nodes: [node({ id: 'gpu-hand', source: 'pinned' })] }))
+
+    renderWithProviders(<InferencePage />)
+    const user = await expand('gpu-hand')
+    await user.click(await screen.findByRole('button', { name: /remove node/i }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: /^Remove node$/ }))
+
+    expect(await screen.findByText('That node is still being edited.')).toBeInTheDocument()
+  })
+
   test('cancelling leaves the node alone', async () => {
     let deleted = false
     server.use(
@@ -806,6 +822,19 @@ describe('Taking a node out of rotation', () => {
     await user.click(await screen.findByRole('button', { name: /Stop serving gpu-01/i }))
 
     await waitFor(() => expect(drainedWith).not.toBeNull())
+  })
+
+  test('a failed stop says so instead of failing silently', async () => {
+    respondWith(status({ nodes: [node({ source: 'registered' })] }))
+    server.use(
+      http.post('/v1/portal/inference/nodes/gpu-01/drain', () => new HttpResponse(null, { status: 500 })),
+    )
+
+    renderWithProviders(<InferencePage />)
+    const user = await expand('gpu-01')
+    await user.click(await screen.findByRole('button', { name: /Stop serving gpu-01/i }))
+
+    expect(await screen.findByText('Could not stop the node serving.')).toBeInTheDocument()
   })
 
   test('a drained node says who stopped it, and why', async () => {

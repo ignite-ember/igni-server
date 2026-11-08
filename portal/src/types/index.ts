@@ -106,6 +106,12 @@ export interface PinnedNodeInput {
   multimodal: boolean
 }
 
+/** An address to ask what it serves, before adding it as a node. */
+export interface NodeProbeRequest {
+  base_url: string
+  api_key?: string
+}
+
 /**
  * What an address turned out to be, when asked directly.
  *
