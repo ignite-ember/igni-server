@@ -28,13 +28,14 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 
 from app.api.base_v1.schema.portal.erasure import (
+    ErasureAuditDetail,
     ErasureDoneAudit,
     ErasureRefusedAudit,
     ErasureRequest,
     ErasureResult,
 )
 from app.api.base_v1.schema.portal.user import PortalUser
-from app.middlewares.audit import set_audit_detail
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import require_admin
 from app.services.cloud.legal_holds import ErasureRefused
 from app.services.identity.personal_erasure import PersonalErasure
@@ -76,7 +77,9 @@ async def erase_person(
         services_told = await service.erase(email, org_id=current_user.org_id)
     except ErasureRefused as refused:
         # The refusal is in the audit trail with the reason.
-        set_audit_detail(request, {'erasure': ErasureRefusedAudit(subject=masked, refused=str(refused)).model_dump()})
+        RequestAudit.of(request).add_detail(
+            ErasureAuditDetail(erasure=ErasureRefusedAudit(subject=masked, refused=str(refused)))
+        )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(refused)) from refused
     except ErasureIncomplete as exc:
         # Named, so the operator knows which service to look at.
@@ -88,7 +91,9 @@ async def erase_person(
     # Added to the audit record F90 writes for this request. Masked —
     # the audit trail is retained, so it must not become the place the
     # erased address survives.
-    set_audit_detail(request, {'erasure': ErasureDoneAudit(subject=masked, services=services_told).model_dump()})
+    RequestAudit.of(request).add_detail(
+        ErasureAuditDetail(erasure=ErasureDoneAudit(subject=masked, services=services_told))
+    )
     logger.info(
         'Erasure by %s for %s; services told: %s',
         current_user.user_id,

@@ -33,3 +33,9 @@ class ErasureRefusedAudit(BaseModel):
 
     subject: str
     refused: str
+
+
+class ErasureAuditDetail(BaseModel):
+    """The audit detail an erasure leaves, under its own key."""
+
+    erasure: ErasureDoneAudit | ErasureRefusedAudit

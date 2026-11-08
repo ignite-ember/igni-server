@@ -7,6 +7,7 @@ super admin's alone. See `docs/service-identity.md` §12.
 
 from fastapi import APIRouter, Depends, Request, Response, status
 
+from app.api.base_v1.schema.audit_detail import VmProfileAssignedAudit, VmProfileDecisionAudit, VmProfileSavedAudit
 from app.api.base_v1.schema.portal.user import PortalAccount
 from app.api.base_v1.schema.vm_profile_requests import (
     ApproveVmProfileRequest,
@@ -24,7 +25,7 @@ from app.api.base_v1.schema.vm_profiles import (
     VmProfileSettings,
     VmProfilesOverview,
 )
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
@@ -44,8 +45,8 @@ async def get_caps(_account: PortalAccount = Depends(get_current_account)) -> Pl
 async def set_caps(
     request: Request, body: PlatformVmCapsBody, admin: PortalAccount = Depends(require_super_admin)
 ) -> PlatformVmCapsResponse:
-    set_audit_target(request, target_type='platform_vm_caps', target_id='1')
-    set_audit_detail(request, body.model_dump())
+    RequestAudit.of(request).set_target(target_type='platform_vm_caps', target_id='1')
+    RequestAudit.of(request).add_detail(body)
     return await VmCaps().set(body, by_user_id=admin.user_id)
 
 
@@ -60,8 +61,10 @@ async def create_profile(
     request: Request, body: VmProfileSettings, authority: OrgAuthority = Depends(require_org_authority)
 ) -> VmProfileResponse:
     profile = await VmProfiles().create(authority.org_id, body, by_user_id=authority.user_id)
-    set_audit_target(request, target_type='vm_profile', target_id=profile.id)
-    set_audit_detail(request, {'name': profile.name, 'version': profile.version, 'internet': profile.internet})
+    RequestAudit.of(request).set_target(target_type='vm_profile', target_id=profile.id)
+    RequestAudit.of(request).add_detail(
+        VmProfileSavedAudit(name=profile.name, version=profile.version, internet=profile.internet)
+    )
     return profile
 
 
@@ -73,8 +76,10 @@ async def replace_profile(
     authority: OrgAuthority = Depends(require_org_authority),
 ) -> VmProfileResponse:
     profile = await VmProfiles().replace(authority.org_id, profile_id, body, by_user_id=authority.user_id)
-    set_audit_target(request, target_type='vm_profile', target_id=profile_id)
-    set_audit_detail(request, {'name': profile.name, 'version': profile.version, 'internet': profile.internet})
+    RequestAudit.of(request).set_target(target_type='vm_profile', target_id=profile_id)
+    RequestAudit.of(request).add_detail(
+        VmProfileSavedAudit(name=profile.name, version=profile.version, internet=profile.internet)
+    )
     return profile
 
 
@@ -83,7 +88,7 @@ async def delete_profile(
     request: Request, profile_id: str, authority: OrgAuthority = Depends(require_org_authority)
 ) -> Response:
     await VmProfiles().delete(authority.org_id, profile_id)
-    set_audit_target(request, target_type='vm_profile', target_id=profile_id)
+    RequestAudit.of(request).set_target(target_type='vm_profile', target_id=profile_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -92,7 +97,7 @@ async def assign_group(
     request: Request, group_id: str, body: AssignVmProfile, authority: OrgAuthority = Depends(require_org_authority)
 ) -> Response:
     await VmProfiles().assign_group(authority.org_id, group_id, body.profile_id)
-    set_audit_detail(request, {'vm_profile_id': body.profile_id})
+    RequestAudit.of(request).add_detail(VmProfileAssignedAudit(vm_profile_id=body.profile_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -101,8 +106,8 @@ async def assign_app(
     request: Request, app_id: str, body: AssignVmProfile, authority: OrgAuthority = Depends(require_org_authority)
 ) -> Response:
     await VmProfiles().assign_app(authority.org_id, app_id, body.profile_id)
-    set_audit_target(request, target_type='app', target_id=app_id)
-    set_audit_detail(request, {'vm_profile_id': body.profile_id})
+    RequestAudit.of(request).set_target(target_type='app', target_id=app_id)
+    RequestAudit.of(request).add_detail(VmProfileAssignedAudit(vm_profile_id=body.profile_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -113,18 +118,16 @@ async def requests(authority: OrgAuthority = Depends(require_org_authority)) -> 
 
 
 def _audit_decision(request: Request, record: VmProfileRequestRecord) -> None:
-    set_audit_target(request, target_type='vm_profile_request', target_id=record.id)
-    set_audit_detail(
-        request,
-        {
-            'subject': f'{record.subject.kind}:{record.subject.id}',
-            'state': record.state,
-            'version': record.version,
-            'packages_version': record.packages_version,
-            # Whether the decision grants (or refuses) the internet: a security grant (§12.4).
-            'internet': record.requested.internet,
-            'profile_id': record.profile_id,
-        },
+    RequestAudit.of(request).set_target(target_type='vm_profile_request', target_id=record.id)
+    RequestAudit.of(request).add_detail(
+        VmProfileDecisionAudit(
+            subject=f'{record.subject.kind}:{record.subject.id}',
+            state=record.state,
+            version=record.version,
+            packages_version=record.packages_version,
+            internet=record.requested.internet,
+            profile_id=record.profile_id,
+        )
     )
 
 
@@ -165,5 +168,5 @@ async def set_quota(
 ) -> OrgVmQuotaResponse:
     """The super admin's: an organisation does not set its own quota."""
     authority = await require_org_authority(org_id, admin)
-    set_audit_detail(request, body.model_dump())
+    RequestAudit.of(request).add_detail(body)
     return await VmQuotas().set(authority.org_id, body, by_user_id=admin.user_id)

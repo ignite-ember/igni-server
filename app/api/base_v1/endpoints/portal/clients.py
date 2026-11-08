@@ -20,9 +20,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
+from app.api.base_v1.schema.audit_detail import ClientDecisionAudit, HeldUpdateDecisionAudit
 from app.api.base_v1.schema.portal.clients import ClientDetail, ClientSummary
 from app.api.base_v1.schema.portal.user import PortalAccount
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.deployment_admin import require_deployment_admin
 from app.services.identity.client_review import (
     client_review,
@@ -119,7 +120,7 @@ async def remove(
         await review.remove(client_id)
     except ClientNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NO_SUCH_CLIENT) from exc
-    set_audit_target(request, target_type='registered_client', target_id=client_id)
+    RequestAudit.of(request).set_target(target_type='registered_client', target_id=client_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -159,22 +160,23 @@ async def reject_held_update(
 
 def _audit_decision(request: Request, *, reviewed: ReviewedClient, decision: str) -> None:
     client = reviewed.client
-    set_audit_target(request, target_type='registered_client', target_id=client.client_id)
-    set_audit_detail(request, {'client': client.name, 'decision': decision, 'thumbprint': client.thumbprint})
+    RequestAudit.of(request).set_target(target_type='registered_client', target_id=client.client_id)
+    RequestAudit.of(request).add_detail(
+        ClientDecisionAudit(client=client.name, decision=decision, thumbprint=client.thumbprint)
+    )
 
 
 def _audit_held_decision(request: Request, *, decision: HeldDecision, outcome: str) -> None:
     client, held = decision.reviewed.client, decision.decided
-    set_audit_target(request, target_type='registered_client', target_id=client.client_id)
-    set_audit_detail(
-        request,
-        {
-            'client': client.name,
-            'decision': f'held update {outcome}',
-            'extension': held.extension_id,
-            'version': held.version,
-            'sha256': held.sha256,
-            'approved_version': held.approved_version,
-            'added': [grant.text for grant in held.comparison.added],
-        },
+    RequestAudit.of(request).set_target(target_type='registered_client', target_id=client.client_id)
+    RequestAudit.of(request).add_detail(
+        HeldUpdateDecisionAudit(
+            client=client.name,
+            decision=f'held update {outcome}',
+            extension=held.extension_id,
+            version=held.version,
+            sha256=held.sha256,
+            approved_version=held.approved_version,
+            added=[grant.text for grant in held.comparison.added],
+        )
     )

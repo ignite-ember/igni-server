@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from app.db.sql.models.app_space import SPACE
 from app.db.sql.models.registered_client import APP
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import get_current_account
 from app.services.auth.jwt_service import JWTService, PERSON, TokenUse
 from app.services.identity.registry import ClientRegistry
@@ -81,7 +81,7 @@ class Producers:
                 detail='This app is no longer registered',
                 headers={'WWW-Authenticate': 'Bearer'},
             )
-        set_audit_actor(request, user_id=f'app:{client.client_id}', org_id=str(client.org_id))
+        RequestAudit.of(request).attribute_to(user_id=f'app:{client.client_id}', org_id=str(client.org_id))
         return ProducerCaller(kind=APP, id=client.client_id, org_id=str(client.org_id), name=client.name)
 
     async def space(self, request: Request, token: str) -> ProducerCaller | None:
@@ -98,7 +98,7 @@ class Producers:
                 detail='This space no longer exists',
                 headers={'WWW-Authenticate': 'Bearer'},
             )
-        set_audit_actor(request, user_id=f'space:{space.id}', org_id=org_id)
+        RequestAudit.of(request).attribute_to(user_id=f'space:{space.id}', org_id=org_id)
         return ProducerCaller(kind=SPACE, id=space.id, org_id=org_id, name=space.external_id, app_id=space.app_id)
 
     async def machine(self, request: Request, token: str) -> ProducerCaller | None:

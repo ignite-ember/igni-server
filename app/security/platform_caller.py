@@ -15,7 +15,7 @@ from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
 from app.db.sql.models.registered_client import PLATFORM
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 from app.services.auth.jwt_service import JWTService, TokenUse
 from app.services.identity.registry import ClientRegistry
 
@@ -39,5 +39,5 @@ async def require_platform(request: Request, token: str | None = Depends(_bearer
             detail='A platform token from an approved platform client is required',
             headers={'WWW-Authenticate': 'Bearer'},
         )
-    set_audit_actor(request, user_id=f'client:{client.client_id}')
+    RequestAudit.of(request).attribute_to(user_id=f'client:{client.client_id}')
     return PlatformCaller(client_id=client.client_id, name=client.name)

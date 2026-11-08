@@ -34,7 +34,7 @@ from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from app.api.base_v1.schema.portal.user import PortalUser
-from app.middlewares.audit import set_audit_detail
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import require_admin
 from app.services.subject_access.schemas import SubjectAccessReport
 from app.services.subject_access.service import SubjectAccessService
@@ -60,13 +60,19 @@ class SubjectAccessAudit(BaseModel):
     Masked and counted, never the address: F90 retains these rows for
     the whole window, so an export of somebody's data must not leave
     their email sitting in the record of it. This was a nested dict
-    literal inside the `set_audit_detail` call — a retained record
+    literal inside the audit detail call — a retained record
     with a fixed key set, described by its own construction.
     """
 
     subject: str
     sections: int
     has_account: bool
+
+
+class SubjectAccessAuditDetail(BaseModel):
+    """The audit detail an export leaves, under its own key."""
+
+    subject_access: SubjectAccessAudit
 
 
 class SubjectAccessRequest(BaseModel):
@@ -96,15 +102,14 @@ async def subject_access(
     # Added to the audit record F90 writes for this request. Masked and
     # counted: the audit trail is retained, so an export of somebody's
     # data must not leave their address sitting in it.
-    set_audit_detail(
-        request,
-        {
-            'subject_access': SubjectAccessAudit(
+    RequestAudit.of(request).add_detail(
+        SubjectAccessAuditDetail(
+            subject_access=SubjectAccessAudit(
                 subject=mask_email(email),
                 sections=report.sections.present_count(),
                 has_account=report.sections.has_account(),
-            ).model_dump()
-        },
+            )
+        )
     )
     logger.info(
         'Subject access export by %s for %s (%d sections)',

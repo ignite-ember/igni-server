@@ -26,7 +26,7 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
-from app.middlewares.audit import _TIMER_PATH_SUFFIXES, is_auditable
+from app.middlewares.audit_policy import _TIMER_PATH_SUFFIXES, is_auditable
 from app.services.ai.node_registry import NodeRegistry
 from tests.conftest import TEST_DB_URL_SYNC
 

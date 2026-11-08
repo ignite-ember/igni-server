@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.base_v1.schema.portal.user import PortalUser
-from app.middlewares.audit import set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.api_key_sessions import no_api_key_session
 from app.security.portal_auth import get_current_portal_user
 from app.services.identity.api_keys import ApiKeyList, ApiKeys, CreateApiKey, CreatedApiKey
@@ -30,7 +30,7 @@ async def create_key(
 ) -> CreatedApiKey:
     """A new key for you. The answer is the only time the key is shown."""
     created = await ApiKeys().create(current_user, body)
-    set_audit_target(request, target_type='api_key', target_id=created.key_id)
+    RequestAudit.of(request).set_target(target_type='api_key', target_id=created.key_id)
     return created
 
 
@@ -40,5 +40,5 @@ async def revoke_key(
 ) -> Response:
     """Revoke a key: yours, or anybody's for an org admin. No new sessions from it."""
     await ApiKeys().revoke(current_user, key_id)
-    set_audit_target(request, target_type='api_key', target_id=key_id)
+    RequestAudit.of(request).set_target(target_type='api_key', target_id=key_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

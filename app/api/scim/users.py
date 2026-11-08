@@ -38,7 +38,7 @@ from app.api.base_v1.schema.scim import (
     ServiceProviderConfig,
 )
 from app.api.scim.errors import scim_error
-from app.middlewares.audit import set_audit_actor, set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.scim_token import require_scim_token, SCIM_ACTOR
 from app.services.scim import service
 
@@ -60,7 +60,7 @@ async def _recorded_in_their_organisation(request: Request, address: str) -> Non
     Somebody on no organisation's domain has none, and the deployment's
     trail records it instead.
     """
-    set_audit_actor(request, user_id=SCIM_ACTOR, org_id=await service.organisation_of(address))
+    RequestAudit.of(request).attribute_to(user_id=SCIM_ACTOR, org_id=await service.organisation_of(address))
 
 
 @router.get(
@@ -119,12 +119,12 @@ async def create_user(payload: ScimUser, request: Request) -> ScimUser:
     if existing is not None:
         # 409 with `uniqueness`, which is what tells a provider to stop
         # retrying and reconcile instead. A 400 here makes a sync loop.
-        set_audit_target(request, target_type='user', target_id=str(existing.user_id))
+        RequestAudit.of(request).set_target(target_type='user', target_id=str(existing.user_id))
         raise scim_error(f'{address} already exists', status.HTTP_409_CONFLICT, 'uniqueness')
 
     user = await service.provision(payload)
-    set_audit_target(request, target_type='user', target_id=str(user.user_id))
-    set_audit_detail(request, ActiveChangedAudit(active=payload.active).model_dump())
+    RequestAudit.of(request).set_target(target_type='user', target_id=str(user.user_id))
+    RequestAudit.of(request).add_detail(ActiveChangedAudit(active=payload.active))
     return service.to_scim(user)
 
 
@@ -153,7 +153,7 @@ async def patch_user(user_id: str, payload: PatchRequest, request: Request) -> S
     active = service.wants_deactivation(payload.Operations)
     if active is None:
         return service.to_scim(user)
-    set_audit_detail(request, ActiveChangedAudit(active=active).model_dump())
+    RequestAudit.of(request).add_detail(ActiveChangedAudit(active=active))
     return service.to_scim(await service.set_active(user_id, active=active))
 
 
@@ -173,7 +173,7 @@ async def replace_user(user_id: str, payload: ScimUser, request: Request) -> Sci
 
     if payload.active == (user.deactivated_at is None):
         return service.to_scim(user)
-    set_audit_detail(request, ActiveChangedAudit(active=payload.active).model_dump())
+    RequestAudit.of(request).add_detail(ActiveChangedAudit(active=payload.active))
     return service.to_scim(await service.set_active(user_id, active=payload.active))
 
 
@@ -196,6 +196,6 @@ async def delete_user(user_id: str, request: Request) -> Response:
     if user is None:
         raise scim_error('User not found', status.HTTP_404_NOT_FOUND)
     await _recorded_in_their_organisation(request, str(user.email))
-    set_audit_detail(request, ActiveChangedAudit(active=False).model_dump())
+    RequestAudit.of(request).add_detail(ActiveChangedAudit(active=False))
     await service.set_active(user_id, active=False)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

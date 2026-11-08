@@ -6,9 +6,10 @@ The app's own token only, and only for itself (`docs/service-identity.md`
 
 from fastapi import APIRouter, Depends, Request, Response, status
 
+from app.api.base_v1.schema.audit_detail import VmProfileAskedAudit
 from app.api.base_v1.schema.vm_profile_requests import VmProfileRequestRecord, VmProfileRequestSettings
 from app.api.base_v1.schema.vm_profiles import ProducerVmProfile
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.producer import ProducerCaller, require_producer
 from app.services.cloud.vm_profile_requests import VmProfileRequests
 
@@ -25,17 +26,16 @@ async def ask(
 ) -> VmProfileRequestRecord:
     """201 when new or changed — pending until an org admin decides; 200 when the same as before."""
     record, changed = await VmProfileRequests().ask_for_app(caller, app_id, body)
-    set_audit_target(request, target_type='vm_profile_request', target_id=record.id)
-    set_audit_detail(
-        request,
-        {
-            'app_id': app_id,
-            'version': record.version,
-            'packages_version': record.packages_version,
-            'internet': record.requested.internet,
-            'changed': changed,
-            'state': record.state,
-        },
+    RequestAudit.of(request).set_target(target_type='vm_profile_request', target_id=record.id)
+    RequestAudit.of(request).add_detail(
+        VmProfileAskedAudit(
+            app_id=app_id,
+            version=record.version,
+            packages_version=record.packages_version,
+            internet=record.requested.internet,
+            changed=changed,
+            state=record.state,
+        )
     )
     if changed:
         response.status_code = status.HTTP_201_CREATED

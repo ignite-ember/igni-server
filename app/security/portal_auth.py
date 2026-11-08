@@ -10,7 +10,7 @@ from app.config import settings
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 from app.security.bypass_identity import BYPASS_EMAIL, BYPASS_FULL_NAME, BYPASS_ORG_ID, BYPASS_USER_ID
 from app.security.membership_sessions import MembershipSessions
 from app.security.subject import require_existing_user
@@ -61,7 +61,7 @@ def _attributed(request: Request, user: PortalAccount) -> PortalAccount:
     the mistake F80 and F88 are both records of. Every route behind this
     dependency is audited without doing anything itself.
     """
-    set_audit_actor(request, user_id=user.user_id, email=user.email, org_id=user.org_id)
+    RequestAudit.of(request).attribute_to(user_id=user.user_id, email=user.email, org_id=user.org_id)
     return user
 
 

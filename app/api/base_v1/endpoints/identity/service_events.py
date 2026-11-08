@@ -18,6 +18,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from app.api.base_v1.schema.audit_detail import AttachmentUploadedAudit, ItemDeliveredAudit
 from app.api.base_v1.schema.producer_events import (
     AttachmentStored,
     DeliverEventRequest,
@@ -28,7 +29,7 @@ from app.api.base_v1.schema.producer_events import (
     EventStatusList,
     MAX_ATTACHMENT_BYTES,
 )
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.service_caller import require_service, ServiceCaller
 from app.services.cloud.producer_events import ProducerEvents
 from app.services.cloud.service_attachments import ServiceAttachments
@@ -52,18 +53,17 @@ async def deliver_item(
 
 
 async def _deliver(request: Request, body: DeliverItemRequest, caller: ServiceCaller) -> EventAccepted:
-    set_audit_detail(
-        request,
-        {
-            'producer': f'{body.producer.kind}:{body.producer.id}',
-            'kind': body.kind,
-            'type': body.stored_type,
-            'thread': body.thread,
-            'attachments': body.attachments,
-        },
+    RequestAudit.of(request).add_detail(
+        ItemDeliveredAudit(
+            producer=f'{body.producer.kind}:{body.producer.id}',
+            kind=body.kind,
+            type=body.stored_type,
+            thread=body.thread,
+            attachments=body.attachments,
+        )
     )
     accepted = await ProducerEvents().deliver(caller, body)
-    set_audit_target(request, target_type='producer_event', target_id=accepted.event_id)
+    RequestAudit.of(request).set_target(target_type='producer_event', target_id=accepted.event_id)
     return accepted
 
 
@@ -87,11 +87,11 @@ async def upload_attachment(
                 status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f'An attachment may be at most {MAX_ATTACHMENT_BYTES} bytes',
             )
-    set_audit_detail(request, {'filename': filename, 'size': len(content)})
+    RequestAudit.of(request).add_detail(AttachmentUploadedAudit(filename=filename, size=len(content)))
     stored = await ServiceAttachments().upload(
         caller, filename=filename, content_type=request.headers.get('content-type'), content=bytes(content)
     )
-    set_audit_target(request, target_type='service_attachment', target_id=stored.attachment_id)
+    RequestAudit.of(request).set_target(target_type='service_attachment', target_id=stored.attachment_id)
     return stored
 
 

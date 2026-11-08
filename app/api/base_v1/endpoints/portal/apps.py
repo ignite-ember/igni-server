@@ -9,6 +9,12 @@ its own list of extensions, off until switched on here
 
 from fastapi import APIRouter, Depends, Request, Response, status
 
+from app.api.base_v1.schema.audit_detail import (
+    AppDiscardedAudit,
+    AppRegisteredAudit,
+    GroupExtensionSetAudit,
+    KeysReplacedAudit,
+)
 from app.api.base_v1.schema.portal.apps import (
     DiscardAppRequest,
     DiscardedApp,
@@ -20,7 +26,7 @@ from app.api.base_v1.schema.portal.apps import (
 )
 from app.api.base_v1.schema.portal.groups import GroupExtensionList, SetGroupExtension
 from app.api.base_v1.schema.portal.user import PortalUser
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import require_admin
 from app.services.portal.apps import OrgApps
 
@@ -37,8 +43,8 @@ async def register_app(
     request: Request, body: RegisterAppRequest, current_user: PortalUser = Depends(require_admin)
 ) -> OrgAppResponse:
     app = await OrgApps().register(current_user.org_id, body, by_user_id=current_user.user_id)
-    set_audit_target(request, target_type='app', target_id=app.app_id)
-    set_audit_detail(request, {'app': app.name, 'thumbprint': app.thumbprint})
+    RequestAudit.of(request).set_target(target_type='app', target_id=app.app_id)
+    RequestAudit.of(request).add_detail(AppRegisteredAudit(app=app.name, thumbprint=app.thumbprint))
     return app
 
 
@@ -51,7 +57,7 @@ async def get_app(app_id: str, current_user: PortalUser = Depends(require_admin)
 async def update_app(
     request: Request, app_id: str, body: UpdateAppRequest, current_user: PortalUser = Depends(require_admin)
 ) -> OrgAppResponse:
-    set_audit_target(request, target_type='app', target_id=app_id)
+    RequestAudit.of(request).set_target(target_type='app', target_id=app_id)
     return await OrgApps().update(current_user.org_id, app_id, body)
 
 
@@ -60,8 +66,8 @@ async def replace_app_keys(
     request: Request, app_id: str, body: ReplaceAppKeysRequest, current_user: PortalUser = Depends(require_admin)
 ) -> OrgAppResponse:
     app = await OrgApps().replace_keys(current_user.org_id, app_id, body)
-    set_audit_target(request, target_type='app', target_id=app_id)
-    set_audit_detail(request, {'thumbprint': app.thumbprint})
+    RequestAudit.of(request).set_target(target_type='app', target_id=app_id)
+    RequestAudit.of(request).add_detail(KeysReplacedAudit(thumbprint=app.thumbprint))
     return app
 
 
@@ -74,17 +80,15 @@ async def discard_app(
 ) -> DiscardedApp:
     """Removed at once — never woken again, its place under the licence free — and its VM erased in the background."""
     start_fresh = bool(body and body.start_fresh)
-    set_audit_target(request, target_type='app', target_id=app_id)
+    RequestAudit.of(request).set_target(target_type='app', target_id=app_id)
     discarded = await OrgApps().discard(
         current_user.org_id, app_id, by_user_id=current_user.user_id, start_fresh=start_fresh
     )
-    set_audit_detail(
-        request,
-        {
-            'why': 'discarded',
-            'erasure': discarded.discarded.state if discarded.discarded else None,
-            'fresh_app': discarded.fresh_app.app_id if discarded.fresh_app else None,
-        },
+    RequestAudit.of(request).add_detail(
+        AppDiscardedAudit(
+            erasure=discarded.discarded.state if discarded.discarded else None,
+            fresh_app=discarded.fresh_app.app_id if discarded.fresh_app else None,
+        )
     )
     return discarded
 
@@ -92,7 +96,7 @@ async def discard_app(
 @router.delete('/apps/{app_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def remove_app(request: Request, app_id: str, current_user: PortalUser = Depends(require_admin)) -> Response:
     """The same as discarding it, without a fresh one."""
-    set_audit_target(request, target_type='app', target_id=app_id)
+    RequestAudit.of(request).set_target(target_type='app', target_id=app_id)
     await OrgApps().discard(current_user.org_id, app_id, by_user_id=current_user.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -114,6 +118,6 @@ async def set_app_extension(
     await OrgApps().set_extension(
         current_user.org_id, app_id, extension_id, body.enabled, by_user_id=current_user.user_id
     )
-    set_audit_target(request, target_type='app', target_id=app_id)
-    set_audit_detail(request, {'extension': extension_id, 'enabled': body.enabled})
+    RequestAudit.of(request).set_target(target_type='app', target_id=app_id)
+    RequestAudit.of(request).add_detail(GroupExtensionSetAudit(extension=extension_id, enabled=body.enabled))
     return Response(status_code=status.HTTP_204_NO_CONTENT)

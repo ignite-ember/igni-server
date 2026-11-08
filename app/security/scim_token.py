@@ -31,7 +31,7 @@ from fastapi import Header, Request, status
 
 from app.api.scim.errors import scim_error
 from app.config import settings
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 
 #: Who a provisioning request is, in the audit trail.
 SCIM_ACTOR = 'scim:identity-provider'
@@ -54,4 +54,4 @@ async def require_scim_token(
         presented = ''
     if not hmac.compare_digest(presented, expected):
         raise scim_error('Missing or invalid bearer token', status.HTTP_401_UNAUTHORIZED)
-    set_audit_actor(request, user_id=SCIM_ACTOR)
+    RequestAudit.of(request).attribute_to(user_id=SCIM_ACTOR)

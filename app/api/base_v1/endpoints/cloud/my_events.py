@@ -12,8 +12,9 @@ so a person's or an app's token is taken, for that producer's own items.
 
 from fastapi import APIRouter, Depends, Request, Response
 
+from app.api.base_v1.schema.audit_detail import EventsNotHandledAudit
 from app.api.base_v1.schema.producer_events import AckedEvents, AckEvents, PulledEvents
-from app.middlewares.audit import set_audit_detail
+from app.middlewares.request_audit import RequestAudit
 from app.security.producer import ProducerCaller, require_producer
 from app.services.cloud.producer_events import ProducerEvents
 from app.services.cloud.service_attachments import ServiceAttachments
@@ -30,7 +31,7 @@ async def pull(caller: ProducerCaller = Depends(require_producer)) -> PulledEven
 async def ack(request: Request, body: AckEvents, caller: ProducerCaller = Depends(require_producer)) -> AckedEvents:
     """Delivered — and the events no handler took, `not_handled` with their reasons. Audited."""
     if body.not_handled:
-        set_audit_detail(request, {'not_handled': [m.model_dump() for m in body.not_handled]})
+        RequestAudit.of(request).add_detail(EventsNotHandledAudit(not_handled=body.not_handled))
     return AckedEvents(delivered=await ProducerEvents().ack_mine(caller, body))
 
 
