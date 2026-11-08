@@ -17,13 +17,7 @@ import logging
 
 from app.config import Settings, settings as app_settings
 from app.services.email.delivery import invite_url_for
-from app.services.email.templates import (
-    get_otp_email_template,
-    get_password_reset_email_template,
-    get_sign_up_email_template,
-    get_team_invite_email_template,
-    get_welcome_email_template,
-)
+from app.services.email.templates import EmailTemplates
 from app.services.email.transports.base import EmailTransport
 from app.services.email.transports.factory import build_transport
 
@@ -44,12 +38,14 @@ class EmailService:
         from_email: str | None = None,
         from_name: str | None = None,
         settings: Settings = app_settings,
+        templates: EmailTemplates | None = None,
     ) -> None:
         # Built lazily so constructing the service never touches AWS or
         # SMTP configuration — several call sites instantiate it just to
         # reach one template method.
         self._transport = transport
         self._settings = settings
+        self._templates = templates or EmailTemplates()
         self.from_email = from_email if from_email is not None else settings.email_from_address
         self.from_name = from_name if from_name is not None else settings.email_from_name
 
@@ -104,7 +100,7 @@ class EmailService:
     # -- Auth emails ----------------------------------------------------------
 
     async def send_otp_code(self, *, to_email: str, code: str, name: str | None = None) -> bool:
-        content = get_otp_email_template(code=code, email=to_email, name=name)
+        content = self._templates.sign_in(code=code, email=to_email, name=name)
         return await self.send_email(
             to_email=to_email,
             subject=content.subject,
@@ -113,7 +109,7 @@ class EmailService:
         )
 
     async def send_sign_up_code(self, *, to_email: str, code: str, name: str | None = None) -> bool:
-        content = get_sign_up_email_template(code=code, email=to_email, name=name)
+        content = self._templates.sign_up(code=code, email=to_email, name=name)
         return await self.send_email(
             to_email=to_email,
             subject=content.subject,
@@ -122,7 +118,7 @@ class EmailService:
         )
 
     async def send_welcome(self, *, to_email: str, name: str | None = None) -> bool:
-        content = get_welcome_email_template(email=to_email, name=name)
+        content = self._templates.welcome(email=to_email, name=name)
         return await self.send_email(
             to_email=to_email,
             subject=content.subject,
@@ -133,7 +129,10 @@ class EmailService:
     async def send_team_invite(
         self, *, to_email: str, role: str, invited_by: str | None = None, name: str | None = None
     ) -> bool:
-        content = get_team_invite_email_template(email=to_email, role=role, invited_by=invited_by, name=name)
+        invite_url = invite_url_for(to_email)
+        content = self._templates.team_invite(
+            email=to_email, role=role, invite_url=invite_url, invited_by=invited_by, name=name
+        )
         inviter = f' by {invited_by}' if invited_by else ''
         return await self.send_email(
             to_email=to_email,
@@ -141,12 +140,12 @@ class EmailService:
             html_body=content.html_body,
             text_body=(
                 f'You have been invited{inviter} to join igni as a {role.capitalize()}.\n'
-                f'Accept the invitation: {invite_url_for(to_email)}'
+                f'Accept the invitation: {invite_url}'
             ),
         )
 
     async def send_password_reset_code(self, *, to_email: str, code: str, name: str | None = None) -> bool:
-        content = get_password_reset_email_template(code=code, email=to_email, name=name)
+        content = self._templates.password_reset(code=code, email=to_email, name=name)
         return await self.send_email(
             to_email=to_email,
             subject=content.subject,
