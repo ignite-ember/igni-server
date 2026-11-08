@@ -30,8 +30,9 @@ import pytest
 from app.config import settings
 from app.services.auth.jwt_service import JWTService
 from app.services.portal.default_group import DefaultGroup
+from app.services.portal.group_pack_claims import PACK_USE
 from app.services.portal.group_pack_service import GroupPackService
-from app.services.portal.group_pack_signature import PACK_TYPE, PACK_USE
+from app.services.portal.group_pack_signature import PACK_TYPE
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 pytestmark = pytest.mark.anyio

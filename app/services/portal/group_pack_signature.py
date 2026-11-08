@@ -29,6 +29,8 @@ of it is merged (igni `core/config/group_policy_signature.py`).
   `exp`: nothing that checks an igni token accepts this as one, and the
   pack keeps working offline for as long as it is current.
 
+The claims are typed in `group_pack_claims`.
+
 ## Rotation
 
 A superseded key stays in the JWKS for about a month
@@ -47,14 +49,11 @@ from app.api.base_v1.schema.portal.group_pack import OrgGroupPack
 from app.security import jose
 from app.services.auth.jwt_service import JWTService
 from app.services.identity.key_ring import KeyRing, ProcessSigningKeys
+from app.services.portal.group_pack_claims import AbsentPackClaims, GroupPackClaims
 
 #: The JWS `typ` header. Distinct from a token's, so neither is mistaken
 #: for the other by anything that looks at the header first.
 PACK_TYPE = 'igni-group-policy+jwt'
-
-#: The `token_use` claim. `JWTService.verify` demands a specific one, so
-#: a pack is never accepted where a token is expected.
-PACK_USE = 'group_policy'
 
 
 class GroupPackSigner:
@@ -82,7 +81,9 @@ class GroupPackSigner:
 
     def sign(self, pack: OrgGroupPack, *, subject: str, org_id: str | None) -> str:
         """The pack as a compact JWS bound to `subject`."""
-        return self._sign({'policy': pack.as_payload()}, subject=subject, org_id=org_id)
+        return self._sign(
+            GroupPackClaims.stamped(self._now(), issuer=self.issuer, subject=subject, org_id=org_id, policy=pack)
+        )
 
     def sign_absence(self, *, subject: str, org_id: str | None) -> str:
         """ "`subject` has no pack", signed the same way.
@@ -93,23 +94,17 @@ class GroupPackSigner:
         igni clears what it cached; and since it carries a `version`, an
         older pack put back afterwards is still refused as a rollback.
         """
-        return self._sign({'policy': None, 'no_pack': True}, subject=subject, org_id=org_id)
+        return self._sign(AbsentPackClaims.stamped(self._now(), issuer=self.issuer, subject=subject, org_id=org_id))
 
-    def _sign(self, body: dict[str, object], *, subject: str, org_id: str | None) -> str:
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _sign(self, claims: GroupPackClaims) -> str:
         ring = self._ring()
-        now = datetime.now(timezone.utc)
-        claims: dict[str, object] = {
-            'iss': self.issuer,
-            'sub': subject,
-            'org': org_id,
-            'iat': int(now.timestamp()),
-            'version': int(now.timestamp() * 1000),
-            'token_use': PACK_USE,
-            **body,
-        }
         return str(
             jose.encode(
-                claims,
+                claims.payload(),
                 ring.private_pem(),
                 algorithm='RS256',
                 headers={'kid': ring.kid, 'typ': PACK_TYPE},
