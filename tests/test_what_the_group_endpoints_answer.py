@@ -92,6 +92,52 @@ class TestAGroupOutOfReach:
         assert resp.status_code == 404
         assert resp.json()['detail'] == 'The group to copy from does not exist in this organization.'
 
+    async def test_a_template_in_another_organisation_is_missing_too(self, client, admin, theirs):
+        headers, _ = admin
+
+        resp = await client.post('/portal/groups', json={'name': 'Mine', 'template_group_id': theirs}, headers=headers)
+
+        assert (resp.status_code, resp.json()['detail']) == (
+            404,
+            'The group to copy from does not exist in this organization.',
+        )
+
+
+class TestWhatIsNotInTheGroup:
+    async def test_an_entry_it_does_not_hold_is_not_found(self, client, admin):
+        headers, _ = admin
+        legal = await _group(client, headers, 'Legal')
+        missing = f'/portal/groups/{legal}/entries/00000000-0000-0000-0000-000000000000'
+
+        answers = [
+            await client.patch(missing, json={'enabled': False}, headers=headers),
+            await client.delete(missing, headers=headers),
+        ]
+
+        assert [(resp.status_code, resp.json()['detail']) for resp in answers] == [(404, 'Entry not found')] * 2
+
+    async def test_somebody_it_does_not_hold_is_not_found(self, client, admin):
+        headers, _ = admin
+        legal = await _group(client, headers, 'Legal')
+
+        resp = await client.delete(f'/portal/groups/{legal}/members/admin-1', headers=headers)
+
+        assert (resp.status_code, resp.json()['detail']) == (404, 'Member not found')
+
+    async def test_nobody_is_taken_out_of_default_and_they_are_told_how_to_move_them(self, client, admin):
+        headers, _ = admin
+        groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
+        default = next(g['id'] for g in groups if g['is_default'])
+
+        resp = await client.delete(f'/portal/groups/{default}/members/admin-1', headers=headers)
+
+        assert (resp.status_code, resp.json()['detail']) == (
+            409,
+            'Everybody is in exactly one group, and the Default group is where '
+            'people go when they leave any other — so nobody leaves it except by '
+            'being moved into another group: POST /portal/groups/{group_id}/members.',
+        )
+
 
 class TestReadingOne:
     async def test_the_default_groups_people_are_placed_before_they_are_counted(self, client, admin, db):

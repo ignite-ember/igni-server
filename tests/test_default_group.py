@@ -15,10 +15,14 @@ What matters, in order of how much damage getting it wrong would do:
   runs when a CLI starts up.
 """
 
+from fastapi import HTTPException
 import pytest
 
+from app.db.sql.group_entries import GroupEntriesDB
+from app.db.sql.groups import GroupsDB
+from app.db.sql.schemas.group import GroupPage
 from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup
-from app.services.portal.default_group_seed import BUNDLED_SEED
+from app.services.portal.default_group_seed import BUNDLED_SEED, SeedEntry
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -334,3 +338,55 @@ class TestWhereAnAdminLooksForIt:
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
 
         assert [g['name'] for g in groups].count(DEFAULT_GROUP_NAME) == 1
+
+
+class _SeesNoGroups(GroupsDB):
+    """The read before the create, as it was before a concurrent request made the Default group."""
+
+    async def list_groups(self, org_id: str, *, offset: int = 0, limit: int | None = None) -> GroupPage:
+        return GroupPage(items=[], total=0)
+
+
+class _Seed:
+    def __init__(self, *entries: SeedEntry) -> None:
+        self._entries = list(entries)
+
+    def entries(self) -> list[SeedEntry]:
+        return self._entries
+
+
+class TestMakingIt:
+    async def test_losing_the_race_to_make_it_is_the_portals_409(self, member):
+        _, org_id = member
+        await DefaultGroup().ensure_for_org(org_id, created_by_user_id='dev-1')
+
+        with pytest.raises(HTTPException) as raised:
+            await DefaultGroup(groups=_SeesNoGroups()).ensure_for_org(org_id, created_by_user_id='dev-1')
+
+        assert (raised.value.status_code, raised.value.detail) == (
+            409,
+            "A group named 'Default' already exists in this organization.",
+        )
+
+    async def test_a_seed_entry_that_fails_is_skipped_and_the_rest_are_seeded(self, member):
+        _, org_id = member
+        seed = _Seed(
+            SeedEntry('agents', 'first', '---\nname: first\n---\nBody.'),
+            SeedEntry('no-such-kind', 'broken', 'x'),
+            SeedEntry('agents', 'first', 'the same name again'),
+            SeedEntry('skills', 'last', '---\nname: last\n---\nBody.'),
+        )
+
+        group = await DefaultGroup(seed=seed).ensure_for_org(org_id, created_by_user_id='dev-1')  # type: ignore[arg-type]
+
+        entries = await GroupEntriesDB().list_entries(org_id, str(group.id))
+        assert [(e.kind, e.entry_name, e.created_by_user_id) for e in entries] == [
+            ('agents', 'first', 'dev-1'),
+            ('skills', 'last', 'dev-1'),
+        ]
+        assert (group.name, group.is_default, group.default_model, group.theme) == (
+            DEFAULT_GROUP_NAME,
+            True,
+            None,
+            None,
+        )
