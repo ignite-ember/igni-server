@@ -73,6 +73,19 @@ describe('CLIAuthPage', () => {
     await waitFor(() => expect(screen.getByText('Invalid Request')).toBeTruthy())
   })
 
+  it('auto-selects a single organization once, and not again after it fails', async () => {
+    vi.spyOn(client, 'get').mockResolvedValue({
+      data: { organizations: [{ id: 'org-1', slug: 'acme', display_name: 'Acme', role: 'admin' }] },
+    } as never)
+    const post = vi.spyOn(client, 'post').mockRejectedValue(new Error('boom'))
+
+    renderAt('?port=51234')
+
+    await waitFor(() => expect(screen.getByText('Failed to generate CLI token. Please try again.')).toBeTruthy())
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(post).toHaveBeenCalledWith('/cli/token', { org_id: 'org-1' })
+  })
+
   // A third test lived here and has been removed. It asserted on the
   // shape of the source — that every conditional return appears after
   // the last hook call — and when the fix was reverted to check that the

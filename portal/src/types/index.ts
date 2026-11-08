@@ -161,6 +161,12 @@ export interface UserMe {
   is_super_admin?: boolean
 }
 
+/** POST /v1/cli/token. The page forwards only `handoff_code`; the CLI redeems it. */
+export interface CLITokenResponse {
+  access_token: string
+  handoff_code: string
+}
+
 // ─── Super admins ───────────────────────────────────────────────────
 
 /** An organisation as a super admin sees it: what it is and what it owns. */
