@@ -5,15 +5,19 @@ Creating, copying and the Default group's refusals are pinned in
 `test_default_group.py`. These are the rest: a rename onto a name that
 is taken, a group the request cannot reach, a missing template's words,
 deleting a group in an organisation whose Default group nobody has
-asked for yet, the words for each entry rule, what an admin is warned
-about, and who may be put in a group.
+asked for yet, an entry for a group deleted meanwhile, the words for
+each entry rule, what an admin is warned about, and who may be put in
+a group.
 """
 
 from __future__ import annotations
 
+from httpx import ASGITransport, AsyncClient
 import pytest
 
 from app.db.sql.groups import GroupsDB
+from app.services.portal.default_group import DefaultGroup
+from app.services.portal.group_access import GroupAccess
 from app.services.portal.group_members_service import GroupMembersService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
@@ -186,6 +190,30 @@ class TestDeleting:
 async def _post_entry(client, headers, group_id, **fields):
     body = {'kind': 'agents', 'entry_name': 'reviewer', 'content': '# reviewer', 'content_type': 'markdown', **fields}
     return await client.post(f'/portal/groups/{group_id}/entries', json=body, headers=headers)
+
+
+class TestAnEntryForAGroupDeletedMeanwhile:
+    async def test_is_a_server_error_not_already_there(self, app, admin, monkeypatch):
+        """The group passes the writable check, then goes before the insert: the foreign key fails, not the name."""
+        headers, org_id = admin
+        async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test/v1') as client:
+            legal = await _group(client, headers, 'Legal')
+        checked = GroupAccess.writable
+
+        async def writable_then_deleted(self, *, org_id: str, group_id: str):
+            group = await checked(self, org_id=org_id, group_id=group_id)
+            await DefaultGroup().ensure_for_org(org_id, created_by_user_id='admin-1')
+            await GroupsDB().delete_group(org_id, group_id=group_id)
+            return group
+
+        monkeypatch.setattr(GroupAccess, 'writable', writable_then_deleted)
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url='http://test/v1') as client:
+            resp = await _post_entry(client, headers, legal)
+
+        assert await GroupsDB().get_group(org_id, group_id=legal) is None
+        assert resp.status_code == 500
+        assert 'already exists' not in resp.text
 
 
 class TestAnEntryThatBreaksARule:

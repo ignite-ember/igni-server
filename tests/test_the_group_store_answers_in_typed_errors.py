@@ -160,6 +160,14 @@ class TestTheDefaultGroup:
             await GroupsDB().delete_group(org_id, group_id=legal.id)
         assert await GroupsDB().get_group(org_id, group_id=legal.id) is not None
 
+    async def test_taking_somebody_out_with_no_default_is_a_bug_not_a_conflict(self, org_id):
+        legal = await _group(org_id, 'Legal')
+        await GroupMembersDB().place(org_id, group_id=legal.id, user_id='dev-1', added_by_user_id='admin-1')
+
+        with pytest.raises(NoDefaultGroup):
+            await GroupMembersDB().return_to_default(org_id, group_id=legal.id, user_id='dev-1', by_user_id='admin-1')
+        assert [m.user_id for m in await GroupMembersDB().list_members(org_id, legal.id)] == ['dev-1']
+
 
 class _FailsAfterEntries(GroupExtensionsDB):
     async def copy_into(
