@@ -40,8 +40,14 @@ class UpstreamChatClient:
         stream_timeout: httpx.Timeout = STREAM_TIMEOUT,
     ) -> None:
         self._client_factory = client_factory
-        self._complete_timeout = complete_timeout if complete_timeout is not None else settings.ai.upstream_timeout
+        #: None reads `settings.ai.upstream_timeout` on every call, so a changed setting applies to the next one.
+        self._complete_timeout = complete_timeout
         self._stream_timeout = stream_timeout
+
+    @property
+    def complete_timeout(self) -> float:
+        """Seconds a non-streamed completion may take, as configured now."""
+        return self._complete_timeout if self._complete_timeout is not None else settings.ai.upstream_timeout
 
     async def complete(self, *, lease: BackendLease, request: UpstreamChatRequest) -> UpstreamCompletion:
         """One non-streamed completion from the node behind *lease*.
@@ -50,7 +56,7 @@ class UpstreamChatClient:
         200 that is not a completion, and a transport failure otherwise.
         """
         try:
-            async with self._client_factory(timeout=self._complete_timeout) as client:
+            async with self._client_factory(timeout=self.complete_timeout) as client:
                 resp = await client.post(lease.completions_url, headers=lease.auth_headers(), json=request.wire())
         except httpx.RequestError as exc:
             raise UpstreamFailure.from_transport(exc) from exc
