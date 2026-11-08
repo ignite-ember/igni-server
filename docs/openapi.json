@@ -334,10 +334,11 @@
             "type": "string"
           },
           "kind": {
-            "title": "Kind",
-            "type": "string"
+            "$ref": "#/components/schemas/GrantKind"
           },
           "label": {
+            "description": "The kind in words, for the portal and the log.",
+            "readOnly": true,
             "title": "Label",
             "type": "string"
           },
@@ -355,8 +356,8 @@
         },
         "required": [
           "kind",
-          "label",
-          "item"
+          "item",
+          "label"
         ],
         "title": "AddedGrant",
         "type": "object"
@@ -1620,7 +1621,9 @@
           "tool_calls": {
             "anyOf": [
               {
-                "items": {},
+                "items": {
+                  "$ref": "#/components/schemas/ToolCall"
+                },
                 "type": "array"
               },
               {
@@ -1786,15 +1789,7 @@
             "type": "string"
           },
           "jwks": {
-            "additionalProperties": {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "title": "Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/SubmittedJwks"
           },
           "kind": {
             "default": "service",
@@ -3972,7 +3967,7 @@
           },
           "service": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ServiceGrant"
             },
             "title": "Service",
             "type": "array"
@@ -4154,6 +4149,31 @@
         },
         "title": "FilterSupport",
         "type": "object"
+      },
+      "GrantKind": {
+        "description": "What an added grant is, with the words the portal shows for it.",
+        "enum": [
+          "workspace",
+          "workspace_paths",
+          "egress",
+          "secret",
+          "host",
+          "rpc",
+          "service",
+          "tool",
+          "tool_hints",
+          "tool_audience",
+          "hook",
+          "prompt_override",
+          "prompt_edit",
+          "anchor",
+          "command",
+          "page",
+          "agent",
+          "skill"
+        ],
+        "title": "GrantKind",
+        "type": "string"
       },
       "GrantsComparison": {
         "description": "A new version against the approved one.",
@@ -9262,15 +9282,7 @@
         "description": "An org admin registering an app.\n\nThe app generated its own key pair; `jwks` is the public half, as a\nJWK set — the same as a service sends to `POST /v1/clients`. Nothing\nsecret is handed to the app, and nothing secret is typed in here.",
         "properties": {
           "jwks": {
-            "additionalProperties": {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "title": "Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/SubmittedJwks"
           },
           "name": {
             "maxLength": 80,
@@ -9371,15 +9383,7 @@
         "description": "A key rotation: the app's new public keys, replacing the old ones.",
         "properties": {
           "jwks": {
-            "additionalProperties": {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "title": "Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/SubmittedJwks"
           }
         },
         "required": [
@@ -10025,6 +10029,16 @@
         ],
         "title": "ServerMetadata",
         "type": "object"
+      },
+      "ServiceGrant": {
+        "description": "What a service may do towards producers' agents beyond a plain event: `permissions.service`.\n\n`docs/service-identity.md` §15. Shown to the super admin who approves\nthe service, and checked by igni server on every item the service sends.",
+        "enum": [
+          "messages",
+          "attachments",
+          "chats"
+        ],
+        "title": "ServiceGrant",
+        "type": "string"
       },
       "ServiceNotification": {
         "description": "One thing that happened, and who it concerns, as a service says it.",
@@ -10898,6 +10912,21 @@
         "title": "SubjectAccessSections",
         "type": "object"
       },
+      "SubmittedJwks": {
+        "description": "A JWK set a client sends to register, each key still unchecked.\n\nThe keys stay mappings until `public_keys` reads them, so a private\nkey is refused by name rather than as an unexplained extra field.",
+        "properties": {
+          "keys": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "title": "SubmittedJwks",
+        "type": "object"
+      },
       "SuperAdmin": {
         "properties": {
           "email": {
@@ -11288,6 +11317,80 @@
           "access_token"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "ToolCall": {
+        "additionalProperties": true,
+        "description": "One of an assistant message's `tool_calls`. Extra fields are passed through.",
+        "properties": {
+          "function": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCallFunction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "title": "ToolCall",
+        "type": "object"
+      },
+      "ToolCallFunction": {
+        "additionalProperties": true,
+        "description": "The function an assistant's tool call names. Extra fields are passed through.",
+        "properties": {
+          "arguments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arguments"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "ToolCallFunction",
         "type": "object"
       },
       "UpdateAppRequest": {

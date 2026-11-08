@@ -3,7 +3,7 @@
 An org admin **discards** what is no longer wanted (`docs/service-identity.md`
 §18.5):
 
-* **an app** — removed at once (`OrgApps.discard`): its VM can never be
+* **an app** — removed at once (`AppDiscard.discard`): its VM can never be
   woken again, its credential stops, its place under the licence is free
   at once, and its VM's memory, snapshots, volume and keys are erased in
   the background straight away;

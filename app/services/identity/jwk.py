@@ -123,6 +123,49 @@ class JwkSet(BaseModel):
         return None
 
 
+#: More than a rotation needs (old and new, perhaps a third staged).
+MAX_KEYS = 3
+
+
+class KeysRefused(ValueError):
+    """The JWK set a client sent cannot be registered; the message says why."""
+
+
+class TooManyKeys(KeysRefused):
+    """More keys than `MAX_KEYS`; each caller words the refusal for its own clients."""
+
+    def __init__(self, count: int) -> None:
+        self.count = count
+        self.limit = MAX_KEYS
+        super().__init__(f'{count} keys sent, at most {MAX_KEYS} allowed')
+
+
+class SubmittedJwks(BaseModel):
+    """A JWK set a client sends to register, each key still unchecked.
+
+    The keys stay mappings until `public_keys` reads them, so a private
+    key is refused by name rather than as an unexplained extra field.
+    """
+
+    keys: list[dict[str, object]] = Field(default_factory=list)
+
+    def public_keys(self) -> JwkSet:
+        """The keys as public JWKs: at least one, at most `MAX_KEYS`, none private."""
+        if not self.keys:
+            raise KeysRefused('jwks must hold at least one public key')
+        if len(self.keys) > MAX_KEYS:
+            raise TooManyKeys(len(self.keys))
+        try:
+            return JwkSet(keys=[PublicJwk.from_mapping(dict(key)) for key in self.keys])
+        except ValueError as exc:
+            raise KeysRefused(str(exc)) from exc
+
+    @classmethod
+    def of(cls, keys: JwkSet) -> SubmittedJwks:
+        """Keys already registered, sent again — as a fresh app takes over its predecessor's."""
+        return cls.model_validate(keys.model_dump(exclude_none=True))
+
+
 class RsaKeyPair:
     """A freshly generated RSA key, for igni's own signing.
 
