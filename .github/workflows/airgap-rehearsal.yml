@@ -65,7 +65,9 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=v0.33.0
-          curl -sSfLo /tmp/kind \
+          # GitHub's release downloads answer 504 for minutes at a time; retried
+          # rather than failing the run on somebody else's outage.
+          curl -sSfL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/kind \
             "https://github.com/kubernetes-sigs/kind/releases/download/${VERSION}/kind-linux-amd64"
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           sudo apt-get update
