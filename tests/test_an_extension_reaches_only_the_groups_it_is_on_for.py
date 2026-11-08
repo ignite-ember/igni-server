@@ -14,8 +14,11 @@ import pytest
 from app.db.sql.group_person_erasure import GroupPersonErasureDB
 from app.db.sql.group_summaries import GroupSummariesDB
 from app.db.sql.models.org_group_extension import OrgGroupExtension
+from app.db.sql.schemas.group import GroupSummary
 from app.db.sql.tenancy import TenantSessions
 from app.services.auth.jwt_service import JWTService
+from app.services.portal.default_group import DefaultGroup
+from app.services.portal.group_extensions import Entitlement, GroupExtensions
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import ExtensionBundle, RegisteredService
 
@@ -291,6 +294,38 @@ class TestTheSessionTokenCarriesTheirGroup:
         default = await GroupSummariesDB().get_user_group_summary(user_id)
         assert default is not None
         assert claims.group == str(default.id)
+
+
+class _Answers(DefaultGroup):
+    """A default group that answers with a fixed summary, recording who asked."""
+
+    def __init__(self, summary: GroupSummary | None) -> None:
+        self._summary = summary
+        self.asked: list[tuple[str, str | None]] = []
+
+    async def ensure_for_user(self, user_id: str, org_id: str | None = None) -> GroupSummary | None:
+        self.asked.append((user_id, org_id))
+        return self._summary
+
+
+class TestWhichGroupIsTheirs:
+    async def test_their_group_in_the_organisation_they_are_signed_in_to(self):
+        default = _Answers(GroupSummary(id='g-1', org_id='org-1', name='Legal'))
+
+        assert await GroupExtensions(default_group=default).group_of('u-1', 'org-1') == 'g-1'
+        assert default.asked == [('u-1', 'org-1')]
+
+    async def test_a_group_in_another_organisation_is_none_of_theirs_here(self):
+        default = _Answers(GroupSummary(id='g-9', org_id='org-2', name='Theirs'))
+
+        assert await GroupExtensions(default_group=default).group_of('u-1', 'org-1') is None
+        assert await GroupExtensions(default_group=default).of_person('u-1', 'org-1') == Entitlement()
+
+    async def test_no_organisation_asks_for_no_group(self):
+        default = _Answers(GroupSummary(id='g-1', org_id='org-1', name='Legal'))
+
+        assert await GroupExtensions(default_group=default).group_of('u-1', None) is None
+        assert default.asked == []
 
 
 class TestForgettingAnAdmin:

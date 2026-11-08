@@ -19,6 +19,7 @@ from fastapi import HTTPException
 import pytest
 
 from app.db.sql.group_entries import GroupEntriesDB
+from app.db.sql.group_members import GroupMembersDB
 from app.db.sql.groups import GroupsDB
 from app.db.sql.schemas.group import GroupPage
 from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup
@@ -130,6 +131,14 @@ class TestJoiningIt:
 
         assert await DefaultGroup().ensure_for_user('nomad-1') is None
 
+    async def test_an_organisation_they_are_not_in_gives_them_nothing_there(self, client, member, db):
+        """The session's organisation decides; their own is not a fallback."""
+        await create_user(db, user_id='boss-1', email='boss@test.com')
+        other = await create_org(db, owner_user_id='boss-1', slug='other', display_name='Other')
+
+        assert await DefaultGroup().ensure_for_user('dev-1', str(other.id)) is None
+        assert (await GroupsDB().list_groups(str(other.id))).total == 0
+
     async def test_a_failure_costs_the_group_not_the_session(self, monkeypatch, client, member):
         """This runs while a CLI is starting up."""
 
@@ -142,6 +151,22 @@ class TestJoiningIt:
         monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
 
         assert await DefaultGroup().ensure_for_user('dev-1') is None
+
+
+class TestPlacingEveryone:
+    async def test_only_active_members_are_placed(self, client, member, db):
+        """Somebody whose membership no longer holds is not put in a group."""
+        _, org_id = member
+        await create_user(db, user_id='dev-2', email='dev2@test.com')
+        await add_member(db, org_id=org_id, user_id='dev-2', role='member')
+        await create_user(db, user_id='leaver-1', email='leaver@test.com')
+        await add_member(db, org_id=org_id, user_id='leaver-1', role='member', status='deactivated')
+
+        group = await DefaultGroup().place_everyone(org_id, by_user_id='dev-1')
+
+        assert group.is_default
+        placed = await GroupMembersDB().memberships(org_id)
+        assert [(m.user_id, m.group_id) for m in placed] == [('dev-1', group.id), ('dev-2', group.id)]
 
 
 class TestThroughThePack:

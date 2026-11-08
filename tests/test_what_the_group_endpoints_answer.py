@@ -160,6 +160,21 @@ class TestReadingOne:
         assert resp.status_code == 200
         assert resp.json()['member_count'] == 2
 
+    async def test_the_default_groups_people_are_placed_before_they_are_listed(self, client, admin, db):
+        """Listing who is in Default is one of those views too, and the people it places are the ones it lists."""
+        headers, org_id = admin
+        default_id = next(
+            g['id'] for g in (await client.get('/portal/groups', headers=headers)).json()['groups'] if g['is_default']
+        )
+        await create_user(db, user_id='new-1', email='new@test.com')
+        await add_member(db, org_id=org_id, user_id='new-1', role='member')
+
+        resp = await client.get(f'/portal/groups/{default_id}/members', headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        assert sorted(m['user_id'] for m in resp.json()['members']) == ['admin-1', 'new-1']
+        assert resp.json()['total'] == 2
+
     async def test_reading_another_group_places_nobody(self, client, admin, db):
         headers, org_id = admin
         legal = await _group(client, headers, 'Legal')
