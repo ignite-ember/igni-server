@@ -244,6 +244,28 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         assert 'code' not in query
         assert 'invalid_grant' not in query['error'][0], 'the upstream reason reached the URL'
 
+    async def test_a_failure_after_the_exchange_sends_the_person_back_to_sign_in_too(self, client, monkeypatch):
+        """The provider answered, and then something on this side broke —
+        here, the handoff store. The person still lands on the portal's
+        sign-in form with a reason, not on a 500 page on the API's host,
+        and what broke stays in the log rather than in the URL."""
+        _signs_in_as(monkeypatch, 'store-down@test.com', state={'returnTo': '/cli-auth?port=7123'})
+
+        async def store_down(self, token: str) -> str:
+            raise ConnectionError('redis at 10.0.0.9:6379 refused the connection')
+
+        monkeypatch.setattr('app.db.redis.auth_handoff.AuthHandoffDB.issue', store_down)
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        location = urlparse(resp.headers['location'])
+        assert location.path == '/login'
+        query = parse_qs(location.query)
+        assert query['error'] == ['OAuth sign-in failed. Please try again.']
+        assert 'code' not in query
+        assert '10.0.0.9' not in resp.headers['location'], 'the internal reason reached the URL'
+
     async def test_a_transport_failure_is_an_exchange_failure(self):
         """What the callback catches is named by the service, so the
         router does not need to know which HTTP client it uses."""

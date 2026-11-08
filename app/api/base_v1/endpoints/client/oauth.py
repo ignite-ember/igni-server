@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+#: What the portal's sign-in form shows for any failure after the provider sent the person back.
+_SIGN_IN_FAILED = 'OAuth sign-in failed. Please try again.'
+
 
 async def _resolve_provider(name: str) -> OAuthProvider:
     """Validate and resolve a provider path parameter to the enum.
@@ -89,26 +92,35 @@ async def oauth_callback(
     with OAuthRefusals():
         signin = await oauth.validate_state(state, SocialSignInState)
 
+    # Whatever goes wrong from here on sends the person back to the
+    # portal's sign-in form with a reason, not to a 500 page on the API's
+    # host — except a refusal the server raises on purpose, which keeps
+    # its status. The cause goes to the log, never into the URL: it was
+    # `str(e)` in the redirect, which showed the person an upstream error
+    # body and left it in their history and the proxy's access log.
     try:
         with OAuthRefusals():
             user_info = await oauth.exchange_and_get_user(resolved, code)
+
+        with AuthRefusals(), AccountRefusals():
+            result = await oauth.find_or_create_user_and_get_token(user_info)
+        if result.is_new_user:
+            emails.welcome(bg, email=result.email)
+
+        # A one-time code, never the token. `?token=<jwt>` put a working
+        # credential in the browser history, in the `Referer` of
+        # anything this page touches, and in the access log of whatever
+        # proxies the portal. See app/db/redis/auth_handoff.py.
+        query: dict[str, str] = {'code': await handoff.issue(result.token.access_token)}
+    except HTTPException:
+        raise
     except OAuthExchangeFailed as exc:
-        # The cause goes to the log, not into the URL: it was `str(e)`
-        # in the redirect, which showed the person an upstream error
-        # body and left it in their history and the proxy's access log.
         logger.warning('OAuth exchange with %s failed', resolved.value, exc_info=exc)
-        return _to_login({'error': 'OAuth sign-in failed. Please try again.'})
+        return _to_login({'error': _SIGN_IN_FAILED})
+    except Exception:  # noqa: BLE001 — the person is sent back to sign in, not shown a 500
+        logger.exception('OAuth callback for %s failed', resolved.value)
+        return _to_login({'error': _SIGN_IN_FAILED})
 
-    with AuthRefusals(), AccountRefusals():
-        result = await oauth.find_or_create_user_and_get_token(user_info)
-    if result.is_new_user:
-        emails.welcome(bg, email=result.email)
-
-    # A one-time code, never the token. `?token=<jwt>` put a working
-    # credential in the browser history, in the `Referer` of
-    # anything this page touches, and in the access log of whatever
-    # proxies the portal. See app/db/redis/auth_handoff.py.
-    query: dict[str, str] = {'code': await handoff.issue(result.token.access_token)}
     if signin.return_to:
         query['returnTo'] = signin.return_to
     return _to_login(query)
