@@ -14,7 +14,8 @@ from app.api.base_v1.schema.vm_profile_requests import (
 )
 from app.api.base_v1.schema.vm_profiles import PlatformVmCapsBody
 from app.db.sql.models.vm_profile_request import VmProfileRequest
-from app.services.cloud.vm_profiles import ProfileVersion, VmCaps
+from app.services.cloud.vm_caps import VmCaps
+from app.services.cloud.vm_profile_versions import ProfileVersion
 
 #: A subject kind: an extension, asking through its manifest (an app's is `registered_client.APP`).
 EXTENSION = 'extension'

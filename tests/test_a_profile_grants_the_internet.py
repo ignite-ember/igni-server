@@ -26,7 +26,7 @@ from app.api.base_v1.schema.effective_vm_profile import EffectiveVmProfile
 from app.api.base_v1.schema.vm_profile_requests import ManifestVm, VmProfileRequestSettings
 from app.api.base_v1.schema.vm_profiles import VmProfileSettings
 from app.services.cloud.vm_profile_request_records import VmProfileRequestRecords
-from app.services.cloud.vm_profiles import ProfileVersion
+from app.services.cloud.vm_profile_versions import ProfileVersion
 from tests.cloud_world import CloudOrg, platform, shipped
 from tests.conftest import audit_rows, TEST_DB_URL_SYNC
 

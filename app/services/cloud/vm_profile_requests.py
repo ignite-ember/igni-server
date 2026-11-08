@@ -33,6 +33,7 @@ from app.db.sql.vm_profiles import VmProfilesDB
 from app.security.org_authority import OrgAuthority
 from app.security.producer import ProducerCaller, ProducerRef
 from app.services.cloud.extension_vm_requests import ExtensionVmRequests
+from app.services.cloud.vm_caps import VmCaps
 from app.services.cloud.vm_profile_request_errors import (
     AlreadyApproved,
     AlreadyDecided,
@@ -44,7 +45,7 @@ from app.services.cloud.vm_profile_request_errors import (
     RequestChanged,
 )
 from app.services.cloud.vm_profile_request_records import EXTENSION, ORG_ADMIN, SUPER_ADMIN, VmProfileRequestRecords
-from app.services.cloud.vm_profiles import VmCaps, VmProfiles
+from app.services.cloud.vm_profiles import VmProfiles
 
 #: The longest profile name, and how many numbered names an approval tries before giving up.
 _NAME_LENGTH = 60

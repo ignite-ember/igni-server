@@ -25,8 +25,9 @@ from app.db.sql.service_extensions import ServiceExtensionDB
 from app.db.sql.vm_profile_requests import VmProfileRequestsDB
 from app.db.sql.vm_profiles import VmProfilesDB
 from app.security.service_caller import ServiceCaller
+from app.services.cloud.vm_caps import VmCaps
 from app.services.cloud.vm_profile_request_records import EXTENSION, SERVICE, VmProfileRequestRecords
-from app.services.cloud.vm_profiles import VmCaps, VmProfiles
+from app.services.cloud.vm_profiles import VmProfiles
 
 logger = logging.getLogger(__name__)
 

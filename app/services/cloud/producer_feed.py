@@ -56,7 +56,7 @@ from app.security.producer import ProducerRef
 from app.services.cloud.erasure_audit import ErasureAudit
 from app.services.cloud.long_poll import LongPoll
 from app.services.cloud.producer_states import ProducerStates
-from app.services.cloud.vm_profiles import VmCaps
+from app.services.cloud.vm_caps import VmCaps
 
 logger = logging.getLogger(__name__)
 

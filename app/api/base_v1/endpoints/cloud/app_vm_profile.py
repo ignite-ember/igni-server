@@ -11,6 +11,7 @@ from app.api.base_v1.schema.vm_profile_requests import VmProfileRequestRecord, V
 from app.api.base_v1.schema.vm_profiles import ProducerVmProfile
 from app.middlewares.request_audit import RequestAudit
 from app.security.producer import ProducerCaller, require_producer
+from app.services.cloud.vm_profile_refusals import VmProfileRefusals
 from app.services.cloud.vm_profile_request_refusals import VmProfileRequestRefusals
 from app.services.cloud.vm_profile_requests import VmProfileRequests
 
@@ -53,5 +54,5 @@ async def read_request(app_id: str, caller: ProducerCaller = Depends(require_pro
 @router.get('/vm-profile', response_model=ProducerVmProfile)
 async def read_profile(app_id: str, caller: ProducerCaller = Depends(require_producer)) -> ProducerVmProfile:
     """What the app's VM gets now: its profile's values, clamped to the caps, and its volume."""
-    with VmProfileRequestRefusals():
+    with VmProfileRequestRefusals(), VmProfileRefusals():
         return await VmProfileRequests().app_profile(caller, app_id)

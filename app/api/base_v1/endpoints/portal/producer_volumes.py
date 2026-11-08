@@ -12,6 +12,7 @@ from app.middlewares.request_audit import RequestAudit
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.security.producer import ProducerKind, ProducerRef
 from app.services.cloud.producer_volumes import ProducerVolumes
+from app.services.cloud.vm_profile_refusals import VmProfileRefusals
 
 router = APIRouter()
 
@@ -20,7 +21,8 @@ router = APIRouter()
 async def read(
     kind: ProducerKind, producer_id: str, authority: OrgAuthority = Depends(require_org_authority)
 ) -> ProducerVolume:
-    return await ProducerVolumes().read(authority.org_id, ProducerRef(kind=kind, id=producer_id))
+    with VmProfileRefusals():
+        return await ProducerVolumes().read(authority.org_id, ProducerRef(kind=kind, id=producer_id))
 
 
 @router.post('/orgs/{org_id}/producers/{kind}/{producer_id}/volume', response_model=ProducerVolume)
@@ -34,4 +36,5 @@ async def grow(
     """Grow it to `gib`: never smaller than now, at most the profile's `volume_max_gib`."""
     RequestAudit.of(request).set_target(target_type=f'{kind}_volume', target_id=producer_id)
     RequestAudit.of(request).add_detail(VolumeGrownAudit(gib=body.gib))
-    return await ProducerVolumes().grow(authority, ProducerRef(kind=kind, id=producer_id), body.gib)
+    with VmProfileRefusals():
+        return await ProducerVolumes().grow(authority, ProducerRef(kind=kind, id=producer_id), body.gib)

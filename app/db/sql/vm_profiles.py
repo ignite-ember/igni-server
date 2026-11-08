@@ -77,17 +77,33 @@ class VmProfilesDB(TenantData):
             raise VmProfileNameTaken(profile.name) from exc
         return profile
 
-    async def replace(self, org_id: str, profile_id: str, values: dict[str, object], by_user_id: str) -> VmProfile:
+    async def replace(self, org_id: str, profile: VmProfile) -> VmProfile:
+        """Give the stored profile of `profile.id` every setting of *profile*, an unsaved row, and its editor."""
         try:
             async with self.session_scope(org_id) as session:
                 await session.execute(
                     update(VmProfile)
-                    .where(VmProfile.id == profile_id)
-                    .values(**values, updated_by_user_id=by_user_id, updated_at=datetime.now(timezone.utc))
+                    .where(VmProfile.id == profile.id)
+                    .values(
+                        name=profile.name,
+                        memory_mib=profile.memory_mib,
+                        normal_memory_mib=profile.normal_memory_mib,
+                        vcpus=profile.vcpus,
+                        idle_before_pause_s=profile.idle_before_pause_s,
+                        expected_memory_mib=profile.expected_memory_mib,
+                        packages=profile.packages,
+                        setup_script=profile.setup_script,
+                        volume_gib=profile.volume_gib,
+                        volume_max_gib=profile.volume_max_gib,
+                        erase_after_idle_days=profile.erase_after_idle_days,
+                        internet=profile.internet,
+                        updated_by_user_id=profile.updated_by_user_id,
+                        updated_at=datetime.now(timezone.utc),
+                    )
                 )
         except IntegrityError as exc:
-            raise VmProfileNameTaken(str(values.get('name'))) from exc
-        found = await self.get(org_id, profile_id)
+            raise VmProfileNameTaken(profile.name) from exc
+        found = await self.get(org_id, profile.id)
         assert found is not None
         return found
 

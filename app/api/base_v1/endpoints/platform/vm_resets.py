@@ -19,6 +19,7 @@ from app.security.platform_caller import PlatformCaller, require_platform
 from app.security.producer import ProducerKind, ProducerRef
 from app.services.cloud.erasure_refusals import ErasureRefusals
 from app.services.cloud.erasures import Erasures
+from app.services.cloud.vm_profile_refusals import VmProfileRefusals
 from app.services.cloud.vm_resets import VmResets
 
 router = APIRouter()
@@ -32,7 +33,8 @@ async def check(
     body: VmResetBody,
     _platform: PlatformCaller = Depends(require_platform),
 ) -> Response:
-    await VmResets().check(org_id, ProducerRef(kind=kind, id=producer_id), body)
+    with VmProfileRefusals():
+        await VmResets().check(org_id, ProducerRef(kind=kind, id=producer_id), body)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -44,7 +46,8 @@ async def report(
     body: VmResetBody,
     platform: PlatformCaller = Depends(require_platform),
 ) -> VmResetResponse:
-    return await VmResets().record(org_id, ProducerRef(kind=kind, id=producer_id), body, by=platform)
+    with VmProfileRefusals():
+        return await VmResets().record(org_id, ProducerRef(kind=kind, id=producer_id), body, by=platform)
 
 
 @router.post('/orgs/{org_id}/producers/{kind}/{producer_id}/erasures', response_model=ErasureRecord)

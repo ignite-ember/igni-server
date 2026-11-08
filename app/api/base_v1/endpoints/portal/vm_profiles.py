@@ -29,9 +29,12 @@ from app.middlewares.request_audit import RequestAudit
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
+from app.services.cloud.vm_caps import VmCaps
+from app.services.cloud.vm_profile_refusals import VmProfileRefusals
 from app.services.cloud.vm_profile_request_refusals import VmProfileRequestRefusals
 from app.services.cloud.vm_profile_requests import VmProfileRequests
-from app.services.cloud.vm_profiles import VmCaps, VmProfiles, VmQuotas
+from app.services.cloud.vm_profiles import VmProfiles
+from app.services.cloud.vm_quotas import VmQuotas
 
 router = APIRouter()
 
@@ -61,7 +64,8 @@ async def overview(authority: OrgAuthority = Depends(require_org_authority)) -> 
 async def create_profile(
     request: Request, body: VmProfileSettings, authority: OrgAuthority = Depends(require_org_authority)
 ) -> VmProfileResponse:
-    profile = await VmProfiles().create(authority.org_id, body, by_user_id=authority.user_id)
+    with VmProfileRefusals():
+        profile = await VmProfiles().create(authority.org_id, body, by_user_id=authority.user_id)
     RequestAudit.of(request).set_target(target_type='vm_profile', target_id=profile.id)
     RequestAudit.of(request).add_detail(
         VmProfileSavedAudit(name=profile.name, version=profile.version, internet=profile.internet)
@@ -76,7 +80,8 @@ async def replace_profile(
     body: VmProfileSettings,
     authority: OrgAuthority = Depends(require_org_authority),
 ) -> VmProfileResponse:
-    profile = await VmProfiles().replace(authority.org_id, profile_id, body, by_user_id=authority.user_id)
+    with VmProfileRefusals():
+        profile = await VmProfiles().replace(authority.org_id, profile_id, body, by_user_id=authority.user_id)
     RequestAudit.of(request).set_target(target_type='vm_profile', target_id=profile_id)
     RequestAudit.of(request).add_detail(
         VmProfileSavedAudit(name=profile.name, version=profile.version, internet=profile.internet)
@@ -88,7 +93,8 @@ async def replace_profile(
 async def delete_profile(
     request: Request, profile_id: str, authority: OrgAuthority = Depends(require_org_authority)
 ) -> Response:
-    await VmProfiles().delete(authority.org_id, profile_id)
+    with VmProfileRefusals():
+        await VmProfiles().delete(authority.org_id, profile_id)
     RequestAudit.of(request).set_target(target_type='vm_profile', target_id=profile_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -97,7 +103,8 @@ async def delete_profile(
 async def assign_group(
     request: Request, group_id: str, body: AssignVmProfile, authority: OrgAuthority = Depends(require_org_authority)
 ) -> Response:
-    await VmProfiles().assign_group(authority.org_id, group_id, body.profile_id)
+    with VmProfileRefusals():
+        await VmProfiles().assign_group(authority.org_id, group_id, body.profile_id)
     RequestAudit.of(request).add_detail(VmProfileAssignedAudit(vm_profile_id=body.profile_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -106,7 +113,8 @@ async def assign_group(
 async def assign_app(
     request: Request, app_id: str, body: AssignVmProfile, authority: OrgAuthority = Depends(require_org_authority)
 ) -> Response:
-    await VmProfiles().assign_app(authority.org_id, app_id, body.profile_id)
+    with VmProfileRefusals():
+        await VmProfiles().assign_app(authority.org_id, app_id, body.profile_id)
     RequestAudit.of(request).set_target(target_type='app', target_id=app_id)
     RequestAudit.of(request).add_detail(VmProfileAssignedAudit(vm_profile_id=body.profile_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -140,7 +148,7 @@ async def approve_request(
     authority: OrgAuthority = Depends(require_org_authority),
 ) -> VmProfileRequestRecord:
     """The version read becomes a profile; an app's is given to the app. 409 if it changed since."""
-    with VmProfileRequestRefusals():
+    with VmProfileRequestRefusals(), VmProfileRefusals():
         record = await VmProfileRequests().approve(authority, request_id=request_id, version=body.version)
     _audit_decision(request, record)
     return record

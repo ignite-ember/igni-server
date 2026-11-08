@@ -7,7 +7,9 @@ from app.db.sql.models.producer_volume import ProducerVolumeSize
 from app.db.sql.models.vm_profile import VmProfile
 from app.db.sql.schemas.producer_feed import ProducerKey, ProducerState
 from app.db.sql.vm_profiles import VmProfilesDB
-from app.services.cloud.vm_profiles import ProfileVersion, VmCaps, VmProfiles
+from app.services.cloud.vm_caps import VmCaps
+from app.services.cloud.vm_profile_versions import ProfileVersion
+from app.services.cloud.vm_profiles import VmProfiles
 from app.services.cloud.volume_sizes import VolumeSizes
 
 

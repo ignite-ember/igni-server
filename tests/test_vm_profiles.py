@@ -13,7 +13,8 @@ import pytest
 
 from app.api.base_v1.schema.vm_profiles import PlatformVmCapsBody, VmProfileSettings
 from app.config import CloudVmConfig, settings
-from app.services.cloud.vm_profiles import VmCaps, VmDefaults
+from app.services.cloud.vm_caps import VmCaps
+from app.services.cloud.vm_defaults import VmDefaults
 from tests.cloud_world import CloudOrg, make_super_admin, platform
 
 pytestmark = pytest.mark.anyio
