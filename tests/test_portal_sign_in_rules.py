@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
+from fastapi import HTTPException
 import pytest
 
 from app.api.base_v1.schema.portal.authorize import Authorize
@@ -17,6 +18,7 @@ from app.services.identity.portal_sign_in import (
     PortalSignIn,
     RedirectNotRegistered,
 )
+from app.services.identity.sign_in_refusals import SignInRefusals
 
 REDIRECT_URI = 'https://codeindex.example.com/cb?tenant=acme'
 CHALLENGE = 'c' * 43
@@ -100,3 +102,25 @@ async def test_the_code_is_bound_to_the_choice_and_appended_to_the_redirect():
 async def test_each_rule_refuses(sign_in, request_, refusal):
     with pytest.raises(refusal):
         await sign_in().authorize(ACCOUNT, request_)
+
+
+@pytest.mark.parametrize(
+    ('refusal', 'status_code', 'detail'),
+    [
+        (ClientNotApproved(), 404, 'This application is not approved here'),
+        (RedirectNotRegistered(), 400, 'This redirect address was not registered by the application'),
+        (ChallengeMethodRefused(), 400, 'Only S256 code challenges are accepted'),
+        (NotAnOrganisationMember(), 403, 'Not a member of this organisation'),
+    ],
+)
+def test_each_refusal_is_the_portals_answer(refusal, status_code, detail):
+    """`SignInRefusals` gives the status and the words the authorize page has always shown."""
+    with pytest.raises(HTTPException) as raised, SignInRefusals():
+        raise refusal
+
+    assert (raised.value.status_code, raised.value.detail) == (status_code, detail)
+
+
+def test_anything_else_passes_through_the_refusals():
+    with pytest.raises(RuntimeError, match='redis is down'), SignInRefusals():
+        raise RuntimeError('redis is down')
