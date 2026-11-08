@@ -21,11 +21,13 @@ from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import ProgrammingError, TimeoutError as PoolTimeout
 from sqlalchemy.pool import NullPool
 
 from alembic import command
 
+from app.config import settings
+from app.db.sql import SQLAlchemySessionManager
 from app.db.sql.advisory_locks import AdvisoryLockDB
 from app.db.sql.models.tenant import ACTIVE, DETACHED, Tenant
 from app.db.sql.organizations import OrganizationDB
@@ -72,6 +74,22 @@ def _revision(database: str) -> str:
 def _head() -> str:
     config = TenantMigrator().alembic_config(TenantNames().template())
     return str(ScriptDirectory.from_config(config).get_current_head())
+
+
+@pytest.fixture
+def tiny_pool(monkeypatch):
+    """One connection per database, no overflow, half a second of patience.
+
+    The engines are cached per loop, so the registry is cleared before
+    (for this size to take effect) and after (so the next test does not
+    inherit it).
+    """
+    monkeypatch.setattr(settings, 'db_pool_size', 1)
+    monkeypatch.setattr(settings, 'db_max_overflow', 0)
+    monkeypatch.setattr(settings, 'db_pool_timeout', 0.5)
+    SQLAlchemySessionManager._engines.clear()
+    yield
+    SQLAlchemySessionManager._engines.clear()
 
 
 class TestRouting:
@@ -175,7 +193,8 @@ class _WatchingMigrator(TenantMigrator):
 
     async def prepare(self, database: str) -> None:
         free = await asyncio.to_thread(TestTheProvisioningLock._another_process_can_take, TENANT_LOCK)
-        self.seen = (free, AdvisoryLockDB().engine.pool.checkedout())  # type: ignore[attr-defined]
+        holder = await asyncio.to_thread(TestTheProvisioningLock._holder_state, TENANT_LOCK)
+        self.seen = (free, holder, AdvisoryLockDB().engine.pool.checkedout())  # type: ignore[attr-defined]
         await super().prepare(database)
 
 
@@ -204,15 +223,40 @@ class TestWhatProvisioningLeavesBehind:
         # Nothing was taken by the failure: the next attempt gets the first number.
         assert await TenantRegistryDB().number_of(org_id) == 1
 
-    async def test_the_lock_is_held_on_a_shared_pool_connection_while_the_database_is_made(self):
-        """One pooled connection, the one that holds the lock, for the whole
-        create-and-migrate; no thread with a connection of its own."""
+    async def test_the_lock_is_held_outside_the_shared_pool_while_the_database_is_made(self):
+        """The lock's own connection, not a pool slot, for the whole
+        create-and-migrate — and not left idle in the transaction that
+        read the next number."""
         migrator = _WatchingMigrator()
 
         await _registry(migrator=migrator).database_of(str(uuid.uuid4()))
 
-        assert migrator.seen == (False, 1)
+        assert migrator.seen == (False, 'idle', 0)
         assert TestTheProvisioningLock._another_process_can_take(TENANT_LOCK)
+
+    async def test_waiting_for_the_lock_leaves_the_pool_to_everybody_else(self, tiny_pool):
+        """Another process is making a database; two new organisations here
+        wait for it. Before, each waiter sat on a pool slot for as long as it
+        waited — a whole alembic run — and the request beside them timed out."""
+        other_process = create_engine(TEST_DB_URL_SYNC, poolclass=NullPool)
+        held = other_process.connect()
+        held.execute(text('SELECT pg_advisory_lock(:k)'), {'k': TENANT_LOCK})
+        held.commit()
+        try:
+            waiting = [asyncio.create_task(TenantRegistryDB().database_of(str(uuid.uuid4()))) for _ in range(2)]
+            await asyncio.sleep(0.5)
+
+            async with SQLAlchemySessionManager().session_scope() as session:
+                assert (await session.execute(text('SELECT 1'))).scalar_one() == 1
+            assert not any(task.done() for task in waiting)
+        finally:
+            held.execute(text('SELECT pg_advisory_unlock(:k)'), {'k': TENANT_LOCK})
+            held.close()
+            other_process.dispose()
+
+        made = await asyncio.gather(*waiting)
+        names = TenantNames()
+        assert sorted(made) == [names.name(1), names.name(2)]
 
     async def test_an_organisation_deleted_while_waiting_for_the_lock_is_refused(self):
         org_id = str(uuid.uuid4())
@@ -450,6 +494,102 @@ class TestASessionOpensItsOwnOrganisationsDatabase:
                 pass
 
 
+def _trail_routes(database: str) -> list[str]:
+    engine = create_engine(TenantNames().sync_url(database), poolclass=NullPool)
+    try:
+        with engine.connect() as conn:
+            return [str(r) for r in conn.execute(text('SELECT route FROM audit_events ORDER BY route')).scalars()]
+    finally:
+        engine.dispose()
+
+
+def _connections_to(database: str) -> int:
+    engine = create_engine(TEST_DB_URL_SYNC, poolclass=NullPool)
+    try:
+        with engine.connect() as conn:
+            return int(
+                conn.execute(
+                    text('SELECT count(*) FROM pg_stat_activity WHERE datname = :d AND pid <> pg_backend_pid()'),
+                    {'d': database},
+                ).scalar_one()
+            )
+    finally:
+        engine.dispose()
+
+
+_WRITE = (
+    'INSERT INTO audit_events (id, occurred_at, method, route, status_code, outcome) '
+    "VALUES (:i, now(), 'POST', :r, 200, 'success')"
+)
+
+
+class TestAnOrganisationsSessionIsTheManagersScope:
+    """`TenantSessions` hands the organisation's database to the session manager's
+    own scope, so an organisation's session commits, rolls back, runs out of
+    connections and is closed exactly as the shared plane's is."""
+
+    async def test_what_the_block_wrote_is_kept_when_it_ends_and_dropped_when_it_fails(self):
+        org_id = str(uuid.uuid4())
+
+        async with TenantSessions().session_scope(org_id) as session:
+            await session.execute(text(_WRITE), {'i': str(uuid.uuid4()), 'r': '/kept'})
+        with pytest.raises(RuntimeError):
+            async with TenantSessions().session_scope(org_id) as session:
+                await session.execute(text(_WRITE), {'i': str(uuid.uuid4()), 'r': '/dropped'})
+                raise RuntimeError('the request failed after writing')
+
+        assert _trail_routes(TenantNames().name(1)) == ['/kept']
+
+    async def test_running_out_of_an_organisation_s_connections_is_counted_and_said(self, tiny_pool, caplog):
+        from app.monitoring import DB_POOL_TIMEOUTS
+
+        org_id = str(uuid.uuid4())
+        await TenantRegistryDB().database_of(org_id)
+        before = DB_POOL_TIMEOUTS._value.get()
+
+        async def query():
+            async with TenantSessions().session_scope(org_id) as session:
+                await session.execute(text('SELECT pg_sleep(1.5)'))
+
+        with caplog.at_level(logging.ERROR, logger='app.db.sql'):
+            results = await asyncio.gather(query(), query(), return_exceptions=True)
+
+        failures = [r for r in results if isinstance(r, PoolTimeout)]
+        assert len(failures) == 1, results
+        assert DB_POOL_TIMEOUTS._value.get() == before + 1
+        assert [r.getMessage() for r in caplog.records if r.name == 'app.db.sql'] == [
+            'Database pool exhausted: no connection within 0.5s (ceiling 1). '
+            'Raise DB_POOL_SIZE/DB_MAX_OVERFLOW, or reduce concurrency in front of it.'
+        ]
+
+    async def test_each_database_s_pool_says_it_is_ready_and_which_it_is(self, caplog):
+        org_id = str(uuid.uuid4())
+        await TenantRegistryDB().database_of(org_id)
+        ceiling = settings.db_pool_size + settings.db_max_overflow
+
+        with caplog.at_level(logging.INFO, logger='app.db.sql'):
+            async with TenantSessions().session_scope(org_id):
+                pass
+
+        assert f'Database pool ready for {TenantNames().name(1)}: size={settings.db_pool_size} ' in caplog.text
+        assert f'(ceiling {ceiling} concurrent queries)' in caplog.text
+
+    async def test_disposing_closes_every_organisation_s_connections_too(self):
+        org_id = str(uuid.uuid4())
+        async with TenantSessions().session_scope(org_id) as session:
+            await session.execute(text('SELECT 1'))
+        database = TenantNames().name(1)
+        assert _connections_to(database) == 1
+
+        await SQLAlchemySessionManager.dispose_all()
+
+        for _ in range(20):
+            if _connections_to(database) == 0:
+                break
+            await asyncio.sleep(0.1)
+        assert _connections_to(database) == 0
+
+
 class TestWhichOrganisationsAPersonReaches:
     """What `OrganizationDB` answers for data that starts from a person, not an organisation.
 
@@ -498,6 +638,23 @@ class TestWhichOrganisationsAPersonReaches:
 
 class TestTheProvisioningLock:
     """`AdvisoryLockDB.holding`, which `TenantRegistryDB` provisions under."""
+
+    @staticmethod
+    def _holder_state(key: int) -> str | None:
+        """What the connection holding this lock is doing, as Postgres reports it."""
+        engine = create_engine(TEST_DB_URL_SYNC, poolclass=NullPool)
+        try:
+            with engine.connect() as conn:
+                found = conn.execute(
+                    text(
+                        'SELECT a.state FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid '
+                        "WHERE l.locktype = 'advisory' AND l.granted AND l.classid = :hi AND l.objid = :lo"
+                    ),
+                    {'hi': key >> 32, 'lo': key & 0xFFFFFFFF},
+                ).scalar_one_or_none()
+                return None if found is None else str(found)
+        finally:
+            engine.dispose()
 
     @staticmethod
     def _another_process_can_take(key: int) -> bool:

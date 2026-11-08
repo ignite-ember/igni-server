@@ -22,11 +22,12 @@ A crash between 2 and 4 leaves an unregistered database under the next
 number. The next attempt takes that same number, finds the database
 there, migrates it and registers it.
 
-The lock is held on one pooled connection, and the registry is read and
-written on that same connection, so the process holding the lock never
-waits for a second pool slot while others wait on the lock. The read is
-committed before the database is made, so that connection is not left
-idle in a transaction for the length of an alembic run.
+The lock is held on a connection of its own, outside the shared pool,
+and the registry is read and written on that same connection, so neither
+the process holding the lock nor any process waiting for it takes a pool
+slot from the requests around it. The read is committed before the
+database is made, so that connection is not left idle in a transaction
+for the length of an alembic run.
 
 Creating databases needs the `CREATEDB` privilege for the service's
 Postgres role. An organisation is deleted by detaching it: its database

@@ -15,8 +15,11 @@ from contextlib import asynccontextmanager
 import logging
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
+from sqlalchemy.pool import NullPool
 
+from app.config import settings
 from app.db.sql import SQLAlchemySessionManager
 from app.utils.singleton import SingletonMeta
 
@@ -57,25 +60,38 @@ class AdvisoryLockDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
     async def holding(self, key: int) -> AsyncIterator[AsyncConnection]:
         """Wait for the lock, hold it for the block, and yield the connection holding it.
 
+        The connection is one of its own, outside the shared pool, as the
+        provisioning lock's always was. Waiting on ``pg_advisory_lock``
+        can last a whole create-and-migrate, and a pooled connection
+        would hold a pool slot for every waiter all that time: a few
+        organisations provisioning at once would use up the pool and fail
+        unrelated requests with a pool timeout. Outside the pool, waiting
+        costs nobody else anything, and closing the connection really
+        closes it, so a lock whose unlock failed dies with it rather than
+        going back to the pool still held.
+
         Unlike :meth:`try_acquire`, the connection is local to this call
         rather than kept in the shared ``_held`` map, so two coroutines
         waiting on one key in one process cannot clobber each other's
         connection. The caller may run its own queries on the yielded
-        connection — and should, so that holding the lock never needs a
-        second pool slot — but must leave it with no open transaction.
+        connection, but must leave it with no open transaction.
         """
-        connection = await self.engine.connect()
+        engine = create_async_engine(make_url(settings.postgres_url), poolclass=NullPool)
         try:
-            await connection.execute(text('SELECT pg_advisory_lock(:k)'), {'k': key})
-            await connection.commit()
+            connection = await engine.connect()
             try:
-                yield connection
-            finally:
-                await connection.rollback()
-                await connection.execute(text('SELECT pg_advisory_unlock(:k)'), {'k': key})
+                await connection.execute(text('SELECT pg_advisory_lock(:k)'), {'k': key})
                 await connection.commit()
+                try:
+                    yield connection
+                finally:
+                    await connection.rollback()
+                    await connection.execute(text('SELECT pg_advisory_unlock(:k)'), {'k': key})
+                    await connection.commit()
+            finally:
+                await connection.close()
         finally:
-            await connection.close()
+            await engine.dispose()
 
     async def release(self, key: int) -> bool:
         """Give the lock back. False if this process did not hold it.
