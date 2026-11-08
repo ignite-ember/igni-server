@@ -188,6 +188,107 @@ class TestReadingOne:
         assert await GroupsDB().get_group_by_name(org_id, name='Default') is None
 
 
+class TestListing:
+    async def test_a_page_says_where_it_starts_how_long_it_is_and_how_many_there_are(self, client, admin):
+        """Oldest first, the Default group made by the first look; `total` counts every group, not the page."""
+        headers, _ = admin
+        await client.get('/portal/groups', headers=headers)
+        for name in ('Legal', 'Sales', 'Ops'):
+            await _group(client, headers, name)
+
+        resp = await client.get('/portal/groups', params={'offset': 1, 'limit': 2}, headers=headers)
+
+        assert resp.status_code == 200
+        page = resp.json()
+        assert (page['total'], page['offset'], page['limit']) == (4, 1, 2)
+        assert [g['name'] for g in page['groups']] == ['Legal', 'Sales']
+
+    async def test_each_group_on_a_page_carries_its_own_counts(self, client, admin, db):
+        """Disabled entries count: the number is what the group holds, not what it serves."""
+        headers, org_id = admin
+        legal = await _group(client, headers, 'Legal')
+        sales = await _group(client, headers, 'Sales')
+        await client.post(f'/portal/groups/{legal}/members', json={'user_id': 'admin-1'}, headers=headers)
+        off = await _post_entry(
+            client, headers, sales, kind='settings', entry_name='off', content='{}', content_type='json'
+        )
+        off_id = next(e['id'] for e in off.json()['entries'] if e['entry_name'] == 'off')
+        await client.patch(f'/portal/groups/{sales}/entries/{off_id}', json={'enabled': False}, headers=headers)
+        await _post_entry(client, headers, sales)
+
+        groups = {g['name']: g for g in (await client.get('/portal/groups', headers=headers)).json()['groups']}
+
+        assert (groups['Legal']['member_count'], groups['Legal']['entry_count']) == (1, 0)
+        assert (groups['Sales']['member_count'], groups['Sales']['entry_count']) == (0, 2)
+
+
+class TestAModelOnTheGroup:
+    @pytest.fixture
+    def serving(self, monkeypatch):
+        """What the chat pool answers to, settable per test."""
+        served: list[str] = ['lora-legal']
+
+        async def _served(self):
+            return [(name, 'http://gpu-01:8000/v1') for name in served]
+
+        monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _served)
+        return served
+
+    async def test_a_new_group_with_a_model_nothing_serves_is_refused(self, client, admin, serving):
+        headers, org_id = admin
+
+        resp = await client.post(
+            '/portal/groups', json={'name': 'Legal', 'default_model': 'lora-lgeal'}, headers=headers
+        )
+
+        assert (resp.status_code, resp.json()['detail']) == (
+            409,
+            "No inference node serves 'lora-lgeal'. Available: lora-legal.",
+        )
+        assert await GroupsDB().get_group_by_name(org_id, name='Legal') is None
+
+    async def test_a_taken_name_is_reported_before_an_unserved_model(self, client, admin, serving):
+        headers, _ = admin
+        await _group(client, headers, 'Legal')
+
+        resp = await client.post(
+            '/portal/groups', json={'name': 'Legal', 'default_model': 'lora-lgeal'}, headers=headers
+        )
+
+        assert (resp.status_code, resp.json()['detail']) == (
+            409,
+            "A group named 'Legal' already exists in this organization.",
+        )
+
+    async def test_a_copy_keeps_its_sources_model_even_once_nothing_serves_it(self, client, admin, serving):
+        """The model was checked when it was set; copying a group is not setting it again."""
+        headers, org_id = admin
+        resp = await client.post(
+            '/portal/groups', json={'name': 'Legal', 'default_model': 'lora-legal'}, headers=headers
+        )
+        assert resp.status_code == 201, resp.text
+        serving.clear()
+
+        copy = await client.post(f'/portal/groups/{resp.json()["id"]}/copy', json={'name': 'Briefs'}, headers=headers)
+
+        assert copy.status_code == 201, copy.text
+        assert copy.json()['default_model'] == 'lora-legal'
+        stored = await GroupsDB().get_group(org_id, group_id=copy.json()['id'])
+        assert stored is not None and stored.default_model == 'lora-legal'
+
+    async def test_a_copy_onto_a_taken_name_says_so(self, client, admin, serving):
+        headers, _ = admin
+        legal = await _group(client, headers, 'Legal')
+        await _group(client, headers, 'Briefs')
+
+        resp = await client.post(f'/portal/groups/{legal}/copy', json={'name': 'Briefs'}, headers=headers)
+
+        assert (resp.status_code, resp.json()['detail']) == (
+            409,
+            "A group named 'Briefs' already exists in this organization.",
+        )
+
+
 class TestDeleting:
     async def test_the_default_group_is_made_first_when_nobody_has_asked_for_it(self, client, admin):
         """Its people have to go somewhere; deleting is not refused for want of a Default group."""

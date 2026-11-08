@@ -264,6 +264,69 @@ class TestTheServiceListsAPage:
         }
 
 
+class _Steps:
+    """What a service asked of its collaborators, in order."""
+
+    def __init__(self) -> None:
+        self.taken: list[str] = []
+
+
+class _Access:
+    def __init__(self, group: OrgGroup) -> None:
+        self._group = group
+
+    async def in_org(self, *, org_id: str, group_id: str) -> OrgGroup:
+        return self._group
+
+
+class _OrderedGroups(_Groups):
+    def __init__(self, steps: _Steps, tallies: dict[str, GroupTally]) -> None:
+        super().__init__([], tallies)
+        self._steps = steps
+
+    async def tallies(self, org_id: str, *, group_ids: list[str]) -> dict[str, GroupTally]:
+        self._steps.taken.append('count')
+        return await super().tallies(org_id, group_ids=group_ids)
+
+
+class _OrderedDefaultGroup(_DefaultGroup):
+    def __init__(self, steps: _Steps) -> None:
+        super().__init__()
+        self._steps = steps
+
+    async def place_everyone(self, org_id: str, *, by_user_id: str) -> None:
+        self._steps.taken.append('place')
+        await super().place_everyone(org_id, by_user_id=by_user_id)
+
+
+class TestTheServiceReadsOne:
+    async def test_the_default_group_is_counted_after_its_people_are_placed(self):
+        steps = _Steps()
+        default = _stored('g-1', 'Default', is_default=True)
+        groups = _OrderedGroups(steps, {'g-1': GroupTally(member_count=3, entry_count=5)})
+        placement = _OrderedDefaultGroup(steps)
+        service = GroupsService(groups=groups, access=_Access(default), default_group=placement, served=object())
+
+        read = await service.get_group(org_id='org-1', group_id='g-1', by_user_id='admin-1')
+
+        assert steps.taken == ['place', 'count']
+        assert placement.placed == [('org-1', 'admin-1')]
+        assert groups.tally_calls == [['g-1']]
+        assert read == OrgGroupDetail.of(default, GroupTally(member_count=3, entry_count=5))
+
+    async def test_another_group_is_counted_and_nobody_is_placed(self):
+        steps = _Steps()
+        legal = _stored('g-2', 'Legal')
+        groups = _OrderedGroups(steps, {'g-2': GroupTally(member_count=1)})
+        placement = _OrderedDefaultGroup(steps)
+        service = GroupsService(groups=groups, access=_Access(legal), default_group=placement, served=object())
+
+        read = await service.get_group(org_id='org-1', group_id='g-2', by_user_id='admin-1')
+
+        assert steps.taken == ['count']
+        assert (read.member_count, read.entry_count) == (1, 0)
+
+
 class TestARequestBecomesSettings:
     def test_a_group_nobody_counted_shows_zeros(self):
         detail = OrgGroupDetail.of(_stored('g-1', 'Legal'))
