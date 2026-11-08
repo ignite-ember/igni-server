@@ -22,7 +22,7 @@ from app.db.sql.tenant_registry import TenantRegistryDB
 from app.db.sql.user import UserDB
 from app.services.cloud.producer_feed import ProducerFeed
 from app.services.identity.account_refusals import AccountRefusals
-from app.services.identity.organisation_deletions import OrganisationDeletions
+from app.services.identity.organisation_deletion_wake import DeletionWake, ProcessDeletionWake
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ class UserService:
         deletions: AccountDeletionDB | None = None,
         tenants: TenantRegistryDB | None = None,
         group_erasure: GroupPersonErasureDB | None = None,
+        deletion_wake: DeletionWake | None = None,
     ) -> None:
         self._user_db = users or UserDB()
         self._org_db = orgs or OrganizationDB()
@@ -54,6 +55,7 @@ class UserService:
         self._deletions = deletions or AccountDeletionDB()
         self._tenants = tenants or TenantRegistryDB()
         self._group_erasure = group_erasure or GroupPersonErasureDB()
+        self._deletion_wake = deletion_wake or ProcessDeletionWake()
 
     async def get_me(self, current_user: PortalAccount) -> UserMeResponse:
         """Return the current user's profile with org context."""
@@ -180,7 +182,7 @@ class UserService:
                 detail='You are the only super admin. Make somebody else one before deleting your account.',
             ) from exc
         if delete_org_ids:
-            OrganisationDeletions.nudge()
+            self._deletion_wake.nudge()
         logger.info('Account deleted: %s', current_user.user_id)
 
     async def _clear_from_organisations(self, *, user_id: str, deleted: list[str], left: list[str]) -> None:

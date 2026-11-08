@@ -8,8 +8,6 @@ renames or deletes it. Each refusal is a typed error from `org_errors`, or from 
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from app.api.base_v1.schema.portal.organizations import CreateOrgResponse, DeploymentOrg, OrgDomains
 from app.api.base_v1.schema.portal.user import OrgSummary, PortalAccount
 from app.db.sql.models.organization import Organization
@@ -18,7 +16,7 @@ from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
 from app.db.sql.tenant_registry import TenantRegistryDB
 from app.services.cloud.producer_feed import ProducerFeed
-from app.services.identity.organisation_deletions import OrganisationDeletions
+from app.services.identity.organisation_deletion_wake import DeletionWake, ProcessDeletionWake
 from app.services.portal.company_domain import CompanyDomain
 from app.services.portal.org_errors import NotOrgAdmin, OrgNotFound, OrgStillHasMembers
 from app.services.portal.org_slug import OrgSlug
@@ -36,14 +34,14 @@ class OrganisationsService:
         team: TeamDB | None = None,
         tenants: TenantRegistryDB | None = None,
         feed: ProducerFeed | None = None,
-        nudge_deletions: Callable[[], None] = OrganisationDeletions.nudge,
+        deletion_wake: DeletionWake | None = None,
     ) -> None:
         self._orgs = orgs or OrganizationDB()
         self._domains = domains or OrgDomainDB()
         self._team = team or TeamDB()
         self._tenants = tenants or TenantRegistryDB()
         self._feed = feed or ProducerFeed()
-        self._nudge_deletions = nudge_deletions
+        self._deletion_wake = deletion_wake or ProcessDeletionWake()
 
     async def list_for(self, account: PortalAccount) -> list[OrgSummary]:
         """Every organisation the account belongs to, with its role in each."""
@@ -119,7 +117,7 @@ class OrganisationsService:
             await self._orgs.delete(org_id)
             await self._tenants.detach(org_id)
         # Tell the services now rather than at the next round.
-        self._nudge_deletions()
+        self._deletion_wake.nudge()
 
     async def _require_admin(self, org_id: str, account: PortalAccount) -> None:
         """Admin of *org_id*, or `NotOrgAdmin`. One copy, because a duplicated authorization rule drifts."""
