@@ -21,6 +21,7 @@ would do:
 
 import pytest
 
+from app.db.sql.schemas.tenancy import OrganisationDetached
 from app.services.portal.group_model_service import GroupModelService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
@@ -122,6 +123,24 @@ class TestRefusingWhatNothingServes:
         )
         assert resp.status_code in (200, 201)
 
+    async def test_a_pool_that_cannot_be_read_does_not_block_the_edit(self, client, admin, monkeypatch):
+        """However the pool fails to answer — not only a socket or Redis —
+        the served check is skipped and the group is still saved. Group
+        administration must not require the GPUs to be up."""
+
+        async def _broken(self):
+            raise RuntimeError('the node registry returned something unreadable')
+
+        monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _broken)
+        headers, _ = admin
+
+        resp = await client.post(
+            '/portal/groups', json={'name': 'Legal', 'default_model': 'legal-reviewer'}, headers=headers
+        )
+
+        assert resp.status_code == 201, resp.text
+        assert resp.json()['default_model'] == 'legal-reviewer'
+
 
 class TestRouting:
     async def test_a_member_gets_their_group_model(self, client, admin, db):
@@ -164,6 +183,17 @@ class TestRouting:
         # The *active* variant is what `model_for_user` calls (B8);
         # patching the other left this passing without exercising anything.
         monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
+        assert await GroupModelService().model_for_user('anyone') is None
+
+    async def test_any_failed_lookup_costs_the_default_not_the_request(self, monkeypatch):
+        """Not only a database that is down: an organisation detached
+        between the membership read and the group read fails the lookup
+        with an error of its own, and chat still goes ahead."""
+
+        async def _detached(self, *args, **kwargs):
+            raise OrganisationDetached('org-gone')
+
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _detached)
         assert await GroupModelService().model_for_user('anyone') is None
 
 

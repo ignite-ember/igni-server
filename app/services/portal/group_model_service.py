@@ -4,17 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy.exc import SQLAlchemyError
-
 from app.db.sql.group_summaries import GroupSummariesDB
 from app.db.sql.groups import GroupsDB
 
 logger = logging.getLogger(__name__)
-
-#: What a group lookup fails with when its databases cannot answer: the
-#: driver's errors as SQLAlchemy wraps them, and a socket that never
-#: connected (`OSError`, which includes `ConnectionError`).
-_LOOKUP_FAILED = (OSError, SQLAlchemyError)
 
 
 class GroupModelService:
@@ -29,8 +22,10 @@ class GroupModelService:
 
         Consulted on every chat request that does not name a model, so it
         must be cheap and must never fail one: a lookup that cannot be
-        answered falls back to the deployment default, which would have
-        served the request perfectly well.
+        answered, for whatever reason, falls back to the deployment
+        default, which would have served the request perfectly well. Not
+        only a database that is down — an organisation detached meanwhile
+        or anything else unforeseen costs the pin, never the request.
 
         Active membership only, like the pack: a group's pinned model is
         the organisation's configuration, and somebody who has been
@@ -42,7 +37,7 @@ class GroupModelService:
             if not summary:
                 return None
             group = await self._groups.get_group(summary.org_id, group_id=summary.id)
-        except _LOOKUP_FAILED as exc:
+        except Exception as exc:  # noqa: BLE001 — routing must survive a group lookup, however it fails
             logger.warning('Could not resolve a group model for %s: %s', user_id, exc)
             return None
         return str(group.default_model) if group and group.default_model else None

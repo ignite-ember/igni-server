@@ -4,21 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from redis.exceptions import RedisError
-
-from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.pool_manager import PoolManager
 from app.services.portal.group_errors import ModelNotServed
 
 logger = logging.getLogger(__name__)
-
-#: What reading the pool's model list can fail with when the pool itself
-#: is unreachable or unconfigured: the provider refusing its config
-#: (`BackendConfigError`, which includes "nothing configured yet"), the
-#: config file or a socket failing (`OSError`, `ConnectionError` among
-#: them), and Redis. The registry, pinned-node and drain reads already
-#: degrade on their own.
-_POOL_UNREACHABLE = (BackendConfigError, OSError, RedisError)
 
 
 class ServedModels:
@@ -38,14 +27,15 @@ class ServedModels:
         an exotic one.
 
         Group administration must not require the GPUs to be up: when the
-        pool cannot be read, the check is skipped with a warning.
+        pool cannot be read, whatever the reason, the check is skipped
+        with a warning.
         """
         if not model:
             return
 
         try:
             pairs = await self._pools.get_pool().list_available_models()
-        except _POOL_UNREACHABLE as exc:
+        except Exception as exc:  # noqa: BLE001 — a broken pool must not block group edits
             logger.warning('Could not check model %r against the pool: %s', model, exc)
             return
 
