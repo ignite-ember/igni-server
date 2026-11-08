@@ -396,6 +396,29 @@ class TestTheNonStreamingPathRetriesABadAnswer:
         assert answer.id == 'done'
         assert len(pool.acquired) == 2, pool.acquired
 
+    async def test_a_200_whose_choice_has_no_message_moves_on_too(self):
+        """JSON, but not a completion: a choice with no `message`. It
+        used to escape as a `KeyError` and a bare 500 blaming this server;
+        it is an unreadable answer like any other, and another node is
+        asked."""
+        pool = SpyPool()
+        broken = json.dumps({'id': 'half', 'choices': [{'index': 0, 'finish_reason': 'stop'}]})
+        upstream = _scripted((200, broken), (200, json.dumps(_COMPLETION)))
+
+        answer = await completions(upstream).complete(context(pool))
+
+        assert answer.id == 'done'
+        assert len(pool.acquired) == 2, pool.acquired
+
+    async def test_a_200_with_no_completion_anywhere_is_a_502_that_says_so(self):
+        broken = json.dumps({'id': 'half', 'choices': [{'index': 0}]})
+
+        with pytest.raises(UpstreamRefusal) as caught:
+            await completions(_scripted((200, broken))).complete(context(SpyPool()))
+
+        assert caught.value.status_code == 502
+        assert caught.value.detail == 'The inference node returned an unreadable response.'
+
     async def test_every_node_bad_reports_the_failure_not_the_search(self):
         """The last word is what went wrong, not that we stopped looking."""
         with pytest.raises(UpstreamRefusal) as caught:
