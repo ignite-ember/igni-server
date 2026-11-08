@@ -5,14 +5,17 @@ which providers a deployment chooses to offer, so each test gives
 Google credentials, which is what a deployment offering it would do.
 """
 
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.db.sql.models.org_membership import OrgMembership
+from app.db.sql.user import UserDB
 from app.services.auth.google_sign_in import GoogleSignIn
 from app.services.auth.oauth_errors import OAuthExchangeFailed, ProviderAnswerRefused
 from app.services.auth.oauth_models import OAuthProvider, OAuthUserInfo
@@ -191,6 +194,27 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
 
         assert 'returnTo' not in parse_qs(urlparse(resp.headers['location']).query)
 
+    @pytest.mark.parametrize('sent', ['/auth/google?returnTo=/docs', '/auth/google?returnTo=', '/auth/google'])
+    async def test_the_state_carries_returnto_through_the_provider_and_an_empty_one_is_none(
+        self, client, monkeypatch, sent
+    ):
+        """Through the real state store: what `/auth/google` was given
+        comes back to the callback, and an empty `returnTo` is the same
+        as none rather than an empty one handed to the portal."""
+
+        async def fake_exchange(provider, code):
+            return OAuthUserInfo(email='round-trip@test.com', first_name='R', last_name='T', provider='google')
+
+        monkeypatch.setattr(OAuthService, 'exchange_and_get_user', staticmethod(fake_exchange))
+
+        started = await client.get(sent, follow_redirects=False)
+        state = parse_qs(urlparse(started.headers['location']).query)['state'][0]
+        resp = await client.get(f'/auth/google/callback?code=c&state={state}', follow_redirects=False)
+
+        query = parse_qs(urlparse(resp.headers['location']).query)
+        assert query.get('returnTo') == (['/docs'] if sent.endswith('/docs') else None)
+        assert query['code']
+
     async def test_a_new_person_is_welcomed_when_mail_can_go(self, client, monkeypatch):
         sent: list[str] = []
 
@@ -237,12 +261,13 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
 
         assert resp.status_code == 302
+        assert resp.headers['location'].startswith(f'{settings.oauth_frontend_base_url}/login?')
         location = urlparse(resp.headers['location'])
         assert location.path == '/login'
         query = parse_qs(location.query)
-        assert query['error'][0].startswith('OAuth sign-in failed')
+        assert query['error'] == ['OAuth sign-in failed. Please try again.']
         assert 'code' not in query
-        assert 'invalid_grant' not in query['error'][0], 'the upstream reason reached the URL'
+        assert 'invalid_grant' not in resp.headers['location'], 'the upstream reason reached the URL'
 
     async def test_a_failure_after_the_exchange_sends_the_person_back_to_sign_in_too(self, client, monkeypatch):
         """The provider answered, and then something on this side broke —
@@ -265,6 +290,104 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         assert query['error'] == ['OAuth sign-in failed. Please try again.']
         assert 'code' not in query
         assert '10.0.0.9' not in resp.headers['location'], 'the internal reason reached the URL'
+
+    async def test_google_refusing_the_code_sends_the_person_back_without_its_words(self, client, monkeypatch):
+        """The whole exchange, against a Google that answers 400. Its
+        error body is what `str(e)` used to put in the URL."""
+        _google_answers(monkeypatch, token=httpx.Response(400, json={'error': 'invalid_grant'}))
+
+        async def fake_validate_state(_state, shape):
+            return shape()
+
+        monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(fake_validate_state))
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        query = parse_qs(urlparse(resp.headers['location']).query)
+        assert query == {'error': ['OAuth sign-in failed. Please try again.']}
+        assert 'invalid_grant' not in resp.headers['location']
+        assert 'googleapis' not in resp.headers['location']
+
+    async def test_an_exchange_that_breaks_in_an_unforeseen_way_sends_the_person_back_too(self, client, monkeypatch):
+        """Not every failure in the exchange is one the service names.
+        Whatever it is, the person lands on the sign-in form."""
+
+        async def fake_validate_state(_state, shape):
+            return shape()
+
+        async def surprising_exchange(self, code: str) -> OAuthUserInfo:
+            raise AttributeError("'list' object has no attribute 'get'")
+
+        monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(fake_validate_state))
+        monkeypatch.setattr(GoogleSignIn, 'exchange', surprising_exchange)
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        location = urlparse(resp.headers['location'])
+        assert location.path == '/login'
+        assert parse_qs(location.query) == {'error': ['OAuth sign-in failed. Please try again.']}
+        assert 'attribute' not in resp.headers['location']
+
+    async def test_a_database_failure_while_signing_in_sends_the_person_back_to_sign_in(self, client, monkeypatch):
+        _signs_in_as(monkeypatch, 'db-down@test.com')
+
+        async def database_down(self, email: str):
+            raise OperationalError('SELECT users', {}, Exception('could not connect to 10.0.0.5:5432'))
+
+        monkeypatch.setattr(UserDB, 'get_by_email', database_down)
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        location = urlparse(resp.headers['location'])
+        assert location.path == '/login'
+        assert parse_qs(location.query) == {'error': ['OAuth sign-in failed. Please try again.']}
+        assert '10.0.0.5' not in resp.headers['location'], 'the internal reason reached the URL'
+
+    async def test_a_new_person_is_still_welcomed_when_the_handoff_store_then_fails(self, client, monkeypatch):
+        """The account exists by then, so the welcome is owed; the
+        person signs in again from the form they are sent back to."""
+        sent: list[str] = []
+
+        async def send_welcome(self, *, to_email: str, name: str | None = None) -> None:
+            sent.append(to_email)
+
+        async def store_down(self, token: str) -> str:
+            raise ConnectionError('redis refused the connection')
+
+        monkeypatch.setattr(EmailDelivery, 'enabled', property(lambda self: True))
+        monkeypatch.setattr(EmailService, 'send_welcome', send_welcome)
+        monkeypatch.setattr('app.db.redis.auth_handoff.AuthHandoffDB.issue', store_down)
+        _signs_in_as(monkeypatch, 'welcomed-anyway@test.com')
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        assert urlparse(resp.headers['location']).path == '/login'
+        assert sent == ['welcomed-anyway@test.com']
+
+    async def test_with_no_relay_a_new_person_is_only_noted(self, client, monkeypatch, caplog):
+        _signs_in_as(monkeypatch, 'no-relay@test.com')
+
+        with caplog.at_level('INFO', logger='app.services.email.delivery'):
+            resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 302
+        assert 'code' in parse_qs(urlparse(resp.headers['location']).query)
+        assert 'skipped the welcome message to no-relay@test.com' in caplog.text
+
+    async def test_somebody_who_left_is_refused_with_their_reason_not_redirected(self, client, db, monkeypatch):
+        user = await create_user(db, email='departed@test.com')
+        user.deactivated_at = datetime.now(timezone.utc)
+        await db.commit()
+        _signs_in_as(monkeypatch, 'departed@test.com')
+
+        resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
+
+        assert resp.status_code == 403
+        assert resp.json() == {'detail': 'This account has been deactivated.'}
 
     async def test_a_transport_failure_is_an_exchange_failure(self):
         """What the callback catches is named by the service, so the
@@ -297,6 +420,100 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
 
         assert resp.status_code == 400
         assert 'Could not retrieve email' in resp.text
+
+
+def _google_answers(
+    monkeypatch,
+    *,
+    token: httpx.Response,
+    profile: httpx.Response | None = None,
+) -> None:
+    """Google's token and userinfo endpoints, answering as given.
+
+    Only a client built without a transport of its own is pointed at
+    them, so the test client keeps talking to the app."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.host == 'oauth2.googleapis.com':
+            return token
+        return profile or httpx.Response(200, json={'email': 'someone@test.com'})
+
+    real_client = httpx.AsyncClient
+
+    def client_for_google(*args, **kwargs):
+        kwargs.setdefault('transport', httpx.MockTransport(answer))
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, 'AsyncClient', client_for_google)
+
+
+class TestWhatTheExchangeMakesOfGooglesAnswer:
+    """`exchange_and_get_user` against Google's real client code: what
+    it names an exchange failure, and what it lets through."""
+
+    async def _exchange(self) -> OAuthUserInfo:
+        return await OAuthService().exchange_and_get_user(OAuthProvider.GOOGLE, 'a-code')
+
+    async def test_a_code_google_refuses_is_an_exchange_failure(self, monkeypatch):
+        _google_answers(monkeypatch, token=httpx.Response(400, json={'error': 'invalid_grant'}))
+
+        with pytest.raises(OAuthExchangeFailed) as caught:
+            await self._exchange()
+
+        assert isinstance(caught.value.__cause__, httpx.HTTPStatusError)
+        assert str(caught.value) == 'The google sign-in exchange failed'
+        assert 'invalid_grant' not in str(caught.value)
+
+    async def test_an_answer_that_is_not_json_is_an_exchange_failure(self, monkeypatch):
+        _google_answers(monkeypatch, token=httpx.Response(200, text='<html>Bad Gateway</html>'))
+
+        with pytest.raises(OAuthExchangeFailed) as caught:
+            await self._exchange()
+
+        assert isinstance(caught.value.__cause__, ValueError)
+
+    async def test_json_that_is_not_an_object_is_an_exchange_failure(self, monkeypatch):
+        _google_answers(monkeypatch, token=httpx.Response(200, json=['access_token', 'a-token']))
+
+        with pytest.raises(OAuthExchangeFailed):
+            await self._exchange()
+
+    async def test_a_profile_google_will_not_give_is_an_exchange_failure(self, monkeypatch):
+        _google_answers(
+            monkeypatch,
+            token=httpx.Response(200, json={'access_token': 'a-token'}),
+            profile=httpx.Response(401, json={'error': 'invalid_token'}),
+        )
+
+        with pytest.raises(OAuthExchangeFailed):
+            await self._exchange()
+
+    async def test_an_answer_without_a_token_is_refused_not_failed(self, monkeypatch):
+        _google_answers(monkeypatch, token=httpx.Response(200, json={'token_type': 'Bearer'}))
+
+        with pytest.raises(ProviderAnswerRefused, match='^Google OAuth failed$'):
+            await self._exchange()
+
+    async def test_a_profile_without_an_address_is_refused_not_failed(self, monkeypatch):
+        _google_answers(
+            monkeypatch,
+            token=httpx.Response(200, json={'access_token': 'a-token'}),
+            profile=httpx.Response(200, json={'given_name': 'Ada'}),
+        )
+
+        with pytest.raises(ProviderAnswerRefused, match='^Could not retrieve email from Google$'):
+            await self._exchange()
+
+    async def test_a_good_answer_names_the_person(self, monkeypatch):
+        _google_answers(
+            monkeypatch,
+            token=httpx.Response(200, json={'access_token': 'a-token'}),
+            profile=httpx.Response(200, json={'email': 'ada@test.com', 'given_name': 'Ada', 'family_name': 'L'}),
+        )
+
+        assert await self._exchange() == OAuthUserInfo(
+            email='ada@test.com', first_name='Ada', last_name='L', provider='google'
+        )
 
 
 class TestFindOrCreateUser:
