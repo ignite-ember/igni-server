@@ -38,7 +38,13 @@ from app.config import settings
 from app.db.sql.models.audit_event import AuditEvent
 from app.db.sql.models.org_group import OrgGroup
 from app.db.sql.models.org_group_member import OrgGroupMember
-from app.db.sql.schemas.subject_access import AccountRow, AuditEventRow, GroupMembershipRow, ModelUsageRow
+from app.db.sql.schemas.subject_access import (
+    AccountRow,
+    AuditEventRow,
+    GroupMembershipRow,
+    ModelUsageRow,
+    OrganisationOwnedRow,
+)
 from app.db.sql.schemas.subject_access_created import ThingsTheyCreated
 from app.db.sql.subject_access import ACTIVITY_LIMIT, SubjectAccessDB
 from app.db.sql.subject_access_created import CreatedThingsDB
@@ -1274,6 +1280,88 @@ class TestWhatTheServicesAreAsked:
         await SubjectAccessService(db=_FakeDB(), services=services).export(email='someone@example.com', org_id='org-1')
 
         assert services.asked == [('u-1', 'org-1')]
+
+
+class _CrowdedDB(_FakeDB):
+    """An account whose uncapped reads come back as large as a capped one."""
+
+    async def group_memberships(self, org_id: str, *, user_id: str) -> list[GroupMembershipRow]:
+        return [GroupMembershipRow(group_id='g', added_by_user_id=None, added_at=_AT)] * (ACTIVITY_LIMIT + 1)
+
+    async def organisations_owned(self, user_id: str) -> list[OrganisationOwnedRow]:
+        return [OrganisationOwnedRow(id='o', slug='o', display_name='O', created_at=_AT)] * (ACTIVITY_LIMIT + 1)
+
+
+class _AskedDB(_NoAccountDB):
+    """No account; notes how the sign-in attempts were asked for."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts_asked: list[tuple[str | None, str]] = []
+
+    async def authentication_attempts(self, org_id: str | None, *, email: str) -> list[AuditEventRow]:
+        self.attempts_asked.append((org_id, email))
+        return []
+
+
+class TestWhichSectionsAnExportReads:
+    """An organisation's records are read only for an account and an
+    organisation; the deployment's only for an account; the sign-in
+    attempts always."""
+
+    async def test_an_account_without_an_organisation_gets_only_the_deployments_sections(self):
+        report = await SubjectAccessService(db=_FakeDB(), services=_RecordingServices()).export(
+            email='someone@example.com'
+        )
+
+        assert list(report.model_dump(mode='json')['sections']) == [
+            'account',
+            'deployment_role',
+            'organisation_memberships',
+            'organisations_owned',
+            'authentication_attempts',
+        ]
+        assert list(report.truncated or {}) == ['authentication_attempts']
+
+    async def test_an_account_in_an_organisation_gets_every_section(self):
+        report = await SubjectAccessService(
+            db=_FakeDB(), services=_RecordingServices(sections={'CodeIndex': {}})
+        ).export(email='someone@example.com', org_id='org-1')
+
+        assert report.sections.present_count() == 10
+        assert report.sections.note is None
+        assert report.sections.things_they_created == ThingsTheyCreated.model_validate(
+            {name: [] for name in ThingsTheyCreated.model_fields}
+        )
+
+    async def test_services_that_hold_nothing_leave_no_services_section(self):
+        report = await SubjectAccessService(db=_FakeDB(), services=_RecordingServices()).export(
+            email='someone@example.com', org_id='org-1'
+        )
+
+        assert 'services' not in report.model_dump(mode='json')['sections']
+        assert 'things_they_created' in report.model_dump(mode='json')['sections']
+
+    async def test_no_account_in_an_organisation_still_reads_its_sign_in_attempts(self):
+        """By the address asked about, in that organisation's trail too —
+        which is where a stranger's attempts to sign in would be."""
+        db = _AskedDB()
+
+        report = await SubjectAccessService(db=db, services=_RecordingServices()).export(
+            email='Someone@Example.com', org_id='org-1'
+        )
+
+        assert db.attempts_asked == [('org-1', 'Someone@Example.com')]
+        assert report.scope == _ORGANISATION_SCOPE.format(org_id='org-1')
+
+    async def test_large_uncapped_sections_are_not_called_truncated(self):
+        report = await SubjectAccessService(db=_CrowdedDB(), services=_RecordingServices()).export(
+            email='someone@example.com', org_id='org-1'
+        )
+
+        assert report.sections.group_memberships is not None
+        assert len(report.sections.group_memberships) == ACTIVITY_LIMIT + 1
+        assert set(report.truncated or {}) == {'model_usage', 'own_activity', 'authentication_attempts'}
 
 
 class TestTheSectionsCountAndOrder:
