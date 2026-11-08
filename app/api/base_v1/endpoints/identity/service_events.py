@@ -31,6 +31,7 @@ from app.api.base_v1.schema.producer_events import (
 )
 from app.middlewares.request_audit import RequestAudit
 from app.security.service_caller import require_service, ServiceCaller
+from app.services.cloud.producer_event_refusals import ProducerEventRefusals
 from app.services.cloud.producer_events import ProducerEvents
 from app.services.cloud.service_attachments import ServiceAttachments
 
@@ -62,7 +63,8 @@ async def _deliver(request: Request, body: DeliverItemRequest, caller: ServiceCa
             attachments=body.attachments,
         )
     )
-    accepted = await ProducerEvents().deliver(caller, body)
+    with ProducerEventRefusals():
+        accepted = await ProducerEvents().deliver(caller, body)
     RequestAudit.of(request).set_target(target_type='producer_event', target_id=accepted.event_id)
     return accepted
 
@@ -88,9 +90,10 @@ async def upload_attachment(
                 detail=f'An attachment may be at most {MAX_ATTACHMENT_BYTES} bytes',
             )
     RequestAudit.of(request).add_detail(AttachmentUploadedAudit(filename=filename, size=len(content)))
-    stored = await ServiceAttachments().upload(
-        caller, filename=filename, content_type=request.headers.get('content-type'), content=bytes(content)
-    )
+    with ProducerEventRefusals():
+        stored = await ServiceAttachments().upload(
+            caller, filename=filename, content_type=request.headers.get('content-type'), content=bytes(content)
+        )
     RequestAudit.of(request).set_target(target_type='service_attachment', target_id=stored.attachment_id)
     return stored
 
@@ -108,4 +111,5 @@ async def sent(
 
 @router.get('/service-events/{event_id}', response_model=EventStatus, tags=['Directory'])
 async def event_status(event_id: str, caller: ServiceCaller = Depends(require_service)) -> EventStatus:
-    return await ProducerEvents().status(caller, event_id)
+    with ProducerEventRefusals():
+        return await ProducerEvents().status(caller, event_id)

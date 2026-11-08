@@ -218,6 +218,10 @@ class AckEvents(BaseModel):
     #: Of `event_ids`, the events no handler took: `not_handled`, not `delivered`.
     not_handled: list[NotHandledEvent] = Field(default_factory=list, max_length=500)
 
+    def not_handled_reasons(self) -> dict[str, str]:
+        """Each event no handler took, by its id, with the reason."""
+        return {missed.event_id: missed.reason for missed in self.not_handled}
+
 
 class FailEvents(BaseModel):
     event_ids: list[str] = Field(min_length=1, max_length=500)
