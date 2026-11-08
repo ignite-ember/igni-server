@@ -16,7 +16,6 @@ export interface OrgContextValue {
   activeOrg: OrgSummary | null
   organizations: OrgSummary[]
   switchOrg: (orgId: string) => void
-  setOrganizations: (orgs: OrgSummary[], currentOrgId?: string) => void
 }
 
 export const OrgContext = createContext<OrgContextValue | undefined>(undefined)

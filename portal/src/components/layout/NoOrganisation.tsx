@@ -7,7 +7,7 @@ import { Link as RouterLink } from 'react-router-dom'
 import client from '../../api/client'
 import { refusalOf } from '../../api/refusal'
 import type { DeploymentOrg } from '../../types'
-import { CreateOrgDialog } from './Sidebar'
+import { CreateOrgDialog } from '../org/CreateOrgDialog'
 
 /**
  * The bootstrap account's way onto its company's domain: prove an

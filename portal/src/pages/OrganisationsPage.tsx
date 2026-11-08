@@ -5,7 +5,7 @@ import { Blankslate } from '@primer/react/experimental'
 import { OrganizationIcon, XIcon } from '@primer/octicons-react'
 import client from '../api/client'
 import { refusalOf } from '../api/refusal'
-import { CreateOrgDialog } from '../components/layout/Sidebar'
+import { CreateOrgDialog } from '../components/org/CreateOrgDialog'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import type { DeploymentOrg, UserMe } from '../types'
 

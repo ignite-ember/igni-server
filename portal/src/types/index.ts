@@ -145,6 +145,29 @@ export interface OrgSummary {
   role: 'admin' | 'member'
 }
 
+/** POST /portal/organizations. */
+export interface CreateOrgRequest {
+  display_name: string
+  domains: string[]
+}
+
+/** POST and PATCH /portal/organizations: the organisation as it now is. */
+export interface OrgChanged {
+  id: string
+  slug: string
+  display_name: string
+}
+
+/** DELETE /portal/organizations/{id}. */
+export interface DeleteOrgResponse {
+  message: string
+}
+
+/** DELETE /portal/me. */
+export interface DeleteAccountResponse {
+  message: string
+}
+
 export interface UserMe {
   user_id: string
   email: string | null

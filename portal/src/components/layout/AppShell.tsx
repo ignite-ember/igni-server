@@ -1,8 +1,6 @@
 import { Outlet, useLocation } from 'react-router-dom'
 import { PageLayout } from '@primer/react'
-import { useQuery } from '@tanstack/react-query'
-import client from '../../api/client'
-import type { UserMe } from '../../types'
+import { useMe } from '../../hooks/useMe'
 import { DeploymentBanner } from './DeploymentBanner'
 import { LicenceBanner } from './LicenceBanner'
 import { NoOrganisation } from './NoOrganisation'
@@ -14,11 +12,7 @@ const WITHOUT_AN_ORGANISATION = ['/settings', '/super-admins', '/organisations']
 
 export function AppShell() {
   const location = useLocation()
-  const meQuery = useQuery({
-    queryKey: ['me'],
-    queryFn: () => client.get<UserMe>('/portal/me').then((r) => r.data),
-    staleTime: 5 * 60 * 1000,
-  })
+  const meQuery = useMe()
   const inNoOrganisation = meQuery.data !== undefined && (meQuery.data.organizations ?? []).length === 0
   const pageNeedsOne = !WITHOUT_AN_ORGANISATION.some((path) => location.pathname.startsWith(path))
 
