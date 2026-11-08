@@ -21,6 +21,7 @@ would do:
 
 import pytest
 
+from app.db.sql.schemas.group import GroupSummary
 from app.db.sql.schemas.tenancy import OrganisationDetached
 from app.services.portal.group_model_service import GroupModelService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
@@ -195,6 +196,51 @@ class TestRouting:
 
         monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _detached)
         assert await GroupModelService().model_for_user('anyone') is None
+
+    async def test_a_deactivated_member_falls_back_to_the_default(self, client, admin, db):
+        """The pin is the organisation's configuration, and somebody whose
+        membership no longer holds is served like any other stranger."""
+        headers, org_id = admin
+        await create_user(db, user_id='lawyer-1', email='lawyer@test.com')
+        await add_member(db, org_id=org_id, user_id='lawyer-1', role='member')
+        group = (
+            await client.post(
+                '/portal/groups', json={'name': 'Legal', 'default_model': 'legal-reviewer'}, headers=headers
+            )
+        ).json()
+        await client.post(f'/portal/groups/{group["id"]}/members', json={'user_id': 'lawyer-1'}, headers=headers)
+
+        await add_member(db, org_id=org_id, user_id='lawyer-1', role='member', status='deactivated')
+
+        assert await GroupModelService().model_for_user('lawyer-1') is None
+
+    async def test_a_group_that_is_gone_changes_nothing(self):
+        """The membership names a group the store no longer has."""
+
+        class _Summaries:
+            async def get_active_user_group_summary(self, user_id):
+                return GroupSummary(id='g-gone', org_id='org-1', name='Gone')
+
+        class _Groups:
+            async def get_group(self, org_id, *, group_id):
+                return None
+
+        service = GroupModelService(groups=_Groups(), summaries=_Summaries())  # type: ignore[arg-type]
+        assert await service.model_for_user('anyone') is None
+
+    async def test_a_group_read_that_fails_costs_the_default_too(self, monkeypatch):
+        """The second lookup, not only the first, is covered."""
+
+        class _Summaries:
+            async def get_active_user_group_summary(self, user_id):
+                return GroupSummary(id='g-legal', org_id='org-1', name='Legal')
+
+        class _Groups:
+            async def get_group(self, org_id, *, group_id):
+                raise OrganisationDetached('org-1')
+
+        service = GroupModelService(groups=_Groups(), summaries=_Summaries())  # type: ignore[arg-type]
+        assert await service.model_for_user('anyone') is None
 
 
 class TestPerAgentModel:

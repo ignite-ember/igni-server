@@ -176,6 +176,33 @@ class TestAModelNothingServes:
 
         assert str(refused.value).endswith('Available: none.')
 
+    async def test_an_adapter_is_served_by_its_own_name_not_its_node(self):
+        """Only the name each node answers to counts; its address is not a model."""
+        served = ServedModels(pools=_Pools(_Pool(['legal-reviewer'])))  # type: ignore[arg-type]
+
+        with pytest.raises(ModelNotServed):
+            await served.refuse_unserved('http://gpu-01:8000/v1')
+
+    @pytest.mark.parametrize('failure', [ConnectionError('redis is down'), RuntimeError('unreadable'), KeyError('x')])
+    async def test_a_pool_that_cannot_be_read_skips_the_check_and_says_so(self, failure, caplog):
+        """Group administration must not need the GPUs up, however the pool fails."""
+
+        class _Broken:
+            async def list_available_models(self) -> list[tuple[str, str]]:
+                raise failure
+
+        with caplog.at_level('WARNING', logger='app.services.portal.served_models'):
+            await ServedModels(pools=_Pools(_Broken())).refuse_unserved('legal-reviewer')  # type: ignore[arg-type]
+
+        assert "Could not check model 'legal-reviewer' against the pool" in caplog.text
+
+    async def test_a_pool_that_cannot_be_found_skips_the_check_too(self):
+        class _NoPool:
+            def get_pool(self) -> _Pool:
+                raise RuntimeError('no chat pool is configured')
+
+        await ServedModels(pools=_NoPool()).refuse_unserved('legal-reviewer')  # type: ignore[arg-type]
+
 
 class TestWhatThePortalIsTold:
     """`GroupRefusals`: the status and the sentence the portal has always shown for each refusal."""
@@ -202,6 +229,13 @@ class TestWhatThePortalIsTold:
             (ModelNotServed('m', {'a'}), 409, "No inference node serves 'm'. Available: a."),
             (KindTakesNoModel('skills'), 422, "Only agents can name a model; 'skills' cannot."),
             (UnsupportedPluginSource(), 422, str(UnsupportedPluginSource())),
+            (UnknownEntryKind({'skills', 'agents'}), 422, 'Invalid kind. Must be one of: agents, skills'),
+            (UnknownContentType({'json', 'markdown'}), 422, 'Invalid content_type. Must be one of: json, markdown'),
+            (
+                KindNeedsContentType('skills', 'markdown'),
+                422,
+                "Kind 'skills' requires content_type 'markdown' (igni's loader only parses that format).",
+            ),
         ],
     )
     def test_each_refusal(self, refusal, status_code, detail):
@@ -213,6 +247,14 @@ class TestWhatThePortalIsTold:
     def test_anything_unanticipated_passes_through(self):
         with pytest.raises(ValueError, match='unrelated'), GroupRefusals():
             raise ValueError('unrelated')
+
+    def test_an_answer_already_decided_passes_through_unchanged(self):
+        decided = HTTPException(status_code=403, detail='Admins only')
+
+        with pytest.raises(HTTPException) as raised, GroupRefusals():
+            raise decided
+
+        assert raised.value is decided
 
     def test_nothing_raised_is_nothing_answered(self):
         with GroupRefusals():
