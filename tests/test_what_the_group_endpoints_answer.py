@@ -270,14 +270,20 @@ class TestAnEntryThatBreaksARule:
             "No inference node serves 'legal-reveiwer'. Available: igni-1.0-27b.",
         )
 
-    async def test_a_model_on_an_entry_that_does_not_exist_is_not_found(self, client, admin):
+    @pytest.mark.parametrize('model', ['legal-reviewer', ''])
+    async def test_a_model_on_an_entry_that_does_not_exist_is_not_found(self, client, admin, monkeypatch, model):
         """Without a row there is no kind to check the model against; the store's 404 answers."""
+
+        async def _served(self):
+            return [('legal-reviewer', 'http://gpu-01:8000/v1')]
+
+        monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _served)
         headers, _ = admin
         legal = await _group(client, headers, 'Legal')
 
         resp = await client.patch(
             f'/portal/groups/{legal}/entries/00000000-0000-0000-0000-000000000000',
-            json={'model': ''},
+            json={'model': model},
             headers=headers,
         )
 
