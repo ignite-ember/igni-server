@@ -115,7 +115,7 @@ class TestTheServerRefusesThem:
         import re
 
         from app.api.base_v1.schema.portal.group_entries import ENTRY_NAME_PATTERN
-        from app.services.portal.default_group import seed_entries
+        from app.services.portal.default_group_seed import BUNDLED_SEED
 
-        for _kind, name, _content in seed_entries():
-            assert re.match(ENTRY_NAME_PATTERN, name), f'seeded entry name rejected: {name!r}'
+        for entry in BUNDLED_SEED.entries():
+            assert re.match(ENTRY_NAME_PATTERN, entry.entry_name), f'seeded entry name rejected: {entry.entry_name!r}'

@@ -17,7 +17,8 @@ What matters, in order of how much damage getting it wrong would do:
 
 import pytest
 
-from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup, seed_entries
+from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup
+from app.services.portal.default_group_seed import BUNDLED_SEED
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -34,45 +35,45 @@ class TestTheSeed:
         """Read from the repo, not from an installed igni: the
         server has no reason to depend on the CLI package and a
         deployment may not have it at all."""
-        assert len(seed_entries()) > 0
+        assert len(BUNDLED_SEED.entries()) > 0
 
     def test_it_is_not_only_agents(self):
         """A Default group holding agents alone told people that agents
         are all igni comes with. It ships skills, hooks, and the scripts
         those hooks run — igni itself ships nothing, so a hook without
         its script would reference a file nobody sent."""
-        kinds = {kind for kind, _name, _content in seed_entries()}
+        kinds = {entry.kind for entry in BUNDLED_SEED.entries()}
         assert kinds == {'agents', 'skills', 'hooks', 'scripts'}
 
     def test_the_entry_name_is_the_file_stem(self):
         """igni writes ``<entry_name>.md``, so a group carrying its own
         ``<agent>.<variant>.md`` still reaches the loader as a variant."""
-        names = {name for kind, name, _ in seed_entries() if kind == 'agents'}
+        names = {entry.entry_name for entry in BUNDLED_SEED.entries() if entry.kind == 'agents'}
         assert 'architect' in names
 
     def test_no_extensions_agents_are_seeded(self):
         """An extension's versions of igni's agents ship with the extension
         and apply while it runs. Seeding them here would hand every
         organisation an extension's prompts whether or not it has it."""
-        names = {name for kind, name, _ in seed_entries() if kind == 'agents'}
+        names = {entry.entry_name for entry in BUNDLED_SEED.entries() if entry.kind == 'agents'}
         assert not [name for name in names if '.' in name], names
 
     def test_the_skills_behind_the_slash_commands_are_there(self):
-        names = {name for kind, name, _ in seed_entries() if kind == 'skills'}
+        names = {entry.entry_name for entry in BUNDLED_SEED.entries() if entry.kind == 'skills'}
         assert {'commit', 'pr', 'test-plan'} <= names
 
     def test_agents_and_skills_are_markdown_with_frontmatter(self):
-        for kind, name, content in seed_entries():
-            if kind in ('agents', 'skills'):
-                assert content.startswith('---'), f'{name} has no frontmatter and will not load'
+        for entry in BUNDLED_SEED.entries():
+            if entry.kind in ('agents', 'skills'):
+                assert entry.content.startswith('---'), f'{entry.entry_name} has no frontmatter and will not load'
 
     def test_each_hook_names_the_event_it_fires_on(self):
         """A declaration without one is dropped by the client's cache."""
         import json
 
-        for kind, name, content in seed_entries():
-            if kind == 'hooks':
-                assert json.loads(content)['event'], name
+        for entry in BUNDLED_SEED.entries():
+            if entry.kind == 'hooks':
+                assert json.loads(entry.content)['event'], entry.entry_name
 
 
 class TestJoiningIt:
@@ -88,7 +89,7 @@ class TestJoiningIt:
 
         pack = (await client.get('/portal/me/group/pack', headers=headers)).json()
         got = {(o['kind'], o['entry_name']) for o in pack['entries']}
-        assert got == {(kind, name) for kind, name, _ in seed_entries()}
+        assert got == {(entry.kind, entry.entry_name) for entry in BUNDLED_SEED.entries()}
 
     async def test_it_is_created_once(self, client, member):
         """A second one beside the group an admin has been editing would
@@ -149,7 +150,7 @@ class TestThroughThePack:
 
         assert pack is not None
         assert pack['group_name'] == DEFAULT_GROUP_NAME
-        assert len(pack['entries']) == len(seed_entries())
+        assert len(pack['entries']) == len(BUNDLED_SEED.entries())
 
     async def test_an_admin_edits_a_copy_of_it(self, client, member):
         """The point of the whole thing: what a team's assistant can do
@@ -313,7 +314,7 @@ class TestWhereAnAdminLooksForIt:
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
         default = next(g for g in groups if g['name'] == DEFAULT_GROUP_NAME)
 
-        assert default['entry_count'] == len(seed_entries())
+        assert default['entry_count'] == len(BUNDLED_SEED.entries())
 
     async def test_an_org_that_already_has_groups_gets_it_too(self, client, member):
         """The case that was broken: nobody here is ungrouped, so the

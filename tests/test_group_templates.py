@@ -13,7 +13,8 @@ it came from must not change under it afterwards.
 import pytest
 
 from app.db.sql.group_extensions import GroupExtensionsDB
-from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup, seed_entries
+from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup
+from app.services.portal.default_group_seed import BUNDLED_SEED
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -175,7 +176,9 @@ class TestTheStandardSet:
             )
         ).json()
 
-        assert await _entry_names(client, headers, legal['id']) == {name for _kind, name, _content in seed_entries()}
+        assert await _entry_names(client, headers, legal['id']) == {
+            entry.entry_name for entry in BUNDLED_SEED.entries()
+        }
 
     async def test_and_then_it_can_be_cut_down(self, client, admin):
         headers, _ = admin
@@ -294,7 +297,7 @@ class TestTheCopyAction:
         assert copy['is_default'] is False
         copied = (await client.get(f'/portal/groups/{copy["id"]}/entries', headers=headers)).json()['entries']
         assert sorted((e['kind'], e['entry_name']) for e in copied) == sorted(
-            (kind, name) for kind, name, _ in seed_entries()
+            (entry.kind, entry.entry_name) for entry in BUNDLED_SEED.entries()
         )
 
     async def test_a_taken_name_is_refused(self, client, admin):

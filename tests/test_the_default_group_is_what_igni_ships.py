@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.portal.default_group import seed_entries
+from app.services.portal.default_group_seed import BUNDLED_SEED
 
 _ROOT = Path(__file__).resolve().parents[1]
 #: The CLI checkout beside this one, where `make refresh-default-seed` reads.
@@ -23,7 +23,7 @@ _IGNI = _ROOT.parent / 'igni' / 'src' / 'ember_code'
 
 
 def _seeded(kind: str) -> dict[str, str]:
-    return {name: content for k, name, content in seed_entries() if k == kind}
+    return {entry.entry_name: entry.content for entry in BUNDLED_SEED.entries() if entry.kind == kind}
 
 
 def test_the_refresh_reads_the_igni_checkout():

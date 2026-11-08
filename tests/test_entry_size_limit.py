@@ -91,9 +91,9 @@ class TestTheCeilingItself:
         """Pinned against the seed rather than a number in a comment, so
         an entry that grows past the limit fails here rather than on
         somebody's deployment."""
-        from app.services.portal.default_group import seed_entries
+        from app.services.portal.default_group_seed import BUNDLED_SEED
 
-        largest = max(len(content) for _kind, _name, content in seed_entries())
+        largest = max(len(entry.content) for entry in BUNDLED_SEED.entries())
 
         assert largest < MAX_ENTRY_CONTENT_BYTES
         # And by a real margin, not by a byte.
