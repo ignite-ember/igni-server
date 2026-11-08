@@ -15,8 +15,10 @@ from types import SimpleNamespace
 from fastapi import BackgroundTasks, HTTPException
 import pytest
 
+from app.security.api_key_sessions import REFUSED as API_KEY_SESSION_REFUSED
 from app.services.auth.auth_emails import AuthEmails
 from app.services.auth.cli_tokens import CLITokens
+from app.services.auth.jwt_service import JWTService
 from app.services.auth.otp_service import CodeSendThrottled, OTPResult
 from tests.conftest import make_token
 
@@ -69,8 +71,8 @@ class _Codes:
     generate_signin_code = generate_password_reset_code = generate_address_code = send_sign_up_code = _issue
 
 
-def _emails(delivery: _Delivery, codes: _Codes) -> AuthEmails:
-    return AuthEmails(delivery=delivery, emails=_Mail(), otp=codes, auth=codes)  # type: ignore[arg-type]
+def _emails(delivery: _Delivery, codes: _Codes, mail: _Mail | None = None) -> AuthEmails:
+    return AuthEmails(delivery=delivery, emails=mail or _Mail(), otp=codes, auth=codes)  # type: ignore[arg-type]
 
 
 _SENDS = ['send_sign_in_code', 'send_sign_up_code', 'send_reset_password_code', 'send_company_address_code']
@@ -86,6 +88,23 @@ class TestEveryOutcomeAnswersAlike:
         assert message == _SENT
         assert [task.kwargs for task in bg.tasks] == [{'to_email': 'ada@acme.example', 'code': '123456'}]
         assert delivery.recorded == []
+
+    @pytest.mark.parametrize(
+        ('send', 'template'),
+        [
+            ('send_sign_in_code', 'send_otp_code'),
+            ('send_sign_up_code', 'send_sign_up_code'),
+            ('send_reset_password_code', 'send_password_reset_code'),
+            ('send_company_address_code', 'send_sign_up_code'),
+        ],
+    )
+    async def test_each_code_goes_out_in_its_own_email(self, send, template):
+        """A reset code in a sign-in email would tell the reader to sign in with it."""
+        bg, mail = BackgroundTasks(), _Mail()
+
+        await getattr(_emails(_Delivery(enabled=True), _Codes(), mail), send)(bg, 'ada@acme.example')
+
+        assert [task.func for task in bg.tasks] == [getattr(mail, template)]
 
     @pytest.mark.parametrize('send', _SENDS)
     async def test_throttled_and_suppressed_answer_as_a_sent_one_does_and_queue_nothing(self, send):
@@ -125,7 +144,9 @@ class TestTheWelcome:
 
         _emails(delivery, _Codes()).welcome(bg, email='ada@acme.example', name='Ada')
 
-        assert [task.kwargs for task in bg.tasks] == [{'to_email': 'ada@acme.example', 'name': 'Ada'}]
+        assert [(task.func.__name__, task.kwargs) for task in bg.tasks] == [
+            ('send_welcome', {'to_email': 'ada@acme.example', 'name': 'Ada'})
+        ]
 
     def test_without_a_relay_it_is_only_noted(self):
         bg, delivery = BackgroundTasks(), _Delivery(enabled=False)
@@ -137,7 +158,12 @@ class TestTheWelcome:
 
 
 class _Subjects:
+    def __init__(self, *, gone: bool = False) -> None:
+        self._gone = gone
+
     async def resolve_existing_user_id(self, token: str) -> str:
+        if self._gone:
+            raise HTTPException(401, detail='User not found')
         return 'u-1'
 
 
@@ -150,8 +176,11 @@ class _Team:
 
 
 class _Orgs:
-    async def get_by_id(self, org_id: str) -> object:
-        return SimpleNamespace(display_name='Acme')
+    def __init__(self, *, exists: bool = True) -> None:
+        self._exists = exists
+
+    async def get_by_id(self, org_id: str) -> object | None:
+        return SimpleNamespace(display_name='Acme') if self._exists else None
 
 
 class _Groups:
@@ -181,14 +210,21 @@ class _Users:
         self.signed_in.append(user_id)
 
 
-def _tokens(*, member: bool = True, jwt: _Jwt | None = None, users: _Users | None = None) -> CLITokens:
+def _tokens(
+    *,
+    member: bool = True,
+    org_exists: bool = True,
+    gone: bool = False,
+    jwt: _Jwt | None = None,
+    users: _Users | None = None,
+) -> CLITokens:
     return CLITokens(
         team_db=_Team(member=member),  # type: ignore[arg-type]
-        org_db=_Orgs(),  # type: ignore[arg-type]
+        org_db=_Orgs(exists=org_exists),  # type: ignore[arg-type]
         groups=_Groups(),  # type: ignore[arg-type]
         jwt=jwt or _Jwt(),  # type: ignore[arg-type]
         handoff=_Handoff(),  # type: ignore[arg-type]
-        subjects=_Subjects(),  # type: ignore[arg-type]
+        subjects=_Subjects(gone=gone),  # type: ignore[arg-type]
         users=users or _Users(),  # type: ignore[arg-type]
     )
 
@@ -210,4 +246,34 @@ class TestTheCLIToken:
             await _tokens(member=False, jwt=jwt, users=users).issue(token=make_token('u-1'), org_id='org-1')
 
         assert (refused.value.status_code, refused.value.detail) == (403, 'Not a member of this organization')
+        assert jwt.minted == [] and users.signed_in == []
+
+    async def test_an_organisation_with_no_row_gives_a_token_with_no_name(self):
+        jwt = _Jwt()
+
+        issued = await _tokens(org_exists=False, jwt=jwt).issue(token=make_token('u-1'), org_id='org-1')
+
+        assert issued.access_token == 'the-cli-token'
+        assert jwt.minted == [{'user_id': 'u-1', 'org_id': 'org-1', 'org_name': None, 'group': 'g-legal'}]
+
+    async def test_a_session_an_api_key_bought_is_refused_before_membership_is_asked(self):
+        """Not a member either, and still told about the key: 30 days are
+        not minted from 15 minutes whoever holds them (§22)."""
+        jwt, users = _Jwt(), _Users()
+        session = JWTService().create_token('u-1', api_key_id='key-1')
+
+        with pytest.raises(HTTPException) as refused:
+            await _tokens(member=False, jwt=jwt, users=users).issue(token=session, org_id='org-1')
+
+        assert (refused.value.status_code, refused.value.detail) == (403, API_KEY_SESSION_REFUSED)
+        assert jwt.minted == [] and users.signed_in == []
+
+    async def test_somebody_who_no_longer_exists_is_refused_first_even_on_a_key_session(self):
+        jwt, users = _Jwt(), _Users()
+        session = JWTService().create_token('u-1', api_key_id='key-1')
+
+        with pytest.raises(HTTPException) as refused:
+            await _tokens(gone=True, jwt=jwt, users=users).issue(token=session, org_id='org-1')
+
+        assert refused.value.status_code == 401
         assert jwt.minted == [] and users.signed_in == []
