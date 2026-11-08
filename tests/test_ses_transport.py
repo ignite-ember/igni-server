@@ -64,7 +64,9 @@ def _parts(message: EmailMessage) -> list[tuple[str, str]]:
 
 async def _deliver(transport: SesTransport, **service_kwargs) -> bool:
     service = EmailService(transport=transport, **service_kwargs)
-    return await service.send_email('dev@acme.test', 'Subject', '<p>Body</p>', 'plain')
+    return await service.send_email(
+        to_email='dev@acme.test', subject='Subject', html_body='<p>Body</p>', text_body='plain'
+    )
 
 
 class TestCredentials:
@@ -210,7 +212,7 @@ class TestParity:
 
         monkeypatch.setattr('app.services.email.transports.smtp.aiosmtplib.send', _smtp_send)
         await EmailService(transport=SmtpTransport(host='relay.test')).send_email(
-            'dev@acme.test', 'Subject', '<p>Body</p>', 'plain'
+            to_email='dev@acme.test', subject='Subject', html_body='<p>Body</p>', text_body='plain'
         )
 
         transport = SesTransport()
