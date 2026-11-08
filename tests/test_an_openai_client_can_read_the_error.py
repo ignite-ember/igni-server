@@ -43,7 +43,7 @@ from app.services.ai.schemas import (
     ModelNotAvailableError,
     NoBackendAvailableError,
 )
-from app.services.ai.upstream import UpstreamError, UpstreamFailure, UpstreamStale, UpstreamUnreadable
+from app.services.ai.upstream import RetryPolicy, UpstreamError, UpstreamFailure, UpstreamStale, UpstreamUnreadable
 from tests.chat_proxy import completions, context, drain, NO_BACKOFF, on_transport, SpyPool, streamer
 from tests.conftest import auth_header, create_org, create_user, make_token
 
@@ -444,3 +444,39 @@ class TestValidationIsLeftAlone:
 
         assert response.status_code == 422
         assert any(err['loc'][-1] == 'n' for err in response.json()['detail'])
+
+
+class TestHowManyNodesAndHowLong:
+    """The retry policy both paths consult: three attempts, a longer pause before each."""
+
+    def test_it_keeps_going_until_the_last_attempt(self):
+        policy = RetryPolicy()
+        failure = UpstreamError(503, b'')
+
+        assert [policy.gives_up(attempt=n, failure=failure) for n in (1, 2, 3)] == [False, False, True]
+
+    def test_it_stops_at_once_on_what_no_node_would_fix(self):
+        assert RetryPolicy().gives_up(attempt=1, failure=UpstreamError(400, b''))
+
+    def test_a_redirect_is_a_502_and_not_asked_again(self):
+        """Below 400 and not 200: neither the caller's fault nor one another node fixes."""
+        failure = UpstreamError(302, b'')
+
+        assert (failure.answer_status, failure.sentence, failure.worth_another_node) == (
+            502,
+            'The inference node returned 302.',
+            False,
+        )
+
+    async def test_each_pause_is_longer_than_the_last(self, monkeypatch):
+        pauses: list[float] = []
+
+        async def no_wait(seconds: float) -> None:
+            pauses.append(seconds)
+
+        monkeypatch.setattr('app.services.ai.upstream.asyncio.sleep', no_wait)
+
+        for attempt in (1, 2, 3):
+            await RetryPolicy(backoff=0.25).pause(attempt)
+
+        assert pauses == [0.25, 0.5, 0.75]
