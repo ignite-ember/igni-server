@@ -272,10 +272,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=v0.6.7
-          curl -sSfL -o /tmp/kubeconform.tar.gz \
-            "https://github.com/yannh/kubeconform/releases/download/${VERSION}/kubeconform-linux-amd64.tar.gz"
-          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform
-          sudo install -m 0755 /tmp/kubeconform /usr/local/bin/kubeconform
+          # Built from source through the Go module proxy, not downloaded
+          # from GitHub's release pages: those answered 504 for hours on
+          # 2026-11-08, and the module proxy's checksum database verifies
+          # the source, which the release download never did. Go 1.26 is in
+          # the runner image's tool cache.
+          GO="${GOROOT_1_26_X64:+${GOROOT_1_26_X64}/bin/}go"
+          GOBIN=/tmp/gobin "${GO}" install "github.com/yannh/kubeconform/cmd/kubeconform@${VERSION}"
+          sudo install -m 0755 /tmp/gobin/kubeconform /usr/local/bin/kubeconform
           kubeconform -v
 
       # `tests/test_an_offline_bundle_is_verified_before_import.py` signs
@@ -629,9 +633,15 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=v0.33.0
-          curl -sSfLo /tmp/kind \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${VERSION}/kind-linux-amd64"
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          # The runner image ships kind, and this is its version; downloaded
+          # only when the image moves on. GitHub's release downloads answer
+          # 504 for long stretches (hours on 2026-11-08), so not every run
+          # should depend on them.
+          if [ "$(kind version 2>/dev/null | awk '{print $2}')" != "${VERSION}" ]; then
+            curl -sSfL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/kind \
+              "https://github.com/kubernetes-sigs/kind/releases/download/${VERSION}/kind-linux-amd64"
+            sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          fi
           kind version
 
       - name: Install the chart, migrate, and ask the API

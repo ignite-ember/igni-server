@@ -5,6 +5,12 @@ own trail (no organisation) once per UTC day, with every module's state,
 so an auditor reading the trail sees when the customer was told and for
 how long. It runs in every replica; a Postgres advisory lock and a look
 at today's events keep it to one record a day.
+
+Every run also writes one info line naming the licence — its ID and the
+customer, or that none is installed — whether or not anything needs
+attention, so any day's logs say whose deployment they came from. The
+customer is an organisation's name from the signed licence, not a
+person, so it is not personal data (LG-5), and `install` already logs it.
 """
 
 from __future__ import annotations
@@ -49,6 +55,10 @@ class LicenceDailyAudit:
     async def run_once(self) -> bool:
         """Record today's event if one is due and none is there yet. True when this call wrote it."""
         notice = self._licence().notice()
+        if notice.licence_id is None:
+            logger.info('licence: no licence installed')
+        else:
+            logger.info('licence: %s, licensed to %s', notice.licence_id, notice.customer)
         if not notice.warnings:
             return False
         if not await self._locks.try_acquire(_LOCK_KEY):

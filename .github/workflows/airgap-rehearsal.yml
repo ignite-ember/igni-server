@@ -65,9 +65,15 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=v0.33.0
-          curl -sSfLo /tmp/kind \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${VERSION}/kind-linux-amd64"
-          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          # The runner image ships kind, and this is its version; downloaded
+          # only when the image moves on. GitHub's release downloads answer
+          # 504 for long stretches (hours on 2026-11-08), so not every run
+          # should depend on them.
+          if [ "$(kind version 2>/dev/null | awk '{print $2}')" != "${VERSION}" ]; then
+            curl -sSfL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/kind \
+              "https://github.com/kubernetes-sigs/kind/releases/download/${VERSION}/kind-linux-amd64"
+            sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends skopeo
           kind version

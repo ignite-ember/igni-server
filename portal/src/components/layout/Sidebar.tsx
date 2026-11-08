@@ -22,6 +22,7 @@ import {
   TerminalIcon,
   KeyAsteriskIcon,
   KeyIcon,
+  LawIcon,
 } from '@primer/octicons-react'
 
 import { useAuth } from '../../auth/useAuth'
@@ -29,6 +30,7 @@ import { useOrg } from '../../auth/useOrg'
 import client from '../../api/client'
 import { refusalOf } from '../../api/refusal'
 import type { UserMe } from '../../types'
+import { Licensee } from './Licensee'
 import { resourceItems } from './sidebarResources'
 import './Sidebar.css'
 
@@ -570,6 +572,12 @@ export function Sidebar() {
               </NavList.LeadingVisual>
               Cloud limits
             </NavList.Item>
+            <NavList.Item {...linkTo('licence')} aria-current={isCurrent('licence') ? 'page' : undefined}>
+              <NavList.LeadingVisual>
+                <LawIcon />
+              </NavList.LeadingVisual>
+              Licence
+            </NavList.Item>
           </NavList.Group>
         )}
 
@@ -586,6 +594,8 @@ export function Sidebar() {
           ))}
         </NavList.Group>
       </NavList>
+
+      <Licensee />
 
       {showCreateOrg && (
         <CreateOrgDialog
