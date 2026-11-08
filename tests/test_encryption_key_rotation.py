@@ -585,6 +585,30 @@ class TestTheReEncryptPass:
         assert rotate(apply=True)['rotated'] == 1
         assert _readable_under(KEY_B, _stored_ciphertexts()) == 1
 
+    async def test_a_registered_database_that_does_not_exist_is_counted_and_skipped(self, keys, capsys):
+        """A registry row whose database is gone — dropped by hand, or a
+        restore that brought back the shared plane alone. The pass goes on
+        with the others and counts it, so the operator sees it."""
+        from tools.rotate_secret_key import rotate
+
+        keys(KEY_A)
+        org = str(uuid.uuid4())
+        await _store_pickup(org, 'app-1')
+        _query(
+            _shared_url(),
+            'INSERT INTO tenants (org_id, number, database, state, created_at) '
+            "VALUES ('org-gone', 99, 'ember_test_t99', 'active', now()) RETURNING org_id",
+        )
+        keys(KEY_B, KEY_A)
+
+        counts = rotate(apply=True)
+
+        assert (counts['databases'], counts['missing'], counts['rotated']) == (2, 1, 1)
+        assert (
+            '  organisation org-gone (active): database ember_test_t99 is registered but does not exist; skipped'
+            in capsys.readouterr().out.splitlines()
+        )
+
     async def test_an_unreadable_row_fails_loudly_and_is_left_alone(self, keys, monkeypatch, capsys):
         """A row no configured key opens is a lost credential. The tool
         exits non-zero and says not to remove the old key, and does not
