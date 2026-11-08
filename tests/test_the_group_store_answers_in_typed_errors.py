@@ -303,6 +303,14 @@ class TestPartialEdits:
         assert cleared.model_fields_set == {'model'}
         assert cleared.model is None
 
+    def test_an_emptied_entry_is_written_empty_not_left_alone(self):
+        """Only `model` treats an empty string as a clear; empty content
+        is content, and an admin who blanks a file means it."""
+        emptied = UpdateEntryRequest(content='').to_patch()
+
+        assert emptied.model_fields_set == {'content'}
+        assert emptied.content == ''
+
     async def test_the_store_leaves_what_the_patch_does_not_name(self, org_id):
         group = await GroupsDB().create_group(
             org_id,

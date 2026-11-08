@@ -435,6 +435,26 @@ class TestPerAgentModel:
         assert resp.status_code == 422
         assert 'mcps' in resp.json()['detail']
 
+    async def test_nor_may_an_edit_give_one_to_anything_else(self, client, admin):
+        """The kind is the stored row's, since an edit does not resend it,
+        and the row is left as it was."""
+        headers, _ = admin
+        group_id = await self._group(client, headers)
+        created = await client.post(
+            f'/portal/groups/{group_id}/entries',
+            json={'kind': 'mcps', 'entry_name': 'filesystem', 'content': '{}', 'content_type': 'json'},
+            headers=headers,
+        )
+        entry_id = self._entry(created, name='filesystem')['id']
+
+        resp = await client.patch(
+            f'/portal/groups/{group_id}/entries/{entry_id}', json={'model': 'legal-reviewer'}, headers=headers
+        )
+
+        assert (resp.status_code, resp.json()['detail']) == (422, "Only agents can name a model; 'mcps' cannot.")
+        listed = await client.get(f'/portal/groups/{group_id}/entries', headers=headers)
+        assert self._entry(listed, name='filesystem')['model'] is None
+
     async def test_the_pack_carries_it(self, client, admin, db):
         """The client resolves per-agent routing, so the pack has to say
         both the agent's model and the group's fallback."""
