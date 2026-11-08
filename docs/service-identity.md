@@ -436,7 +436,7 @@ a whole prompt of its own, made of the named sections it lists, optionally
 `append` one at the end). An agent's YAML header is its `frontmatter`
 section. igni's prompts and their sections are listed in igni's
 `docs/prompt-targets.json` (copied here as
-`app/services/identity/prompt_targets.json`); an upload naming a section
+`app/services/identity/impact/prompt_targets.json`); an upload naming a section
 of igni's own prompts that this igni does not have is shown on the
 Services page (`unknown_targets`). A plugin's agent is not igni's to know,
 and is not checked.
@@ -487,7 +487,7 @@ with the overriding extension as `by`) and on the one whose override
 drops it (`review.drops_others`), and igni's extensions panel says so on
 every machine.
 
-**igni's own commands** (`app/services/identity/igni_commands.json`, a
+**igni's own commands** (`app/services/identity/impact/igni_commands.json`, a
 copy of igni's `docs/igni-commands.json`) are not anybody's: igni answers
 them before any extension, so an upload declaring one is refused with a
 400 naming it. A version stored before igni gained the command shows it
@@ -537,7 +537,7 @@ anybody; `review.switched_off` lists what it loses and why.
 there, with the reason shown in igni's extensions panel. A development
 install the order does not name ranks below every extension it does.
 
-The rule is implemented twice, here (`app/services/identity/impact.py`)
+The rule is implemented twice, here (`app/services/identity/impact/`)
 and in igni (`src/ember_code/extensions/impact.py`), and both run the
 cases in `tests/fixtures/extension_impact_cases.json`, which each
 repository carries.

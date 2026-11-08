@@ -16,7 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.security.producer import ProducerRef
-from app.services.identity.impact import ServiceGrant
+from app.services.identity.impact.grants import ServiceGrant
 
 #: The largest payload, as JSON.
 MAX_PAYLOAD_BYTES = 65536
@@ -115,9 +115,9 @@ class DeliverItemRequest(BaseModel):
                 raise ValueError(reason)
         return self
 
-    def needs(self) -> set[str]:
+    def needs(self) -> set[ServiceGrant]:
         """The grants this item needs beyond a plain event."""
-        needed = set()
+        needed: set[ServiceGrant] = set()
         if self.kind == 'message':
             needed.add(ServiceGrant.MESSAGES)
         if self.kind in ('chat', 'action') or self.thread is not None:

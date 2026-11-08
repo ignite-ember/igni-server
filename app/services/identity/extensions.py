@@ -34,7 +34,9 @@ from app.services.identity.extension_errors import ExtensionConflict, ExtensionR
 from app.services.identity.extension_grants import ExtensionGrants
 from app.services.identity.extension_publication import Publication
 from app.services.identity.grants_comparison import GrantsComparison
-from app.services.identity.impact import ExtensionImpact, IgniCommands, ImpactRefused
+from app.services.identity.impact.errors import ImpactRefused
+from app.services.identity.impact.extension_impact import ExtensionImpact
+from app.services.identity.impact.igni_catalogues import IgniCommands
 
 
 class ServiceExtensions:
@@ -68,7 +70,7 @@ class ServiceExtensions:
         except AssetRefused as exc:
             raise ExtensionRefused(str(exc)) from exc
         try:
-            impact = ExtensionImpact.of(raw)
+            impact = ExtensionImpact.of(manifest)
         except ImpactRefused as exc:
             raise ExtensionRefused(str(exc)) from exc
         igni_own = IgniCommands.igni().clashes(impact)

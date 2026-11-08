@@ -13,7 +13,7 @@ from enum import StrEnum
 from pydantic import BaseModel, computed_field, ConfigDict, Field
 
 from app.services.identity.extension_grants import ExtensionGrants, ToolAudience, WorkspaceLevel
-from app.services.identity.impact import ImpactEdit, ImpactOverride, ImpactTool
+from app.services.identity.impact.contributions import ImpactEdit, ImpactOverride, ImpactTool
 
 
 class GrantKind(StrEnum):

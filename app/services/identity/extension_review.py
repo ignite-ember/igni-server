@@ -18,15 +18,10 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.db.sql.service_extensions import ServiceExtensionDB
-from app.services.identity.impact import (
-    Collision,
-    Dropped,
-    ExtensionImpact,
-    IgniCommands,
-    ImpactResolver,
-    PromptTargets,
-    SwitchedOff,
-)
+from app.services.identity.impact.extension_impact import ExtensionImpact
+from app.services.identity.impact.igni_catalogues import IgniCommands, PromptTargets
+from app.services.identity.impact.resolution import Collision, Dropped, SwitchedOff
+from app.services.identity.impact.resolver import ImpactResolver
 from app.services.identity.priority import ExtensionPriority
 
 
@@ -69,7 +64,7 @@ class ExtensionReviews:
         ).resolve()
         return ExtensionReview(
             impact=impact,
-            unknown_targets=impact.unknown_targets(PromptTargets.igni()),
+            unknown_targets=PromptTargets.igni().unknown_in(impact),
             igni_commands=IgniCommands.igni().clashes(impact),
             collisions=outcome.involving(impact.extension_id),
             switched_off=outcome.off.get(impact.extension_id, []),

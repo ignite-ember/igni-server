@@ -53,7 +53,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationEr
 
 from app.db.sql.models.service_extension import ServiceExtension
 from app.services.identity.extension_manifest import Manifest, PluginSummary
-from app.services.identity.impact import ExtensionImpact, ImpactEdit, ImpactOverride, ImpactRefused, ImpactTool
+from app.services.identity.impact.contributions import ImpactEdit, ImpactOverride, ImpactTool
+from app.services.identity.impact.errors import ImpactRefused
+from app.services.identity.impact.extension_impact import ExtensionImpact
 
 
 class WorkspaceLevel(StrEnum):
@@ -133,7 +135,7 @@ class ExtensionGrants(BaseModel):
         Refused (`ImpactRefused`) when the manifest does not read, rather
         than read as asking for nothing.
         """
-        impact = ExtensionImpact.of(manifest.model_dump(mode='json'))
+        impact = ExtensionImpact.of(manifest)
         scope = _Scope.of(manifest)
         return cls(
             workspace=impact.workspace,

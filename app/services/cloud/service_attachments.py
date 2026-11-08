@@ -33,7 +33,7 @@ from app.security.producer import ProducerCaller
 from app.security.service_caller import ServiceCaller
 from app.services.cloud.event_rate_limit import EventRateLimit
 from app.services.cloud.service_grants import ServiceExtensionOf, ServiceGrants
-from app.services.identity.impact import ServiceGrant
+from app.services.identity.impact.grants import ServiceGrant
 
 
 class AttachmentName:

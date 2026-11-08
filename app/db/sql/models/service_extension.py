@@ -54,7 +54,7 @@ class ServiceExtension(Base):
     manifest: Mapped[dict[str, object]] = Column(JSONB, nullable=False)
     #: The plugin's agents and skills, summarised. See `ExtensionBundle`.
     plugin: Mapped[dict[str, object]] = Column(JSONB, nullable=False)
-    #: What it changes in igni. See `app.services.identity.impact.ExtensionImpact`.
+    #: What it changes in igni. See `app.services.identity.impact.extension_impact.ExtensionImpact`.
     impact: Mapped[dict[str, object]] = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     #: The bundle, a gzipped tar with `manifest.json` at its root.
     archive: Mapped[bytes] = Column(LargeBinary, nullable=False)

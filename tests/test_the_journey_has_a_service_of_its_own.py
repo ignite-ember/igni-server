@@ -20,7 +20,7 @@ import tomllib
 import pytest
 
 from app.services.identity.extension_manifest import Manifest
-from app.services.identity.impact import ExtensionImpact
+from app.services.identity.impact.extension_impact import ExtensionImpact
 
 _E2E = Path(__file__).resolve().parent.parent / 'tools' / 'e2e_journey'
 _EXTENSION = _E2E / 'service_fixture' / 'extension'
@@ -37,7 +37,7 @@ class TestTheFixturesExtension:
         raw = _manifest()
 
         manifest = Manifest.model_validate(raw)
-        ExtensionImpact.of(raw)
+        ExtensionImpact.of(manifest)
 
         assert manifest.id == 'journey.fixture'
 
