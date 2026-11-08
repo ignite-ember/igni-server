@@ -67,13 +67,24 @@ class AuthEmails:
         )
 
     async def send_company_address_code(self, bg: BackgroundTasks, email: str) -> str:
-        return await self._send_code(
-            bg,
-            issue=self._otp.generate_address_code,
-            mail=self._emails.send_sign_up_code,
-            purpose='company-address',
-            email=email,
-        )
+        """Answers in its own words, unlike the anonymous code doors.
+
+        The caller is signed in and proving an address of their own, so
+        there is no enumeration oracle to hide: a throttled request says
+        to use the code already sent, and with no relay the caller is told
+        whether the operator has the code.
+        """
+        try:
+            result = await self._otp.generate_address_code(email)
+        except CodeSendThrottled:
+            return f'A code was sent to {email} recently. Use that one.'
+        if not self._delivery.enabled:
+            self._delivery.record_undeliverable_code(purpose='company-address', email=email, code=result.code)
+            if self._delivery.logs_codes:
+                return f'No mail relay here: ask the operator for the code sent to {email}.'
+            return 'No mail relay here, so no code can be sent. Ask the operator to configure one.'
+        bg.add_task(self._emails.send_sign_up_code, to_email=email, code=result.code)
+        return result.message
 
     def welcome(self, bg: BackgroundTasks, *, email: str, name: str | None = None) -> None:
         if self._delivery.enabled:

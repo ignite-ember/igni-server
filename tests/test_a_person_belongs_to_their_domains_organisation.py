@@ -24,6 +24,7 @@ are not accounts here.
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from fastapi import HTTPException, status
 import pytest
@@ -61,6 +62,16 @@ def codes_accepted(monkeypatch):
     monkeypatch.setattr(OTPService, 'validate_signup_code', staticmethod(_accept))
     monkeypatch.setattr(OTPService, 'generate_address_code', staticmethod(_issue))
     monkeypatch.setattr(OTPService, 'validate_address_code', staticmethod(_check_address))
+
+
+@pytest.fixture
+def sign_up_codes_accepted(monkeypatch):
+    """Sign-up codes that check out, with address codes left to the real OTPService."""
+
+    async def _accept(email, code):
+        del email, code
+
+    monkeypatch.setattr(OTPService, 'validate_signup_code', staticmethod(_accept))
 
 
 async def _sign_up(client, email: str):
@@ -402,6 +413,47 @@ class TestTheBootstrapAccountsWayOut:
         assert await UserDB().get_by_email('installer@vendor-it.io') is None
         assert (await UserDB().get_by_user_id(founder)).email == 'it@acmecorp.io'
         assert await _memberships(db, founder) == [(org_id, 'admin')]
+
+    async def test_a_second_code_within_the_cooldown_is_refused_in_plain_words(
+        self, client, db, sign_up_codes_accepted, email_relay
+    ):
+        """The caller is signed in and asking about an address of their own,
+        so unlike the anonymous code doors it is told to use the code it has."""
+        founder, _ = await self._bootstrapped(client, db)
+        headers = auth_header(make_token(founder))
+        address = f'it-{uuid.uuid4().hex[:6]}@acmecorp.io'  # the throttle outlives a test
+
+        first = await client.post('/portal/me/company-address/code', json={'email': address}, headers=headers)
+        again = await client.post('/portal/me/company-address/code', json={'email': address}, headers=headers)
+
+        assert first.status_code == 200, first.text
+        assert first.json()['message'] == f'Verification code has been sent to {address}'
+        assert again.status_code == 200, again.text
+        assert again.json()['message'] == f'A code was sent to {address} recently. Use that one.'
+        assert [(m['method'], m['to_email']) for m in email_relay if m['method'] != 'send_welcome'] == [
+            ('send_sign_up_code', address)
+        ]
+
+    @pytest.mark.parametrize(
+        ('logs_codes', 'told'),
+        [
+            (True, 'No mail relay here: ask the operator for the code sent to {address}.'),
+            (False, 'No mail relay here, so no code can be sent. Ask the operator to configure one.'),
+        ],
+    )
+    async def test_with_no_relay_it_is_told_whether_the_operator_has_the_code(
+        self, client, db, sign_up_codes_accepted, monkeypatch, logs_codes, told
+    ):
+        monkeypatch.setattr(settings, 'log_sign_in_codes', logs_codes)
+        founder, _ = await self._bootstrapped(client, db)
+        address = f'it-{uuid.uuid4().hex[:6]}@acmecorp.io'
+
+        response = await client.post(
+            '/portal/me/company-address/code', json={'email': address}, headers=auth_header(make_token(founder))
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['message'] == told.format(address=address)
 
     async def test_a_wrong_code_moves_nothing(self, client, db, codes_accepted):
         founder, _ = await self._bootstrapped(client, db)

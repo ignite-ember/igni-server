@@ -76,6 +76,10 @@ def _emails(delivery: _Delivery, codes: _Codes, mail: _Mail | None = None) -> Au
 
 
 _SENDS = ['send_sign_in_code', 'send_sign_up_code', 'send_reset_password_code', 'send_company_address_code']
+#: The doors an anonymous caller reaches. The company-address code is asked
+#: for by a signed-in account about its own address and answers in its own
+#: words (`test_a_person_belongs_to_their_domains_organisation.py`).
+_ANONYMOUS_SENDS = ['send_sign_in_code', 'send_sign_up_code', 'send_reset_password_code']
 
 
 class TestEveryOutcomeAnswersAlike:
@@ -106,7 +110,7 @@ class TestEveryOutcomeAnswersAlike:
 
         assert [task.func for task in bg.tasks] == [getattr(mail, template)]
 
-    @pytest.mark.parametrize('send', _SENDS)
+    @pytest.mark.parametrize('send', _ANONYMOUS_SENDS)
     async def test_throttled_and_suppressed_answer_as_a_sent_one_does_and_queue_nothing(self, send):
         for codes in (_Codes(throttled=True), _Codes(suppressed=True)):
             bg = BackgroundTasks()
@@ -116,7 +120,7 @@ class TestEveryOutcomeAnswersAlike:
             assert message == _SENT
             assert bg.tasks == []
 
-    @pytest.mark.parametrize('send', _SENDS)
+    @pytest.mark.parametrize('send', _ANONYMOUS_SENDS)
     async def test_with_no_relay_everybody_is_told_so_and_the_code_never_answers(self, send):
         """Sent, throttled and suppressed alike. Only a code actually
         made for somebody goes to `record_undeliverable_code` (logged only
@@ -125,7 +129,6 @@ class TestEveryOutcomeAnswersAlike:
             'send_sign_in_code': 'sign-in',
             'send_sign_up_code': 'sign-up',
             'send_reset_password_code': 'password-reset',
-            'send_company_address_code': 'company-address',
         }
         answers, recorded = [], []
         for codes in (_Codes(), _Codes(throttled=True), _Codes(suppressed=True)):
