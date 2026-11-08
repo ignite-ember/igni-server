@@ -861,3 +861,73 @@ export interface DiscardedApp {
   /** The new app, when a fresh start was asked for. */
   fresh_app: OrgApp | null
 }
+
+// ─── Compliance ─────────────────────────────────────────────────────
+
+/** How the server classified an audited request: `denied` is a refusal, `error` a failure. */
+export type AuditOutcome = 'success' | 'denied' | 'error'
+
+/** One privileged action, as GET /portal/audit-events returns it. */
+export interface AuditEvent {
+  id: string
+  occurred_at: string
+  actor_email: string | null
+  actor_user_id: string | null
+  method: string
+  route: string
+  target_type: string | null
+  target_id: string | null
+  status_code: number
+  outcome: AuditOutcome
+  client_host: string | null
+  detail: Record<string, unknown> | null
+}
+
+/** A page of audit events, newest first; `next_before` is the cursor for the next one. */
+export interface AuditEventPage {
+  events: AuditEvent[]
+  next_before: string | null
+}
+
+/** Why an access review row is worth a second look. */
+export type AccessFlag = 'invitation_pending' | 'never_signed_in' | 'dormant' | 'suspended'
+
+/** One person's access to the organisation. */
+export interface AccessReviewRow {
+  user_id: string | null
+  email: string | null
+  full_name: string | null
+  auth_provider: string | null
+  role: TeamRole
+  status: TeamMemberStatus
+  granted_at: string | null
+  granted_by: string | null
+  last_sign_in_at: string | null
+  days_since_sign_in: number | null
+  flags: AccessFlag[]
+}
+
+/** The access review report, plus the counts an auditor writes down. */
+export interface AccessReview {
+  generated_at: string
+  dormant_after_days: number
+  total: number
+  active: number
+  needs_review: number
+  rows: AccessReviewRow[]
+}
+
+/**
+ * The subject access report, kept as the whole JSON document.
+ *
+ * It is a legal artefact shown and downloaded verbatim, so the portal
+ * deliberately does not model its parts.
+ */
+export type SubjectAccessReport = Record<string, unknown>
+
+/** What POST /portal/erasure redacted. */
+export interface ErasureResult {
+  email: string
+  events_redacted: number
+  logins_included: number
+}
