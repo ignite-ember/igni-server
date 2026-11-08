@@ -26,6 +26,7 @@ from app.middlewares.request_audit import RequestAudit
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
+from app.services.cloud.erasure_refusals import ErasureRefusals
 from app.services.cloud.erasures import Erasures
 from app.services.cloud.legal_holds import LegalHolds
 from app.services.cloud.retention_rules import Retention
@@ -102,7 +103,8 @@ async def discard_member(
     incarnation = body.incarnation if body else None
     RequestAudit.of(request).set_target(target_type='person_vm', target_id=user_id)
     RequestAudit.of(request).add_detail(MemberVmDiscardedAudit(incarnation=incarnation))
-    return await Erasures().discard_member(authority, user_id, incarnation)
+    with ErasureRefusals():
+        return await Erasures().discard_member(authority, user_id=user_id, incarnation=incarnation)
 
 
 @router.put('/orgs/{org_id}/legal-holds/{user_id}', response_model=LegalHoldResponse)

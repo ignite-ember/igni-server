@@ -19,7 +19,7 @@ from typing import Literal
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from app.db.sql.models.app_space import SPACE
 from app.db.sql.models.registered_client import APP
@@ -39,6 +39,14 @@ class ProducerRef(BaseModel):
 
     kind: ProducerKind
     id: str
+
+    @classmethod
+    def stored(cls, kind: str, producer_id: str) -> ProducerRef:
+        """A producer as a table stores it, its kind checked rather than assumed."""
+        return cls(kind=_KINDS.validate_python(kind), id=producer_id)
+
+
+_KINDS: TypeAdapter[ProducerKind] = TypeAdapter(ProducerKind)
 
 
 class ProducerCaller(BaseModel):

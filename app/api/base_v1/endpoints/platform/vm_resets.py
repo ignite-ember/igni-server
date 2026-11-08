@@ -17,6 +17,7 @@ from app.api.base_v1.schema.retention import ErasureDoneBody, ErasureRecord
 from app.api.base_v1.schema.vm_resets import VmResetBody, VmResetResponse
 from app.security.platform_caller import PlatformCaller, require_platform
 from app.security.producer import ProducerKind, ProducerRef
+from app.services.cloud.erasure_refusals import ErasureRefusals
 from app.services.cloud.erasures import Erasures
 from app.services.cloud.vm_resets import VmResets
 
@@ -54,4 +55,7 @@ async def erasure_done(
     body: ErasureDoneBody,
     platform: PlatformCaller = Depends(require_platform),
 ) -> ErasureRecord:
-    return await Erasures().done(org_id, ProducerRef(kind=kind, id=producer_id), body, by_client_id=platform.client_id)
+    with ErasureRefusals():
+        return await Erasures().done(
+            org_id, producer=ProducerRef(kind=kind, id=producer_id), body=body, by_client_id=platform.client_id
+        )

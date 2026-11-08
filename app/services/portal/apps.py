@@ -173,7 +173,7 @@ class OrgApps:
         cloud = bool(await VmCredentialsDB().active(org_id, producer_kind=APP, producer_id=app_id))
         await self.remove(org_id, app_id)
         await ProducerFeed().discarded_app(org_id, app_id, name=client.name, by_user_id=by_user_id)
-        erasures = await Erasures().of(org_id, APP, app_id)
+        erasures = await Erasures().of(org_id, kind=APP, producer_id=app_id)
         fresh = None
         if start_fresh:
             owner = app.owner_user_id if app and app.owner_user_id else by_user_id

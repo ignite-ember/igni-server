@@ -20,9 +20,14 @@ from __future__ import annotations
 import builtins
 from datetime import datetime, timezone
 
-from fastapi import HTTPException, status
-
-from app.api.base_v1.schema.retention import DiscardedMember, ErasureDoneBody, ErasureList, ErasureRecord
+from app.api.base_v1.schema.audit_detail import ErasureDoneAudit
+from app.api.base_v1.schema.retention import (
+    DiscardedMember,
+    ErasureDoneBody,
+    ErasureList,
+    ErasureRecord,
+    ErasureState,
+)
 from app.db.sql.audit_events import AuditEventDB, AuditRecord
 from app.db.sql.models.producer_feed import PERSON, ProducerFeedEntry
 from app.db.sql.producer_feed import ProducerFeedDB
@@ -32,19 +37,41 @@ from app.db.sql.user import UserDB
 from app.security.org_authority import OrgAuthority
 from app.security.producer import ProducerRef
 from app.services.cloud.erasure_audit import ROUTE as ERASURE_ROUTE
+from app.services.cloud.erasure_errors import CurrentMemberKept, LegalHoldStands, NoSuchIncarnation, NothingToDiscard
 from app.services.cloud.producer_exports import ProducerExports
 from app.services.cloud.producer_feed import ProducerFeed
 
 #: Exports that still count: a discard ends the chance to take another.
 LIVE_EXPORTS = ('requested', 'handed_out', 'ready')
 
+#: Memberships that still stand: such a member's VM is never discarded.
+CURRENT_MEMBER = ('active', 'deactivated')
+
 
 class Erasures:
-    def __init__(self) -> None:
-        self._feed = ProducerFeedDB()
+    """Raises `ErasureRefused` subclasses; `ErasureRefusals` makes HTTP of them."""
+
+    def __init__(
+        self,
+        *,
+        feed_rows: ProducerFeedDB | None = None,
+        feed: ProducerFeed | None = None,
+        exports: ProducerExports | None = None,
+        users: UserDB | None = None,
+        retention: RetentionDB | None = None,
+        team: TeamDB | None = None,
+        trail: AuditEventDB | None = None,
+    ) -> None:
+        self._feed_rows = feed_rows or ProducerFeedDB()
+        self._feed = feed or ProducerFeed()
+        self._exports = exports or ProducerExports()
+        self._users = users or UserDB()
+        self._retention = retention or RetentionDB()
+        self._team = team or TeamDB()
+        self._trail = trail or AuditEventDB()
 
     @staticmethod
-    def state(row: ProducerFeedEntry, now: datetime | None = None) -> str:
+    def state(row: ProducerFeedEntry, now: datetime | None = None) -> ErasureState:
         if row.erasure_done_at is not None:
             return 'erased'
         if row.erase_at is None:
@@ -55,29 +82,29 @@ class Erasures:
         names: dict[str, str] = {}
         for row in rows:
             if row.producer_kind == PERSON and row.producer_id not in names:
-                user = await UserDB().get_by_user_id(row.producer_id)
+                user = await self._users.get_by_user_id(row.producer_id)
                 if user is not None and user.email:
                     names[row.producer_id] = str(user.email)
         return names
 
-    async def _exports(self, org_id: str) -> dict[tuple[str, str], int]:
+    async def _live_exports(self, org_id: str) -> dict[tuple[str, str], int]:
         counts: dict[tuple[str, str], int] = {}
-        for export in (await ProducerExports().list(org_id)).exports:
+        for export in (await self._exports.list(org_id)).exports:
             if export.state in LIVE_EXPORTS:
                 key = (export.producer.id, export.incarnation)
                 counts[key] = counts.get(key, 0) + 1
         return counts
 
     def record(
-        self, row: ProducerFeedEntry, names: dict[str, str], exports: dict[tuple[str, str], int]
+        self, row: ProducerFeedEntry, *, names: dict[str, str], exports: dict[tuple[str, str], int]
     ) -> ErasureRecord:
         return ErasureRecord(
-            producer=ProducerRef(kind=row.producer_kind, id=row.producer_id),  # type: ignore[arg-type]
+            producer=ProducerRef.stored(row.producer_kind, row.producer_id),
             name=row.discarded_label or names.get(row.producer_id),
             incarnation=row.incarnation,
             removed_at=row.removed_at,
             erase_at=row.erase_at,
-            state=self.state(row),  # type: ignore[arg-type]
+            state=self.state(row),
             erased_at=row.erasure_done_at,
             legal_hold=row.erase_at is None and row.erasure_done_at is None,
             exports=exports.get((row.producer_id, row.incarnation), 0),
@@ -87,65 +114,63 @@ class Erasures:
 
     async def _records(self, org_id: str, rows: builtins.list[ProducerFeedEntry]) -> builtins.list[ErasureRecord]:
         names = await self._names(rows)
-        exports = await self._exports(org_id)
-        return [self.record(row, names, exports) for row in rows]
+        exports = await self._live_exports(org_id)
+        return [self.record(row, names=names, exports=exports) for row in rows]
 
     async def list(self, org_id: str) -> ErasureList:
-        await ProducerFeed().drain()
-        return ErasureList(org_id=org_id, erasures=await self._records(org_id, await self._feed.removed_in(org_id)))
+        await self._feed.drain()
+        return ErasureList(
+            org_id=org_id, erasures=await self._records(org_id, await self._feed_rows.removed_in(org_id))
+        )
 
-    async def of(self, org_id: str, kind: str, producer_id: str) -> builtins.list[ErasureRecord]:
+    async def of(self, org_id: str, *, kind: str, producer_id: str) -> builtins.list[ErasureRecord]:
         rows = [
             row
-            for row in await self._feed.removed_in(org_id)
+            for row in await self._feed_rows.removed_in(org_id)
             if (row.producer_kind, row.producer_id) == (kind, producer_id)
         ]
         return await self._records(org_id, rows)
 
-    async def discard_member(self, authority: OrgAuthority, user_id: str, incarnation: str | None) -> DiscardedMember:
+    async def discard_member(
+        self, authority: OrgAuthority, *, user_id: str, incarnation: str | None
+    ) -> DiscardedMember:
         """A removed member's VM erased now, instead of after the retention. Never a current member's."""
         org_id = authority.org_id
-        hold = await RetentionDB().hold(org_id, user_id)
+        hold = await self._retention.hold(org_id, user_id)
         if hold is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f'A legal hold stands on this person here (placed {hold.placed_at:%Y-%m-%d}: {hold.reason}); '
-                    'nothing of theirs is erased until it is released'
-                ),
-            )
-        await ProducerFeed().drain()
+            raise LegalHoldStands(placed_at=hold.placed_at, reason=hold.reason)
+        await self._feed.drain()
         rows = [
             row
-            for row in await self._feed.removed_in(org_id)
+            for row in await self._feed_rows.removed_in(org_id)
             if row.producer_kind == PERSON
             and row.producer_id == user_id
             and incarnation in (None, row.incarnation)
             and row.erasure_done_at is None
         ]
         if not rows:
-            member = await TeamDB().get_member(org_id, user_id)
-            if member is not None and member.status in ('active', 'deactivated'):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A current member's VM is never discarded: it is kept while they are a member",
-                )
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='No removed VM of this person here is waiting for its erasure',
-            )
-        await ProducerFeed().discard_person(org_id, user_id, incarnation, by_user_id=authority.user_id)
-        return DiscardedMember(erasures=await self.of(org_id, PERSON, user_id))
+            member = await self._team.get_member(org_id, user_id)
+            if member is not None and member.status in CURRENT_MEMBER:
+                raise CurrentMemberKept()
+            raise NothingToDiscard()
+        await self._feed.discard_person(org_id, user_id, incarnation, by_user_id=authority.user_id)
+        return DiscardedMember(erasures=await self.of(org_id, kind=PERSON, producer_id=user_id))
 
     async def done(
-        self, org_id: str, producer: ProducerRef, body: ErasureDoneBody, *, by_client_id: str
+        self, org_id: str, *, producer: ProducerRef, body: ErasureDoneBody, by_client_id: str
     ) -> ErasureRecord:
         """The gateway erased a removed incarnation's VM: recorded once, audited with what was erased."""
-        row, first = await ProducerFeed().erasure_done(org_id, producer.kind, producer.id, body.incarnation)
+        row, first = await self._feed.erasure_done(org_id, producer.kind, producer.id, body.incarnation)
         if row is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such removed incarnation')
+            raise NoSuchIncarnation()
         if first:
-            await AuditEventDB().record(
+            audit = ErasureDoneAudit(
+                incarnation=body.incarnation,
+                erase_at=row.erase_at.isoformat() if row.erase_at else None,
+                by_client=by_client_id,
+                summary=body.summary,
+            )
+            await self._trail.record(
                 AuditRecord(
                     method='SYSTEM',
                     route=ERASURE_ROUTE,
@@ -153,13 +178,7 @@ class Erasures:
                     org_id=org_id,
                     target_type=f'{producer.kind}_vm',
                     target_id=producer.id,
-                    detail={
-                        'incarnation': body.incarnation,
-                        'erase_at': row.erase_at.isoformat() if row.erase_at else None,
-                        'why': 'erased',
-                        'by_client': by_client_id,
-                        'summary': body.summary,
-                    },
+                    detail=audit.model_dump(),
                 )
             )
         [record] = await self._records(org_id, [row])

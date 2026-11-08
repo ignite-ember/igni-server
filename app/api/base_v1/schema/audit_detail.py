@@ -6,7 +6,7 @@ dict literal and whoever reads the row. Never a request body (F83): only
 small, deliberate facts.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -69,6 +69,18 @@ class ExportRequestedAudit(BaseModel):
 
 class LegalHoldAudit(BaseModel):
     reason: str
+
+
+class ErasureDoneAudit(BaseModel):
+    """The gateway erased a removed incarnation's VM: the feed's own row, not a request's."""
+
+    incarnation: str
+    #: When the erasure was due, ISO 8601; null when a legal hold had stopped it.
+    erase_at: str | None
+    why: Literal['erased'] = 'erased'
+    by_client: str
+    #: What the node answered, part by part (bounded by `ErasureDoneBody`).
+    summary: dict[str, Any]
 
 
 class MemberVmDiscardedAudit(BaseModel):
