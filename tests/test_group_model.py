@@ -19,12 +19,15 @@ would do:
   default, not the request.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.db.sql.schemas.group import GroupSummary
 from app.db.sql.schemas.tenancy import OrganisationDetached
 from app.services.ai.chat.callers import ChatCallerResolver
 from app.services.ai.chat.schemas import ChatCaller
+from app.services.ai.schemas import ModelNotAvailableError
 from app.services.portal.group_model_service import GroupModelService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
@@ -282,6 +285,41 @@ class TestWhatTheChatProxyAsksFor:
         monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _detached)
 
         assert await self._resolver().preferred_model(caller=lawyer, requested=None) is None
+
+    @staticmethod
+    async def _chat(client, caller: ChatCaller, body: dict) -> AsyncMock:
+        """POST /chat/completions as *caller*; the pool's acquire, which refuses so nothing goes upstream."""
+        pool = AsyncMock()
+        pool.acquire = AsyncMock(side_effect=ModelNotAvailableError(model='any', available=[]))
+        with patch('app.services.ai.pool_manager.PoolManager.get_pool', new=lambda _self: pool):
+            await client.post(
+                '/chat/completions',
+                headers=auth_header(make_token(caller.user_id, org_id=caller.org_id)),
+                json={'messages': [{'role': 'user', 'content': 'hi'}], **body},
+            )
+        return pool.acquire
+
+    async def test_the_chat_route_asks_the_pool_for_the_groups_model(self, client, lawyer):
+        acquire = await self._chat(client, lawyer, {})
+
+        acquire.assert_awaited_once()
+        assert acquire.await_args.kwargs['model'] == 'legal-reviewer'
+
+    async def test_the_chat_route_asks_for_the_model_named_over_the_groups(self, client, lawyer):
+        acquire = await self._chat(client, lawyer, {'model': 'igni-1.0-27b'})
+
+        assert acquire.await_args.kwargs['model'] == 'igni-1.0-27b'
+
+    async def test_the_chat_route_still_reaches_a_node_when_the_lookup_fails(self, client, lawyer, monkeypatch):
+        async def _detached(self, user_id):
+            raise OrganisationDetached('org-gone')
+
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _detached)
+
+        acquire = await self._chat(client, lawyer, {})
+
+        acquire.assert_awaited_once()
+        assert acquire.await_args.kwargs['model'] is None
 
 
 class TestPerAgentModel:
