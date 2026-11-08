@@ -24,6 +24,7 @@ from sqlalchemy import create_engine, text
 from app.config import settings
 from app.db.sql.audit_events import AuditEventDB
 from app.db.sql.models.audit_event import AuditEvent
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.services.identity.service_subjects import ServiceSubjects
 from app.services.retention import Retention
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token, put_in_org, TEST_DB_URL_SYNC
@@ -37,6 +38,16 @@ def _execute(sql: str, params: dict | None = None):
         with engine.begin() as conn:
             result = conn.execute(text(sql), params or {})
             return result.fetchall() if result.returns_rows else []
+    finally:
+        engine.dispose()
+
+
+def _count_in(database: str) -> int:
+    base, _, _ = TEST_DB_URL_SYNC.rpartition('/')
+    engine = create_engine(f'{base}/{database}')
+    try:
+        with engine.connect() as conn:
+            return int(conn.execute(text('SELECT count(*) FROM audit_events')).scalar_one())
     finally:
         engine.dispose()
 
@@ -203,6 +214,25 @@ class TestTheRetentionRunner:
         async with org_db(str(org.id)) as session:
             left = (await session.execute(text('SELECT count(*) FROM audit_events'))).scalar_one()
         assert left == 1
+
+    async def test_but_not_to_a_deleted_organisations_trail(self, monkeypatch, db, org_db):
+        """A deleted organisation's database is kept and not routed to, so the
+        round passes over it rather than failing on it."""
+        monkeypatch.setattr(settings, 'audit_retention_days', 30)
+        owner = await create_user(db, email='owner@example.com')
+        kept = await create_org(db, owner_user_id=str(owner.user_id), slug='kept-org')
+        gone = await create_org(db, owner_user_id=str(owner.user_id), slug='gone-org')
+        old = datetime.now(timezone.utc) - timedelta(days=400)
+        for org in (kept, gone):
+            await put_in_org(str(org.id), _org_event(occurred_at=old, org_id=str(org.id)))
+        await TenantRegistryDB().detach(str(gone.id))
+
+        removed = await Retention().run_once()
+
+        assert removed.audit_events == 1
+        databases = dict(_execute('SELECT org_id, database FROM tenants'))
+        assert _count_in(databases[str(kept.id)]) == 0
+        assert _count_in(databases[str(gone.id)]) == 1
 
     async def test_a_second_instance_skips_the_round(self, monkeypatch):
         """The loop runs in every replica, so it takes an advisory lock.

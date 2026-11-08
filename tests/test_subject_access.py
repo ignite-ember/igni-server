@@ -531,6 +531,26 @@ class TestTheExport:
         # And its absence is declared, not silent.
         assert 'audit_events.detail' in report.withheld
 
+    async def test_what_they_did_in_their_organisation_is_read_from_its_own_database(self, person):
+        """Their organisation's trail is in its own database, not the shared plane's."""
+        await put_in_org(
+            person['org_id'],
+            AuditEvent(
+                id=str(uuid.uuid4()),
+                occurred_at=datetime.now(timezone.utc),
+                org_id=person['org_id'],
+                actor_user_id=person['user_id'],
+                method='POST',
+                route='/v1/portal/groups',
+                status_code=201,
+                outcome='success',
+            ),
+        )
+
+        report = await SubjectAccessService().export(email=person['email'], org_id=person['org_id'])
+
+        assert [row.route for row in report.sections.own_activity] == ['/v1/portal/groups']
+
     async def test_their_own_address_is_returned_from_both_columns(self):
         """A deployment behind a load balancer records the peer in
         `client_host` and the person's real address in `forwarded_for`.
