@@ -150,7 +150,7 @@ class TestTheUpstreamCall:
         assert answer is None
         assert upstream == {'started': 1, 'cancelled': 1, 'finished': 0}
         assert pool.released == ['lease-1']
-        prompt_tokens, _, _ = TokenEstimator().estimate(body=prompt.wire(), output_pieces=[])
+        prompt_tokens = TokenEstimator().estimate(messages=prompt.messages, output_pieces=[]).prompt_tokens
         assert prompt_tokens > 0
         assert len(usage.rows) == 1, usage.rows
         row = usage.rows[0]

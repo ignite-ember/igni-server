@@ -34,6 +34,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 from app.api.base_v1.endpoints.client import chat as chat_module
+from app.api.base_v1.schema.chat import ChatMessage
 from app.services.ai.chat.schemas import UpstreamLine
 from app.services.ai.chat.services import chat_services, ChatServices
 from app.services.ai.token_estimate import TokenEstimator
@@ -209,11 +210,13 @@ async def test_a_client_that_leaves_mid_stream_is_billed_what_it_used_and_frees_
     await _settled(pool, usage)
 
     assert len(usage.rows) == 1, f'usage written {len(usage.rows)} times'
-    expected = TokenEstimator().estimate(body={**_REQUEST}, output_pieces=['one '])
+    expected = TokenEstimator().estimate(
+        messages=[ChatMessage.model_validate(m) for m in _REQUEST['messages']], output_pieces=['one ']
+    )
     row = usage.rows[0]
     assert row['input_tokens'] > 0 and row['output_tokens'] > 0
     assert row['total_tokens'] == row['input_tokens'] + row['output_tokens']
-    assert row['input_tokens'] == pytest.approx(expected[0], abs=8)
+    assert row['input_tokens'] == pytest.approx(expected.prompt_tokens, abs=8)
     assert row['stream'] is True
     assert pool.released == ['lease-1']
     assert node.closed

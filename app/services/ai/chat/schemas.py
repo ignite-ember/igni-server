@@ -201,5 +201,4 @@ class StreamUsage(BaseModel):
         """The node's own count when it gave a non-zero one; otherwise an estimate."""
         if self.reported is not None and self.reported.total_tokens:
             return self.reported
-        prompt, completion, total = estimator.estimate(body=request.wire(), output_pieces=self.output_pieces)
-        return CompletionUsage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=total)
+        return estimator.estimate(messages=request.messages, output_pieces=self.output_pieces)

@@ -187,8 +187,7 @@ class TestAStreamsUsage:
 
         settled = used.settle(estimator=TokenEstimator(), request=prompt)
 
-        expected = TokenEstimator().estimate(body=prompt.wire(), output_pieces=['hello there'])
-        assert (settled.prompt_tokens, settled.completion_tokens, settled.total_tokens) == expected
+        assert settled == TokenEstimator().estimate(messages=prompt.messages, output_pieces=['hello there'])
         assert settled.completion_tokens > 0
 
     def test_a_retry_forgets_the_failed_attempt(self):
