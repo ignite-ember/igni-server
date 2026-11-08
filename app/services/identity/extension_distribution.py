@@ -18,8 +18,6 @@ from app.db.sql.service_extensions import ServiceExtensionDB
 from app.security.producer import ProducerCaller
 from app.services.identity.asset_download import AssetDownload
 from app.services.identity.extension_assets import BundleAssets, ExtensionAssets
-from app.services.identity.extension_manifest import Manifest
-from app.services.identity.jwk import JwkSet
 from app.services.identity.priority import ExtensionPriority
 from app.services.portal.group_extensions import Entitlement, GroupExtensions
 
@@ -94,16 +92,18 @@ class ExtensionDistribution:
     def _listed(
         extension: ServiceExtension, client: RegisteredClient, entitlement: Entitlement
     ) -> DistributedExtension:
-        manifest = Manifest.model_validate(extension.manifest)
+        # Read as stored, not validated again: a manifest a later, stricter
+        # rule would refuse is still listed rather than failing the listing.
+        manifest = extension.manifest
         return DistributedExtension(
             extension_id=extension.extension_id,
             version=extension.version,
-            name=manifest.name or extension.extension_id,
-            description=manifest.description,
+            name=str(manifest.get('name') or extension.extension_id),
+            description=str(manifest.get('description') or ''),
             service_url=client.base_url,
             sha256=extension.sha256,
             signature=extension.signature,
-            publisher_jwks=JwkSet.model_validate(client.jwks),
+            publisher_jwks=dict(client.jwks),
             published_at=extension.published_at,
             groups=entitlement.enabled[extension.extension_id],
             apps=entitlement.apps.get(extension.extension_id, []),

@@ -7,7 +7,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_serializer, SerializerFunctionWrapHandler
+from pydantic import (
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    SerializerFunctionWrapHandler,
+    ValidatorFunctionWrapHandler,
+)
 
 from app.services.identity.extension_publication import Publication
 from app.services.identity.grants_comparison import AddedGrant
@@ -64,13 +71,23 @@ class DistributedExtension(BaseModel):
     #: gets it because it is one of them.
     apps: list[str]
 
+    @field_validator('publisher_jwks', mode='wrap')
+    @classmethod
+    def _as_stored(cls, keys: object, handler: ValidatorFunctionWrapHandler) -> object:
+        """Keys as the service registered them are kept, not parsed again.
+
+        Published as a `JwkSet`, but a stored key a later, stricter rule
+        would refuse is still listed rather than failing the listing.
+        """
+        return dict(keys) if isinstance(keys, dict) else handler(keys)
+
     @field_serializer('publisher_jwks', mode='wrap')
-    def _as_registered(self, keys: JwkSet, handler: SerializerFunctionWrapHandler):
+    def _as_registered(self, keys: JwkSet | dict[str, object], handler: SerializerFunctionWrapHandler):
         """The keys exactly as the service registered them, with no member it left out added as null.
 
         Unannotated on purpose: the published schema stays `JwkSet`'s.
         """
-        return keys.model_dump(mode='json', exclude_unset=True)
+        return keys.model_dump(mode='json', exclude_unset=True) if isinstance(keys, JwkSet) else dict(keys)
 
 
 class ListedProducer(BaseModel):

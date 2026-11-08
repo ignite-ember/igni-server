@@ -10,12 +10,15 @@ with its stores substituted; the routes are exercised end to end in
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from app.api.base_v1.schema.extensions import Published
 from app.db.sql.models.extension_asset import ExtensionAsset
+from app.db.sql.models.registered_client import RegisteredClient
 from app.db.sql.models.service_extension import ServiceExtension
 from app.services.identity.asset_download import AssetDownload, RangeNotSatisfiable
 from app.services.identity.extension_distribution import (
@@ -24,8 +27,10 @@ from app.services.identity.extension_distribution import (
     ExtensionNotDistributed,
 )
 from app.services.identity.extension_publication import Publication
+from app.services.identity.extensions import ServiceExtensions
 from app.services.identity.grants_comparison import AddedGrant, GrantKind, GrantsComparison
 from app.services.portal.group_extensions import Entitlement
+from tools.export_openapi import render
 
 _SHA = 'a' * 64
 _OTHER_SHA = 'b' * 64
@@ -38,6 +43,7 @@ def _stored(**overrides: object) -> ServiceExtension:
         'version': '1.1.0',
         'sha256': 'c' * 64,
         'manifest': {},
+        'signature': 'sig',
     }
     return ServiceExtension(**{**fields, **overrides})
 
@@ -69,6 +75,41 @@ class TestWhyAnUploadIsHeld:
         assert publication.added == []
 
 
+class _Uploads:
+    def __init__(self, *, live: ServiceExtension | None = None, held: ServiceExtension | None = None) -> None:
+        self._live = live
+        self._held = held
+
+    async def held_of(self, client_id: str) -> ServiceExtension | None:
+        return self._held
+
+    async def of(self, client_id: str) -> ServiceExtension | None:
+        return self._live
+
+
+class TestWhatAServiceIsToldItHolds:
+    """`GET /clients/{id}/extension`: the latest upload, so a restart sends only a changed bundle."""
+
+    async def test_nothing_uploaded_is_nothing(self):
+        assert await ServiceExtensions(store=_Uploads()).latest('svc') is None  # type: ignore[arg-type]
+
+    async def test_the_live_version_when_nothing_is_held(self):
+        latest = await ServiceExtensions(store=_Uploads(live=_stored())).latest('svc')  # type: ignore[arg-type]
+
+        assert latest is not None
+        assert (latest.extension.version, latest.held, latest.reason, latest.added) == ('1.1.0', False, None, [])
+
+    async def test_the_held_version_wins_and_says_why_without_a_comparison(self):
+        uploads = _Uploads(live=_stored(), held=_stored(version='2.0.0'))
+
+        latest = await ServiceExtensions(store=uploads).latest('svc')  # type: ignore[arg-type]
+
+        assert latest is not None
+        assert (latest.extension.version, latest.held) == ('2.0.0', True)
+        assert latest.reason == 'held for a super admin: it asks for more than the approved version'
+        assert latest.added == []
+
+
 def _asset(size: int = 100) -> ExtensionAsset:
     return ExtensionAsset(client_id='svc', sha256=_SHA, size=size)
 
@@ -97,6 +138,14 @@ class TestWhatADownloadAnswers:
         download = AssetDownload.of(_asset(), 'bytes=0-')
 
         assert download.status_code == 200
+        assert 'Content-Range' not in download.headers()
+
+    @pytest.mark.parametrize('byte_range', ['', 'items=0-5', 'bytes=0-1,5-6', 'bytes=-'])
+    def test_a_range_it_does_not_read_is_the_whole_asset(self, byte_range):
+        download = AssetDownload.of(_asset(), byte_range)
+
+        assert download.status_code == 200
+        assert download.headers()['Content-Length'] == '100'
         assert 'Content-Range' not in download.headers()
 
     def test_a_range_past_the_end_has_nothing_to_send(self):
@@ -199,3 +248,99 @@ class TestWhatAMachineMayFetch:
             )
 
         assert str(refused.value) == reason
+
+
+_PUBLISHED = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_JWKS: dict[str, list[dict[str, str]]] = {'keys': [{'kty': 'EC', 'kid': 'k-1', 'crv': 'P-256', 'x': 'x', 'y': 'y'}]}
+
+
+class _Listed:
+    def __init__(self, *rows: tuple[ServiceExtension, RegisteredClient]) -> None:
+        self._rows = list(rows)
+
+    async def distributed(self) -> list[tuple[ServiceExtension, RegisteredClient]]:
+        return self._rows
+
+
+class _Priority:
+    async def distributed(self) -> list[str]:
+        return ['acme.other', 'acme.review']
+
+
+class _ProducerEntitlements:
+    async def of_producer(self, caller: object) -> Entitlement:
+        return Entitlement(group='g-1', group_name='Reviewers', enabled={'acme.review': ['g-1']})
+
+
+def _client(jwks: dict[str, object]) -> RegisteredClient:
+    return RegisteredClient(client_id='svc', base_url='https://review.example.com', jwks=jwks)
+
+
+class TestWhatAMachineIsListed:
+    async def _listing(self, extension: ServiceExtension, jwks: dict[str, object]):
+        other = _stored(client_id='other', extension_id='acme.other')
+        distribution = ExtensionDistribution(
+            entitlements=_ProducerEntitlements(),  # type: ignore[arg-type]
+            store=_Listed((extension, _client(jwks)), (other, _client(jwks))),  # type: ignore[arg-type]
+            priority=_Priority(),  # type: ignore[arg-type]
+            assets=SimpleNamespace(),  # type: ignore[arg-type]
+        )
+        return await distribution.listing(_CALLER)  # type: ignore[arg-type]
+
+    async def test_only_what_the_producer_gets_is_listed_and_ranked(self):
+        listed = await self._listing(_stored(manifest={'name': 'Review'}, published_at=_PUBLISHED), _JWKS)
+
+        assert [e.extension_id for e in listed.extensions] == ['acme.review']
+        assert listed.priority == ['acme.review']
+        assert (listed.group, listed.group_name) == ('g-1', 'Reviewers')
+        assert (listed.extensions[0].groups, listed.extensions[0].apps) == (['g-1'], [])
+
+    async def test_a_manifest_with_no_name_is_listed_by_its_id(self):
+        listed = await self._listing(_stored(published_at=_PUBLISHED), _JWKS)
+
+        assert (listed.extensions[0].name, listed.extensions[0].description) == ('acme.review', '')
+
+    async def test_a_manifest_todays_rules_refuse_is_listed_as_stored(self):
+        """Was read as stored; validating it again would let one old row
+        fail every producer's listing."""
+        stored = {'id': '', 'name': 'Review', 'description': 'Reviews code', 'vm': 'not a vm'}
+
+        listed = await self._listing(_stored(manifest=stored, published_at=_PUBLISHED), _JWKS)
+
+        assert (listed.extensions[0].name, listed.extensions[0].description) == ('Review', 'Reviews code')
+
+    async def test_the_publisher_keys_are_handed_back_as_stored(self):
+        """Not parsed again: a member today's `PublicJwk` would refuse is
+        echoed rather than failing the listing, and nothing is added."""
+        stored = {'keys': [{**_JWKS['keys'][0], 'x5t': 'legacy'}], 'note': 'kept'}
+
+        listed = await self._listing(_stored(published_at=_PUBLISHED), stored)
+
+        assert listed.model_dump(mode='json')['extensions'][0]['publisher_jwks'] == stored
+
+
+class TestWhatTheSchemaPublishes:
+    """The contract the SDK is generated from, as the app serves it."""
+
+    def _schemas(self) -> dict[str, dict[str, object]]:
+        return json.loads(render())['components']['schemas']
+
+    def test_the_publisher_keys_are_a_jwk_set_of_public_keys(self):
+        """Was a free-form object; an SDK now gets the keys typed."""
+        schemas = self._schemas()
+
+        assert schemas['DistributedExtension']['properties']['publisher_jwks'] == {  # type: ignore[index]
+            '$ref': '#/components/schemas/JwkSet'
+        }
+        assert schemas['JwkSet']['properties']['keys']['items'] == {  # type: ignore[index]
+            '$ref': '#/components/schemas/PublicJwk'
+        }
+        assert (schemas['PublicJwk']['additionalProperties'], schemas['PublicJwk']['required']) == (False, ['kty'])
+
+    def test_what_an_upload_added_is_published_with_no_default(self):
+        """An empty list per response rather than one shared default; the
+        published schema no longer states `"default": []`."""
+        added = self._schemas()['Published']['properties']['added']  # type: ignore[index]
+
+        assert 'default' not in added
+        assert added['type'] == 'array'

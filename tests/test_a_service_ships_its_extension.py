@@ -17,8 +17,12 @@ from __future__ import annotations
 import hashlib
 
 import pytest
+from sqlalchemy import update
 
 from app.config import settings
+from app.db.sql.models.registered_client import RegisteredClient
+from app.db.sql.models.service_extension import ServiceExtension
+from app.db.sql.registered_clients import RegisteredClientDB
 from app.middlewares.body_size_limit import BodySizeLimitMiddleware
 from app.services.identity.extension_bundle import MAX_ARCHIVE_BYTES
 from tests.conftest import auth_header, create_user, make_token, the_app
@@ -95,6 +99,15 @@ async def _upload(client, service: RegisteredService, bundle: ExtensionBundle, s
     )
 
 
+async def _store_as(model, client_id: str, **values: object) -> None:
+    """Rewrite a stored row as an older igni might have left it.
+
+    Through the app's own engine: the `db` fixture runs on another loop.
+    """
+    async with RegisteredClientDB().session_scope() as session:
+        await session.execute(update(model).where(model.client_id == client_id).values(**values))
+
+
 async def _super_admin(db) -> dict[str, str]:
     user = await create_user(db, email='owner@example.com', is_super_admin=True)
     return auth_header(make_token(str(user.user_id)))
@@ -122,13 +135,32 @@ class TestUploading:
         """A bundle is tens of megabytes; a restart should not resend it."""
         service = RegisteredService()
         await service.approve()
-        assert (await client.get(f'/clients/{service.client_id}/extension')).status_code == 404
+        nothing = await client.get(f'/clients/{service.client_id}/extension')
+        assert (nothing.status_code, nothing.json()) == (404, {'detail': 'Nothing uploaded for this client'})
         bundle = _bundle()
         await _upload(client, service, bundle)
 
         held = (await client.get(f'/clients/{service.client_id}/extension')).json()
 
-        assert held['sha256'] == hashlib.sha256(bundle.archive).hexdigest()
+        assert held == {
+            'extension_id': 'igni.codeindex',
+            'version': '1.2.0',
+            'sha256': hashlib.sha256(bundle.archive).hexdigest(),
+            'held': False,
+            'reason': None,
+            'added': [],
+        }
+
+    async def test_a_bundle_over_the_limit_is_refused_before_it_is_read(self, client, monkeypatch):
+        service = RegisteredService()
+        await service.approve()
+        bundle = _bundle()
+        monkeypatch.setattr('app.api.base_v1.endpoints.identity.extensions.MAX_ARCHIVE_BYTES', len(bundle.archive) - 1)
+
+        response = await _upload(client, service, bundle)
+
+        assert (response.status_code, response.json()) == (413, {'detail': 'The bundle is too large'})
+        assert (await client.get(f'/clients/{service.client_id}/extension')).status_code == 404
 
     def test_the_upload_route_has_a_larger_limit_than_everything_else(self):
         """The general cap is 32 MB; a wheelhouse for three platforms is
@@ -319,6 +351,44 @@ class TestDistribution:
         assert entry['publisher_jwks']['keys'][0]['kid'] == service.public.kid
         assert entry['sha256'] == hashlib.sha256(bundle.archive).hexdigest()
 
+    async def test_the_publisher_keys_are_handed_back_as_registered(self, client, db):
+        service = RegisteredService()
+        await service.approve()
+        await _upload(client, service, _bundle())
+
+        listed = (await client.get('/extensions', headers=await self._person(db))).json()['extensions']
+
+        assert listed[0]['publisher_jwks'] == {'keys': [service.public.as_dict()]}
+
+    async def test_keys_stored_under_older_rules_are_still_listed_as_stored(self, client, db):
+        """Handed back as stored, not parsed again: one key today's rules
+        would refuse must not turn every producer's listing into a 500."""
+        service = RegisteredService()
+        await service.approve()
+        await _upload(client, service, _bundle())
+        stored = {'keys': [{**service.public.as_dict(), 'x5t': 'legacy'}], 'note': 'kept'}
+        await _store_as(RegisteredClient, service.client_id, jwks=stored)
+
+        response = await client.get('/extensions', headers=await self._person(db))
+
+        assert response.status_code == 200, response.text
+        assert response.json()['extensions'][0]['publisher_jwks'] == stored
+
+    async def test_a_manifest_stored_under_older_rules_is_still_listed(self, client, db):
+        """Read as stored, not validated again; with no name it is listed by its id."""
+        service = RegisteredService()
+        await service.approve()
+        await _upload(client, service, _bundle())
+        await _store_as(
+            ServiceExtension, service.client_id, manifest={'id': 'igni.codeindex', 'version': '1.2.0', 'vm': 'old'}
+        )
+
+        response = await client.get('/extensions', headers=await self._person(db))
+
+        assert response.status_code == 200, response.text
+        entry = response.json()['extensions'][0]
+        assert (entry['name'], entry['description']) == ('igni.codeindex', '')
+
     async def test_the_bundle_comes_with_its_signature(self, client, db):
         service = RegisteredService()
         await service.approve()
@@ -338,7 +408,17 @@ class TestDistribution:
         headers = await self._person(db)
 
         assert (await client.get('/extensions', headers=headers)).json()['extensions'] == []
-        assert (await client.get('/extensions/igni.codeindex/bundle', headers=headers)).status_code == 404
+        refused = await client.get('/extensions/igni.codeindex/bundle', headers=headers)
+        assert (refused.status_code, refused.json()) == (404, {'detail': 'No approved service ships this extension'})
+
+    async def test_no_bundle_of_one_the_producer_does_not_get(self, client, db):
+        service = RegisteredService()
+        await service.approve()
+        await _upload(client, service, _bundle())
+
+        refused = await client.get('/extensions/igni.codeindex/bundle', headers=await EntitledPerson(db).headers())
+
+        assert (refused.status_code, refused.json()) == (404, {'detail': 'No approved service ships this extension'})
 
     async def test_only_for_somebody_signed_in(self, client):
         assert (await client.get('/extensions')).status_code == 401
