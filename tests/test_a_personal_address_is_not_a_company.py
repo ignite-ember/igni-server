@@ -128,6 +128,16 @@ class TestNoCodeIsSentToAnAddressWeWillRefuse:
         with pytest.raises(PersonalAddress):
             await AuthService().send_sign_up_code('someone@gmail.com')
 
+    async def test_the_endpoint_answers_422_with_the_reason(self, client, email_relay):
+        # The store's refusal is a 422 with its words at the door, not
+        # a 500: the person is told to use their work address.
+        from app.db.sql.schemas.account_errors import PersonalAddress
+
+        response = await client.post('/send-sign-up-code', json={'email': 'someone@gmail.com'})
+
+        assert response.status_code == 422, response.text
+        assert response.json() == {'detail': str(PersonalAddress())}
+
     async def test_it_still_says_nothing_about_who_has_an_account(self, db):
         # The oracle F112 closed must stay closed. Whether an address
         # is at gmail.com is visible to anyone who can read it;

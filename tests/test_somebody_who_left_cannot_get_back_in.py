@@ -219,6 +219,21 @@ class TestSigningInAgain:
 
         assert ok.status_code == 200
 
+    async def test_a_code_sign_in_is_refused(self, client, db):
+        # The code was right, so the answer is the account's, as for a
+        # password: 403 and the reason, and no token.
+        from app.services.auth.otp_service import OTPService
+
+        user = await create_user(db, email=f'code-{uuid.uuid4().hex[:8]}@test.com')
+        await db.commit()
+        _deactivate(str(user.user_id))
+        issued = await OTPService().generate_signin_code(str(user.email))
+
+        response = await client.post('/sign-in-with-code', json={'email': str(user.email), 'code': issued.code})
+
+        assert response.status_code == 403, response.text
+        assert response.json() == {'detail': 'This account has been deactivated.'}
+
     async def test_a_provider_sign_in_is_refused(self, db):
         from fastapi import HTTPException
 
