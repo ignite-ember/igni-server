@@ -15,11 +15,14 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
+from sqlalchemy import text
 
+from app.db.sql.api_keys import ApiKeysDB
+from app.db.sql.models.api_key import SIGNED_OUT
 from app.services.cloud.vm_credential_grants import VM_SIGN_IN
 from app.services.identity.api_keys import API_KEY
-from tests.cloud_world import CloudOrg
-from tests.conftest import audit_rows, auth_header
+from tests.cloud_world import CloudOrg, shared_plane
+from tests.conftest import add_member, audit_rows, auth_header, make_token
 
 pytestmark = pytest.mark.anyio
 
@@ -164,6 +167,29 @@ class TestWhenItStops:
 
         assert response.status_code == 200, response.text
         assert (await _exchange(client, made['api_key'])).json()['error'] == 'invalid_grant'
+
+    async def test_signing_out_everywhere_reaches_an_organisation_they_have_since_left(self, client, acme):
+        """Every organisation the person was ever a member of, not only the current one."""
+        user_id, headers = await acme.person('ada@acme.com')
+        old = await _make(client, headers)
+        async with shared_plane() as db:
+            await db.execute(
+                text("UPDATE org_memberships SET status = 'removed' WHERE user_id = :u AND org_id = :o"),
+                {'u': user_id, 'o': acme.org_id},
+            )
+            await db.commit()
+        globex = await CloudOrg(client, slug='globex').create()
+        async with shared_plane() as db:
+            await add_member(db, globex.org_id, user_id)
+        now = auth_header(make_token(user_id, org_id=globex.org_id))
+        current = await _make(client, now)
+
+        await client.post('/portal/me/revoke-sessions', headers=now)
+
+        left_behind = await ApiKeysDB().get(acme.org_id, old['key_id'])
+        kept_up = await ApiKeysDB().get(globex.org_id, current['key_id'])
+        assert left_behind is not None and kept_up is not None
+        assert (left_behind.revoked_reason, kept_up.revoked_reason) == (SIGNED_OUT, SIGNED_OUT)
 
 
 class TestWhatItsSessionCannotDo:

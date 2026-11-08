@@ -11,8 +11,10 @@ not touched again by anything else.
 from __future__ import annotations
 
 import asyncio
+import runpy
 
 from alembic.script import ScriptDirectory
+import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
@@ -67,3 +69,59 @@ async def test_nothing_to_do_is_not_an_error(db):
     first migrate — migrates the template and reports none."""
     assert await asyncio.to_thread(TenantMigrations().run) == 0
     assert _revision(TenantNames().template()) == _head()
+
+
+async def _two_organisations_behind(db) -> tuple[str, str]:
+    """Two organisations' databases, each a revision behind head, by their org id."""
+    org_ids = []
+    for name in ('acme', 'globex'):
+        await create_user(db, user_id=name, email=f'admin@{name}.test')
+        org = await create_org(db, owner_user_id=name, slug=name, domains=(f'{name}.test',))
+        org_ids.append(str(org.id))
+        database = await TenantRegistryDB().database_of(str(org.id))
+        await asyncio.to_thread(command.downgrade, TenantMigrator().alembic_config(database), '-1')
+    return org_ids[0], org_ids[1]
+
+
+async def test_a_deleted_organisation_is_left_as_it_was(db):
+    """A detached organisation is not routed to, so the job does not touch
+    its database either: it stays at the revision it was deleted at."""
+    acme, globex = await _two_organisations_behind(db)
+    await TenantRegistryDB().detach(globex)
+
+    migrated = await asyncio.to_thread(TenantMigrations().run)
+
+    names = TenantNames()
+    assert migrated == 1
+    assert _revision(names.name(1)) == _head()
+    assert _revision(names.name(2)) != _head()
+
+
+class _FailsOnTheFirst(TenantMigrator):
+    def migrate(self, database: str) -> None:
+        if database == TenantNames().name(1):
+            raise RuntimeError('the first organisation could not be migrated')
+        super().migrate(database)
+
+
+async def test_a_failure_stops_the_job_before_the_next_organisation(db):
+    """The job fails loudly, and the release with it, rather than carrying
+    on and leaving a deployment half on one schema and half on another."""
+    await _two_organisations_behind(db)
+
+    with pytest.raises(RuntimeError, match='could not be migrated'):
+        await asyncio.to_thread(TenantMigrations(migrator=_FailsOnTheFirst()).run)
+
+    assert _revision(TenantNames().name(2)) != _head()
+
+
+# runpy warns that the module is already imported, which it is: by this file.
+@pytest.mark.filterwarnings('ignore:.*found in sys.modules:RuntimeWarning')
+async def test_python_dash_m_runs_the_job(db):
+    """`python -m app.db.sql.tenant_migrations`, as the chart, compose and `make migrate` call it."""
+    await _two_organisations_behind(db)
+
+    await asyncio.to_thread(runpy.run_module, 'app.db.sql.tenant_migrations', run_name='__main__')
+
+    names = TenantNames()
+    assert [_revision(names.name(1)), _revision(names.name(2))] == [_head(), _head()]

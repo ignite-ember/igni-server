@@ -10,13 +10,21 @@ database and one row.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import logging
+import threading
 import uuid
 
 from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.pool import NullPool
+
+from alembic import command
 
 from app.db.sql.advisory_locks import AdvisoryLockDB
 from app.db.sql.models.tenant import ACTIVE, DETACHED, Tenant
@@ -146,6 +154,96 @@ class TestProvisioning:
         assert _tenant_databases() == [first]
 
 
+def _registry(**collaborators) -> TenantRegistryDB:
+    """A registry of its own, past the singleton, with these collaborators in place of the defaults."""
+    return type.__call__(TenantRegistryDB, **collaborators)
+
+
+class _RefusingMigrator(TenantMigrator):
+    """Postgres refuses to make the database: no `CREATEDB`, a full disk."""
+
+    async def prepare(self, database: str) -> None:
+        raise RuntimeError('permission denied to create database')
+
+
+class _WatchingMigrator(TenantMigrator):
+    """Notes, as the database is being made, who holds the provisioning lock and on what."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: tuple[bool, int] | None = None
+
+    async def prepare(self, database: str) -> None:
+        free = await asyncio.to_thread(TestTheProvisioningLock._another_process_can_take, TENANT_LOCK)
+        self.seen = (free, AdvisoryLockDB().engine.pool.checkedout())  # type: ignore[attr-defined]
+        await super().prepare(database)
+
+
+class _AnotherProcessGetsThereFirst(AdvisoryLockDB):
+    """While this process waits for the lock, another provisions the organisation and an admin deletes it."""
+
+    org_id = ''
+
+    @asynccontextmanager
+    async def holding(self, key: int) -> AsyncIterator:
+        await TenantRegistryDB().database_of(self.org_id)
+        await TenantRegistryDB().detach(self.org_id)
+        async with super().holding(key) as connection:
+            yield connection
+
+
+class TestWhatProvisioningLeavesBehind:
+    async def test_a_database_that_cannot_be_made_registers_nothing_and_lets_go_of_the_lock(self):
+        org_id = str(uuid.uuid4())
+
+        with pytest.raises(RuntimeError, match='permission denied'):
+            await _registry(migrator=_RefusingMigrator()).database_of(org_id)
+
+        assert _registry_rows() == []
+        assert TestTheProvisioningLock._another_process_can_take(TENANT_LOCK)
+        # Nothing was taken by the failure: the next attempt gets the first number.
+        assert await TenantRegistryDB().number_of(org_id) == 1
+
+    async def test_the_lock_is_held_on_a_shared_pool_connection_while_the_database_is_made(self):
+        """One pooled connection, the one that holds the lock, for the whole
+        create-and-migrate; no thread with a connection of its own."""
+        migrator = _WatchingMigrator()
+
+        await _registry(migrator=migrator).database_of(str(uuid.uuid4()))
+
+        assert migrator.seen == (False, 1)
+        assert TestTheProvisioningLock._another_process_can_take(TENANT_LOCK)
+
+    async def test_an_organisation_deleted_while_waiting_for_the_lock_is_refused(self):
+        org_id = str(uuid.uuid4())
+        locks = type.__call__(_AnotherProcessGetsThereFirst)
+        locks.org_id = org_id
+
+        with pytest.raises(OrganisationDetached):
+            await _registry(locks=locks).database_of(org_id)
+
+        assert [(r.org_id, r.number, r.state) for r in _registry_rows()] == [(org_id, 1, DETACHED)]
+        assert _tenant_databases() == [TenantNames().name(1)]
+
+    async def test_the_row_is_stamped_by_the_api_s_clock_and_the_provisioning_logged(self, monkeypatch, caplog):
+        stamped = datetime(2031, 2, 3, 4, 5, 6, tzinfo=timezone.utc)
+        monkeypatch.setattr(
+            'app.db.sql.models.tenant.datetime', type('Fixed', (), {'now': staticmethod(lambda tz=None: stamped)})
+        )
+
+        with caplog.at_level(logging.INFO, logger='app.db.sql.tenant_registry'):
+            await TenantRegistryDB().database_of(str(uuid.uuid4()))
+
+        engine = create_engine(TEST_DB_URL_SYNC, poolclass=NullPool)
+        try:
+            with engine.connect() as conn:
+                created_at = conn.execute(select(Tenant.created_at)).scalar_one()
+        finally:
+            engine.dispose()
+        assert created_at == stamped
+        assert 'tenancy: organisation provisioned as tenant 1' in caplog.messages
+
+
 class _CountingMigrator(TenantMigrator):
     def __init__(self) -> None:
         super().__init__()
@@ -164,6 +262,141 @@ class TestTheTemplateIsMigratedOncePerMigrator:
         migrator.ensure_template()
 
         assert migrator.migrated == [TenantNames().template()]
+
+    def test_another_migrator_migrates_it_again(self):
+        """Once per migrator, not once per process: the migrate job's and the registry's are one."""
+        first, second = _CountingMigrator(), _CountingMigrator()
+
+        first.ensure_template()
+        second.ensure_template()
+
+        assert first.migrated == second.migrated == [TenantNames().template()]
+
+    def test_two_threads_at_once_run_alembic_once(self):
+        migrator = _MeetingMigrator()
+        threads = [threading.Thread(target=migrator.ensure_template) for _ in range(2)]
+
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert migrator.migrated == [TenantNames().template()]
+
+
+class _MeetingMigrator(_CountingMigrator):
+    """Both threads asking whether the template exists at once, if nothing stops them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._both = threading.Barrier(2)
+
+    def exists(self, database: str) -> bool:
+        try:
+            self._both.wait(timeout=1)
+        except threading.BrokenBarrierError:
+            pass
+        return super().exists(database)
+
+
+class _RacedMigrator(TenantMigrator):
+    """Another process creates the template between the check and the `CREATE DATABASE`."""
+
+    def exists(self, database: str) -> bool:
+        return False
+
+
+class _NoTemplateNames(TenantNames):
+    def template(self) -> str:
+        return f'{self.base_name()}_t_no_such_template'
+
+
+def _drop(database: str) -> None:
+    engine = create_engine(TEST_DB_URL_SYNC, isolation_level='AUTOCOMMIT', poolclass=NullPool)
+    try:
+        with engine.connect() as conn:
+            quoted = conn.dialect.identifier_preparer.quote_identifier(database)
+            conn.execute(text(f'DROP DATABASE IF EXISTS {quoted} WITH (FORCE)'))
+    finally:
+        engine.dispose()
+
+
+def _databases_named(name: str) -> list[str]:
+    engine = create_engine(TEST_DB_URL_SYNC, poolclass=NullPool)
+    try:
+        with engine.connect() as conn:
+            found = conn.execute(text('SELECT datname FROM pg_database WHERE datname = :d'), {'d': name})
+            return [str(d) for (d,) in found]
+    finally:
+        engine.dispose()
+
+
+class TestMakingTheDatabases:
+    def test_a_missing_template_is_created_and_brought_to_head(self):
+        template = TenantNames().template()
+        _drop(template)
+
+        TenantMigrator().ensure_template()
+
+        assert _revision(template) == _head()
+
+    def test_a_template_left_behind_by_a_release_is_brought_to_head(self):
+        template = TenantNames().template()
+        migrator = TenantMigrator()
+        migrator.ensure_template()
+        command.downgrade(migrator.alembic_config(template), '-1')
+        assert _revision(template) != _head()
+
+        TenantMigrator().ensure_template()
+
+        assert _revision(template) == _head()
+
+    def test_a_template_another_process_made_first_is_used(self):
+        TenantMigrator().ensure_template()
+
+        _RacedMigrator().ensure_template()
+
+        assert _revision(TenantNames().template()) == _head()
+
+    def test_a_database_that_already_exists_is_adopted_and_said_so(self, caplog):
+        migrator = TenantMigrator()
+        migrator.ensure_template()
+        database = TenantNames().name(1)
+        migrator.create(database)
+
+        with caplog.at_level(logging.WARNING, logger='app.db.sql.tenant_migrator'):
+            migrator.create(database)
+
+        assert _tenant_databases() == [database]
+        assert f'tenancy: {database} already existed, unregistered; adopting it' in caplog.messages
+
+    def test_any_other_refusal_is_raised(self):
+        names = _NoTemplateNames()
+        database = names.name(1)
+
+        with pytest.raises(ProgrammingError, match='does not exist'):
+            TenantMigrator(names=names).create(database)
+
+        assert _tenant_databases() == []
+
+    def test_a_name_with_a_double_quote_is_escaped_not_spliced(self):
+        database = 'ember_test_t"quoted'
+        migrator = TenantMigrator()
+        migrator.ensure_template()
+        try:
+            migrator.create(database)
+
+            assert _databases_named(database) == [database]
+        finally:
+            _drop(database)
+
+    def test_alembic_is_pointed_at_the_database_with_a_percent_in_the_password_intact(self):
+        names = TenantNames(shared_url=make_url('postgresql+asyncpg://u:p%40ss@db.internal:5433/igni'))
+
+        config = TenantMigrator(names=names).alembic_config('igni_t7')
+
+        assert config.get_main_option('sqlalchemy.url') == 'postgresql+psycopg2://u:p%40ss@db.internal:5433/igni_t7'
+        assert str(config.get_main_option('script_location')).endswith('alembic_tenant')
 
 
 class TestTenantNames:

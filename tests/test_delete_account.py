@@ -24,6 +24,8 @@ import uuid
 import pytest
 from sqlalchemy import text
 
+from app.db.sql.schemas.tenancy import OrganisationDetached
+from app.db.sql.tenant_registry import TenantRegistryDB
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -191,6 +193,21 @@ class TestTheSoleMemberCase:
             await db.execute(text('SELECT count(*) FROM organizations WHERE id = :o'), {'o': str(org.id)})
         ).scalar()
         assert count == 0
+
+    async def test_the_org_s_own_database_is_kept_and_no_longer_routed_to(self, client, db):
+        await create_user(db, user_id='solo', email='s@s.com')
+        org = await create_org(db, owner_user_id='solo', slug='solo', display_name='Solo')
+        await add_member(db, org_id=str(org.id), user_id='solo', role='admin')
+        headers = auth_header(make_token('solo', org_id=str(org.id)))
+        await client.post('/portal/groups', json={'name': 'mine'}, headers=headers)
+
+        response = await client.delete('/portal/me', headers=headers)
+
+        assert response.status_code == 200, response.text
+        row = (await db.execute(text('SELECT state FROM tenants WHERE org_id = :o'), {'o': str(org.id)})).one()
+        assert row.state == 'detached'
+        with pytest.raises(OrganisationDetached):
+            await TenantRegistryDB().database_of(str(org.id))
 
 
 class TestWhatIsRetained:
