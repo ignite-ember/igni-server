@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.base_v1.schema.extensions import Published
+from app.db.sql.extension_priority import ExtensionPriorityDB, StoredPriority
 from app.db.sql.models.extension_asset import ExtensionAsset
 from app.db.sql.models.registered_client import RegisteredClient
 from app.db.sql.models.service_extension import ServiceExtension
@@ -317,6 +318,31 @@ class TestWhatAMachineIsListed:
         listed = await self._listing(_stored(published_at=_PUBLISHED), stored)
 
         assert listed.model_dump(mode='json')['extensions'][0]['publisher_jwks'] == stored
+
+    async def test_the_priority_is_ranked_over_what_its_own_store_lists(self, monkeypatch):
+        """With no order saved, the approval order of exactly the rows the
+        listing reads; a second store could rank extensions it never listed."""
+        monkeypatch.setattr(ExtensionPriorityDB, 'saved', _nothing_saved)
+        review = _stored(manifest={'name': 'Review'}, published_at=_PUBLISHED)
+        other = _stored(client_id='other', extension_id='acme.other', published_at=_PUBLISHED)
+        distribution = ExtensionDistribution(
+            entitlements=_EverythingEntitled(),  # type: ignore[arg-type]
+            store=_Listed((review, _client(_JWKS)), (other, _client(_JWKS))),  # type: ignore[arg-type]
+            assets=SimpleNamespace(),  # type: ignore[arg-type]
+        )
+
+        listed = await distribution.listing(_CALLER)  # type: ignore[arg-type]
+
+        assert listed.priority == ['acme.other', 'acme.review']
+
+
+async def _nothing_saved(self: object) -> StoredPriority:
+    return StoredPriority()
+
+
+class _EverythingEntitled:
+    async def of_producer(self, caller: object) -> Entitlement:
+        return Entitlement(group='g-1', group_name='Reviewers', enabled={'acme.review': ['g-1'], 'acme.other': ['g-1']})
 
 
 class TestWhatTheSchemaPublishes:
