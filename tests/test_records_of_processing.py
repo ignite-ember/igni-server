@@ -35,6 +35,9 @@ import sys
 
 import pytest
 
+from app.services.subject_access.classification import ColumnRegistry
+from app.services.subject_access.schemas import ColumnClassification, DEAD, INCLUDED
+
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _GENERATOR = _ROOT / 'tools/generate_records_of_processing.py'
 _RECORD = _ROOT / 'docs/RECORDS_OF_PROCESSING.md'
@@ -167,3 +170,115 @@ def test_the_record_does_not_claim_the_vendor_is_a_processor():
     text = _RECORD.read_text().lower()
     for phrase in ('as your processor', 'we process your data', 'data processing agreement'):
         assert phrase not in text, f'the record implies a processor relationship: {phrase!r}'
+
+
+def _registry(personal, not_personal=frozenset()):
+    """A classification of only the columns given, read the way the generator reads the real one."""
+    return ColumnRegistry(personal=personal, not_personal=frozenset(not_personal))
+
+
+def _row(text, table):
+    rows = [line for line in text.splitlines() if line.startswith(f'| `{table}` |')]
+    assert len(rows) == 1, f'expected one row for {table}, found {rows}'
+    return rows[0]
+
+
+def test_the_record_names_where_the_classification_lives():
+    """A reader is sent to the code to check a column, so both paths have to exist."""
+    text = render()
+    assert '  app/services/subject_access/, which is itself asserted against' in text
+    assert '`app/services/subject_access/personal_columns.py`, with the reason' in text
+    assert (_ROOT / 'app/services/subject_access').is_dir()
+    assert (_ROOT / 'app/services/subject_access/personal_columns.py').is_file()
+    assert 'subject_access.py' not in text
+
+
+def test_each_column_lands_under_its_verdict(monkeypatch):
+    """Returned, withheld, held-but-dead and not personal each go where the
+    verdict says; a dead column counts as held but is listed nowhere."""
+    monkeypatch.setattr(
+        _GEN,
+        '_REGISTRY',
+        _registry(
+            {
+                'users.full_name': INCLUDED,
+                'users.email': INCLUDED,
+                'users.hashed_password': ColumnClassification.withheld('a hash, not the password'),
+                'users.legacy_handle': DEAD,
+            },
+            {'users.theme', 'users.locale'},
+        ),
+    )
+    text = render()
+    assert _row(text, 'users') == '| `users` | 4 | `email`, `full_name` | `hashed_password` | 2 |'
+    assert _row(text, 'org_invitations') == '| `org_invitations` | 0 | — | — | 0 |'
+    assert 'It covers **4 classified personal-data columns across 1 tables**' in text
+
+
+def test_the_real_classification_withholds_the_password_hash():
+    """One known answer from the real policy, so a verdict that flips shows
+    up as more than a drifted document."""
+    row = _row(render(), 'users').split(' | ')
+    returned, withheld = row[2], row[3]
+    assert '`email`' in returned
+    assert '`hashed_password`' not in returned
+    assert withheld == '`hashed_password`'
+
+
+def _run_main(monkeypatch, tmp_path, *args):
+    out = tmp_path / 'docs/RECORDS_OF_PROCESSING.md'
+    out.parent.mkdir(exist_ok=True)
+    monkeypatch.setattr(_GEN, '_ROOT', tmp_path)
+    monkeypatch.setattr(_GEN, 'OUT', out)
+    monkeypatch.setattr(sys, 'argv', ['generate_records_of_processing.py', *args])
+    return _GEN.main(), out
+
+
+def test_without_check_the_generator_writes_the_record(monkeypatch, tmp_path, capsys):
+    code, out = _run_main(monkeypatch, tmp_path)
+    assert code == 0
+    assert out.read_text() == render()
+    assert 'wrote docs/RECORDS_OF_PROCESSING.md' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('committed', [None, 'a record somebody edited by hand\n'])
+def test_check_fails_on_a_record_that_is_stale_or_missing(monkeypatch, tmp_path, capsys, committed):
+    out = tmp_path / 'docs/RECORDS_OF_PROCESSING.md'
+    if committed is not None:
+        out.parent.mkdir()
+        out.write_text(committed)
+    code, out = _run_main(monkeypatch, tmp_path, '--check')
+    assert code == 1
+    assert 'docs/RECORDS_OF_PROCESSING.md is out of date' in capsys.readouterr().err
+    assert (out.read_text() if out.exists() else None) == committed, '--check must not write'
+
+
+def test_a_table_with_no_activity_stops_the_generator_before_it_writes(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        _GEN,
+        '_REGISTRY',
+        _registry({**_GEN._REGISTRY.personal(), 'brand_new.email': INCLUDED}, _GEN._REGISTRY.not_personal()),
+    )
+    assert unassigned_tables() == ['brand_new']
+    code, out = _run_main(monkeypatch, tmp_path)
+    assert code == 1
+    assert "belong to no activity, so the record would omit them: ['brand_new']" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_every_migrated_table_is_accounted_for():
+    assert _GEN.unaccounted_tables() == []
+    assert _GEN.misdescribed_tables() == []
+
+
+def test_a_table_without_personal_data_has_to_be_listed(monkeypatch):
+    """Dropping a table from NO_PERSONAL_DATA leaves it unaccounted for."""
+    dropped, *rest = _GEN.NO_PERSONAL_DATA
+    monkeypatch.setattr(_GEN, 'NO_PERSONAL_DATA', tuple(rest))
+    assert _GEN.unaccounted_tables() == [dropped[0]]
+
+
+@pytest.mark.parametrize('table', ['users', 'a_table_no_migration_creates'])
+def test_no_personal_data_cannot_list_a_classified_or_missing_table(monkeypatch, table):
+    monkeypatch.setattr(_GEN, 'NO_PERSONAL_DATA', (*_GEN.NO_PERSONAL_DATA, (table, 'nothing')))
+    assert _GEN.misdescribed_tables() == [table]
