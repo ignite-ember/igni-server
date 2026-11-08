@@ -60,7 +60,7 @@ class UpstreamChatClient:
             raise UpstreamError(resp.status_code, resp.text[:500])
 
         try:
-            return UpstreamCompletion.from_raw(resp.json())
+            return UpstreamCompletion.model_validate(resp.json())
         except (ValueError, ValidationError) as exc:
             logger.error('Upstream returned %s with an unparseable body: %r', resp.status_code, resp.text[:200])
             raise UpstreamUnreadable(resp.text[:200]) from exc

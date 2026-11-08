@@ -15,7 +15,7 @@ from app.api.base_v1.schema.chat import (
     ChatMessage,
     CompletionUsage,
 )
-from app.services.ai.provider_quirks import normalise_choices, sanitise_message_sequence, sanitise_tool_call_arguments
+from app.services.ai.provider_quirks import ForwardedChunk, RepliedMessage, UpstreamConversation
 from app.services.ai.token_estimate import TokenEstimator
 
 
@@ -60,10 +60,9 @@ class UpstreamChatRequest(ChatCompletionRequest):
         A caller's own `stream_options` passes through as sent; only a
         stream that has none asks for usage.
         """
-        draft = body.model_dump(exclude_none=True)
+        draft = body.model_dump(exclude_none=True, exclude={'messages'})
         draft['model'] = model
-        sanitise_tool_call_arguments(draft)
-        sanitise_message_sequence(draft)
+        draft['messages'] = UpstreamConversation(messages=body.messages).repaired()
         if body.stream:
             draft.setdefault('stream_options', StreamOptions(include_usage=True).model_dump(exclude_none=True))
         return cls.model_validate(draft)
@@ -90,7 +89,7 @@ class UpstreamChoice(BaseModel):
     """One choice of a node's non-streamed answer."""
 
     index: int | None = None
-    message: ChatMessage
+    message: RepliedMessage
     finish_reason: str | None = None
 
 
@@ -103,13 +102,6 @@ class UpstreamCompletion(BaseModel):
     model: str = ''
     choices: list[UpstreamChoice] = Field(default_factory=list)
     usage: ReportedUsage = None
-
-    @classmethod
-    def from_raw(cls, data: Any) -> UpstreamCompletion:
-        """Normalise the provider's payload — whatever JSON it sent — then validate it. Raises `ValidationError`."""
-        if isinstance(data, dict):
-            normalise_choices(data, key='message')
-        return cls.model_validate(data)
 
     def to_response(self) -> ChatCompletionResponse:
         """The answer this server gives; a choice with no index takes its position."""
@@ -169,13 +161,15 @@ class UpstreamLine(BaseModel):
             raw = json.loads(line[6:])
         except json.JSONDecodeError:
             return cls(frame=f'{line}\n\n')
-        if isinstance(raw, dict):
-            normalise_choices(raw, key='delta')
         try:
-            chunk = StreamChunk.model_validate(raw)
+            payload = ForwardedChunk.model_validate(raw).wire()
+        except ValidationError:
+            payload = raw
+        try:
+            chunk = StreamChunk.model_validate(payload)
         except ValidationError:
             chunk = None
-        return cls(frame=f'data: {json.dumps(raw)}\n\n', chunk=chunk)
+        return cls(frame=f'data: {json.dumps(payload)}\n\n', chunk=chunk)
 
 
 class StreamUsage(BaseModel):

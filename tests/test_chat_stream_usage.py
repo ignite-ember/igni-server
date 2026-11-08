@@ -6,9 +6,10 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.api.base_v1.schema.chat import ChatCompletionRequest
+from app.api.base_v1.schema.chat import ChatCompletionRequest, ChatMessage
 from app.services.ai.chat.schemas import UpstreamChatRequest
 from app.services.ai.chat.upstream_client import UpstreamChatClient
+from app.services.ai.provider_quirks import TruncatedJson, UpstreamConversation
 from app.services.ai.upstream import UpstreamError, UpstreamFailure, UpstreamStale
 from tests.chat_proxy import context, drain, lease, request, ScriptedStreams, SpyPool, streamer, UsageRows
 
@@ -626,84 +627,68 @@ def _streamed(response: _FakeStreamResponse):
 # ── Tests for tool call argument sanitisation ────────────────────────
 
 
+def _arguments_repaired(body: dict) -> dict:
+    """*body* with its messages repaired as they would be on the way upstream."""
+    conversation = UpstreamConversation(messages=[ChatMessage.model_validate(m) for m in body['messages']])
+    return {'messages': [m.model_dump(exclude_none=True) for m in conversation.repaired()]}
+
+
 class TestRepairJsonString:
-    """Test _repair_json_string handles all cases without breaking valid input."""
+    """`TruncatedJson.closed` handles all cases without breaking valid input."""
 
     def test_valid_json_unchanged(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         valid = '{"path": "/tmp/test.txt"}'
-        assert repair_json_string(valid) == valid
+        assert TruncatedJson(value=valid).closed() == valid
 
     def test_valid_complex_json_unchanged(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         valid = json.dumps(
             {'file_path': 'x.py', 'old_string': 'def foo():\n    pass\n', 'new_string': 'def bar():\n    pass\n'}
         )
-        assert repair_json_string(valid) == valid
+        assert TruncatedJson(value=valid).closed() == valid
 
     def test_truncated_missing_closing_brace(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         broken = '{"file_path": "x.py", "old_string": "some code"'
-        result = repair_json_string(broken)
+        result = TruncatedJson(value=broken).closed()
         parsed = json.loads(result)
         assert parsed['file_path'] == 'x.py'
         assert parsed['old_string'] == 'some code'
 
     def test_truncated_mid_value(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         broken = '{"file_path": "x.py", "old_string": "def foo():\\n    return True'
-        result = repair_json_string(broken)
+        result = TruncatedJson(value=broken).closed()
         parsed = json.loads(result)
         assert parsed['file_path'] == 'x.py'
         assert 'foo' in parsed['old_string']
 
     def test_valid_with_escaped_quotes(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         valid = json.dumps({'code': 'he said "hello"'})
-        assert repair_json_string(valid) == valid
+        assert TruncatedJson(value=valid).closed() == valid
 
     def test_valid_with_newlines(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         valid = json.dumps({'code': 'line1\nline2\nline3'})
-        assert repair_json_string(valid) == valid
+        assert TruncatedJson(value=valid).closed() == valid
 
     def test_valid_with_unicode(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         valid = json.dumps({'text': 'hello — world • émoji'})
-        assert repair_json_string(valid) == valid
+        assert TruncatedJson(value=valid).closed() == valid
 
     def test_empty_object_valid(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
-        assert repair_json_string('{}') == '{}'
+        assert TruncatedJson(value='{}').closed() == '{}'
 
     def test_simple_args_valid(self):
-        from app.services.ai.provider_quirks import repair_json_string
-
         valid = '{"path": "."}'
-        assert repair_json_string(valid) == valid
+        assert TruncatedJson(value=valid).closed() == valid
 
     def test_kwargs_wrapped_valid(self):
         """Double-encoded kwargs — valid JSON, should not be modified."""
-        from app.services.ai.provider_quirks import repair_json_string
-
         valid = json.dumps({'kwargs': json.dumps({'path': '.'})})
-        assert repair_json_string(valid) == valid
+        assert TruncatedJson(value=valid).closed() == valid
 
 
 class TestSanitiseToolCallArguments:
-    """Test _sanitise_tool_call_arguments fixes broken args without touching valid ones."""
+    """`UpstreamConversation` fixes broken args without touching valid ones."""
 
     def test_valid_messages_unchanged(self):
-        from app.services.ai.provider_quirks import sanitise_tool_call_arguments
-
         body = {
             'messages': [
                 {'role': 'user', 'content': 'hi'},
@@ -722,12 +707,10 @@ class TestSanitiseToolCallArguments:
             ]
         }
         original_args = body['messages'][1]['tool_calls'][0]['function']['arguments']
-        sanitise_tool_call_arguments(body)
+        body = _arguments_repaired(body)
         assert body['messages'][1]['tool_calls'][0]['function']['arguments'] == original_args
 
     def test_broken_arguments_repaired(self):
-        from app.services.ai.provider_quirks import sanitise_tool_call_arguments
-
         body = {
             'messages': [
                 {
@@ -746,28 +729,24 @@ class TestSanitiseToolCallArguments:
                 },
             ]
         }
-        sanitise_tool_call_arguments(body)
+        body = _arguments_repaired(body)
         fixed = body['messages'][0]['tool_calls'][0]['function']['arguments']
         parsed = json.loads(fixed)
         assert parsed['file_path'] == 'x.py'
 
     def test_messages_without_tool_calls_untouched(self):
-        from app.services.ai.provider_quirks import sanitise_tool_call_arguments
-
         body = {
             'messages': [
                 {'role': 'user', 'content': 'hello'},
                 {'role': 'assistant', 'content': 'hi there'},
             ]
         }
-        sanitise_tool_call_arguments(body)
+        body = _arguments_repaired(body)
         assert body['messages'][0]['content'] == 'hello'
         assert body['messages'][1]['content'] == 'hi there'
 
     def test_multiple_tool_calls_mixed(self):
         """One valid, one broken — only the broken one gets fixed."""
-        from app.services.ai.provider_quirks import sanitise_tool_call_arguments
-
         valid_args = '{"path": "."}'
         broken_args = '{"file_path": "x.py", "old_string": "truncated'
         body = {
@@ -782,7 +761,7 @@ class TestSanitiseToolCallArguments:
                 },
             ]
         }
-        sanitise_tool_call_arguments(body)
+        body = _arguments_repaired(body)
         # Valid one untouched
         assert body['messages'][0]['tool_calls'][0]['function']['arguments'] == valid_args
         # Broken one repaired
@@ -795,8 +774,6 @@ class TestSanitiseToolCallArguments:
         The model generates a valid JSON object but it gets truncated before
         the closing brace — e.g. the new_string field and } are missing.
         """
-        from app.services.ai.provider_quirks import sanitise_tool_call_arguments
-
         # Build a valid arguments dict, serialize, then chop off the end
         full_args = json.dumps(
             {
@@ -829,7 +806,7 @@ class TestSanitiseToolCallArguments:
         with pytest.raises(json.JSONDecodeError):
             json.loads(broken_args)
 
-        sanitise_tool_call_arguments(body)
+        body = _arguments_repaired(body)
         fixed = body['messages'][0]['tool_calls'][0]['function']['arguments']
         parsed = json.loads(fixed)
         assert parsed['file_path'] == 'crud.py'

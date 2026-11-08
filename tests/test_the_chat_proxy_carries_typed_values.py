@@ -107,7 +107,7 @@ class TestSwitchingNodes:
 class TestANonStreamedAnswer:
     def test_missing_fields_take_their_defaults(self):
         """A choice with no index takes its position; an empty usage is none; null content is ''."""
-        completion = UpstreamCompletion.from_raw(
+        completion = UpstreamCompletion.model_validate(
             {'choices': [{'message': {'role': 'assistant', 'content': None}}, {'index': 5, 'message': {'role': 'a'}}]}
         )
 
@@ -148,7 +148,7 @@ class TestANonStreamedAnswer:
         }
 
     def test_a_reported_usage_is_kept(self):
-        completion = UpstreamCompletion.from_raw({'usage': {'prompt_tokens': 2, 'total_tokens': 2}})
+        completion = UpstreamCompletion.model_validate({'usage': {'prompt_tokens': 2, 'total_tokens': 2}})
 
         assert completion.to_response().usage == CompletionUsage(prompt_tokens=2, completion_tokens=0, total_tokens=2)
 
