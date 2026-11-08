@@ -46,7 +46,7 @@ from app.db.sql.team import TeamDB
 from app.security import jose
 from app.security.membership_sessions import MembershipSessions
 from app.security.service_caller import REVOCATIONS_SCOPE
-from app.security.subject import require_existing_user
+from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, TokenUse
 from app.services.identity.assertions import ClientAssertions
 from app.services.identity.errors import OAuthError
@@ -131,10 +131,12 @@ class PersonInOrganisation(BaseModel):
     super_admin: bool
 
     @classmethod
-    async def check(cls, user_id: str, org_id: str, *, issued_at: int | None) -> PersonInOrganisation:
+    async def check(
+        cls, user_id: str, org_id: str, *, issued_at: int | None, subjects: Subjects
+    ) -> PersonInOrganisation:
         """The person, still allowed and still in the organisation, or `invalid_grant`."""
         try:
-            user = await require_existing_user(user_id, issued_at=issued_at)
+            user = await subjects.require_existing_user(user_id, issued_at=issued_at)
         except HTTPException as exc:
             raise OAuthError.invalid_grant('this person can no longer sign in') from exc
         membership = await TeamDB().get_active_member(org_id, user_id)
@@ -182,10 +184,12 @@ class TokenGrants:
         assertions: ClientAssertions | None = None,
         codes: AuthorizationCodeDB | None = None,
         tokens: JWTService | None = None,
+        subjects: Subjects | None = None,
     ) -> None:
         self._assertions = assertions or ClientAssertions()
         self._codes = codes or AuthorizationCodeDB()
         self._tokens = tokens or JWTService()
+        self._subjects = subjects or Subjects(tokens=self._tokens)
 
     @property
     def token_endpoint(self) -> str:
@@ -346,7 +350,9 @@ class TokenGrants:
             raise OAuthError.invalid_grant('redirect_uri does not match the one the code was issued for')
         if not Pkce.matches(request.code_verifier, pending.code_challenge):
             raise OAuthError.invalid_grant('code_verifier does not match the code challenge')
-        person = await PersonInOrganisation.check(pending.user_id, pending.org_id, issued_at=pending.session_issued_at)
+        person = await PersonInOrganisation.check(
+            pending.user_id, pending.org_id, issued_at=pending.session_issued_at, subjects=self._subjects
+        )
         # A new sign-in: every refresh token issued from here on carries its id.
         return self._for_person(client, person, grant_id=uuid.uuid4().hex)
 
@@ -359,7 +365,7 @@ class TokenGrants:
         if not grant_id or await RevokedGrantDB().is_revoked(grant_id):
             raise OAuthError.invalid_grant('this sign-in has been revoked')
         person = await PersonInOrganisation.check(
-            str(payload['sub']), str(payload.get('org') or ''), issued_at=int(payload['iat'])
+            str(payload['sub']), str(payload.get('org') or ''), issued_at=int(payload['iat']), subjects=self._subjects
         )
         return self._for_person(client, person, grant_id=grant_id)
 
@@ -383,7 +389,9 @@ class TokenGrants:
             raise OAuthError.invalid_request('organisation is required: this session is not pinned to one')
         if claims.org_id and org_id != claims.org_id:
             raise OAuthError.invalid_target('this session is pinned to a different organisation')
-        person = await PersonInOrganisation.check(claims.user_id, org_id, issued_at=claims.issued_at)
+        person = await PersonInOrganisation.check(
+            claims.user_id, org_id, issued_at=claims.issued_at, subjects=self._subjects
+        )
         issued = IssuedTokens(
             access_token=self._access(audience, person, claims={}),
             expires_in=int(ACCESS_LIFETIME.total_seconds()),

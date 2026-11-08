@@ -235,5 +235,5 @@ class JWTService:
     # job was to produce a subject nobody had verified still exists — and
     # it was the convenient way to do half of an authorisation check
     # while reading like the whole of one. Both callers now use
-    # ``app.security.subject.resolve_existing_user_id``, which cannot be
+    # ``app.security.subject.Subjects.resolve_existing_user_id``, which cannot be
     # used to do half. F122.

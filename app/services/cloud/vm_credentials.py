@@ -58,6 +58,7 @@ from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.revocations import FeedSignals
 from app.db.sql.vm_credentials import Rotation, VmCredentialsDB
 from app.security.producer import ProducerCaller, ProducerRef
+from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, PERSON, TokenUse
 from app.services.cloud.volume_sizes import VolumeSizes
 from app.services.identity.errors import OAuthError
@@ -165,9 +166,10 @@ class PickedUp(BaseModel):
 
 
 class VmCredentials:
-    def __init__(self, *, organizations: OrganizationDB | None = None) -> None:
+    def __init__(self, *, organizations: OrganizationDB | None = None, subjects: Subjects | None = None) -> None:
         self._db = VmCredentialsDB()
         self._organizations = organizations or OrganizationDB()
+        self._subjects = subjects or Subjects()
 
     @staticmethod
     def record(org_id: str, row: VmCredential) -> VmCredentialRecord:
@@ -229,7 +231,7 @@ class VmCredentials:
             raise OAuthError.invalid_request('organisation is required: this session is not pinned to one')
         if claims.org_id and org_id != claims.org_id:
             raise OAuthError.invalid_target('this session is pinned to a different organisation')
-        await PersonInOrganisation.check(claims.user_id, org_id, issued_at=claims.issued_at)
+        await PersonInOrganisation.check(claims.user_id, org_id, issued_at=claims.issued_at, subjects=self._subjects)
         row, credential = await self.issue(
             org_id, ProducerRef(kind=PERSON, id=claims.user_id), by_kind=PERSON, by_id=claims.user_id, for_pickup=False
         )
@@ -284,7 +286,9 @@ class VmCredentials:
                 raise OAuthError.invalid_grant('this app is no longer registered')
             return
         try:
-            await PersonInOrganisation.check(row.producer_id, org_id, issued_at=int(row.created_at.timestamp()))
+            await PersonInOrganisation.check(
+                row.producer_id, org_id, issued_at=int(row.created_at.timestamp()), subjects=self._subjects
+            )
         except OAuthError:
             await self._db.revoke(org_id, row.id, reason=SIGNED_OUT, by_id=None)
             raise

@@ -260,7 +260,7 @@ class TestTheSweep:
             + '\n  '.join(allowed)
             + '\n\nA signed token cannot be withdrawn before it expires, so removing the '
             'account is the only revocation an operator has. Every route that trusts a user '
-            'token must resolve it through `app.security.subject.require_existing_user`.'
+            'token must resolve it through `app.security.subject.Subjects.require_existing_user`.'
         )
 
     def test_every_entry_in_both_maps_belongs_to_a_live_route(self):
@@ -342,11 +342,11 @@ class TestTheTwoPathsThatWereWrong:
         """
         from fastapi import HTTPException
 
-        from app.security.subject import require_existing_user
+        from app.security.subject import Subjects
 
         with pytest.raises(HTTPException) as caught:
             # `issued_at` became required in B5: a caller without one
             # has not decoded a token and should not be asking.
-            await require_existing_user('nobody-at-all', issued_at=None)
+            await Subjects().require_existing_user('nobody-at-all', issued_at=None)
 
         assert str(caught.value.detail) == 'Invalid or expired token'

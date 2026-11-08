@@ -182,7 +182,7 @@ class TestASweepOverTheWholeSurface:
             'these served somebody who has been deprovisioned:\n  '
             + '\n  '.join(allowed)
             + '\n\nDeactivation is recorded on the account and enforced in '
-            '`app.security.subject.require_existing_user`. A route reaching the handler '
+            '`app.security.subject.Subjects.require_existing_user`. A route reaching the handler '
             'without passing through it is a route an ex-employee keeps.'
         )
 

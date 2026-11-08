@@ -13,7 +13,7 @@ from app.db.sql.user import UserDB
 from app.middlewares.request_audit import RequestAudit
 from app.security.bypass_identity import BYPASS_EMAIL, BYPASS_FULL_NAME, BYPASS_ORG_ID, BYPASS_USER_ID
 from app.security.membership_sessions import MembershipSessions
-from app.security.subject import require_existing_user
+from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ async def _resolve(
     # deleted account kept working for the 30 days its token had left,
     # and the org resolution below *created* a fresh organisation for
     # them, with `admin`. F122.
-    local_user = await require_existing_user(user_id, issued_at=claims.issued_at)
+    local_user = await Subjects().require_existing_user(user_id, issued_at=claims.issued_at)
     email = str(local_user.email) if local_user.email else None
     full_name = str(local_user.full_name) if local_user.full_name else None
 

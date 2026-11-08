@@ -207,7 +207,7 @@ class TestTheSweep:
             'these accepted a token minted before the holder withdrew their sessions:\n  '
             + '\n  '.join(allowed)
             + '\n\nEvery route that trusts a user token must resolve it through '
-            '`app.security.subject.require_existing_user`, which is where the '
+            '`app.security.subject.Subjects.require_existing_user`, which is where the '
             '`tokens_valid_after` watermark is compared (DEC-10).'
         )
 

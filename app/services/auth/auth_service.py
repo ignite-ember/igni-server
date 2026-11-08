@@ -13,7 +13,7 @@ from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.security.account_domains import refuse_public_mail
 from app.security.membership_sessions import MembershipSessions
-from app.security.subject import refuse_if_deactivated, require_existing_user
+from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, TokenResponse
 from app.services.auth.otp_service import OTPResult, OTPService
 from app.services.identity.account_refusals import AccountRefusals
@@ -90,7 +90,7 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail='Invalid email or password',
             )
-        refuse_if_deactivated(user)
+        Subjects.refuse_if_deactivated(user)
         token = JWTService().create_token(str(user.user_id))
         await _user_db.note_sign_in(str(user.user_id))
         return TokenResponse(access_token=token)
@@ -196,7 +196,7 @@ class AuthService:
         # authorisation left. F122. It also carries the revocation check
         # now (B5), which matters most here: this is the path that spends
         # the customer's GPU.
-        await require_existing_user(user_id, issued_at=claims.issued_at)
+        await Subjects().require_existing_user(user_id, issued_at=claims.issued_at)
 
         resolved_org_id = org_id or claims.org_id
         if not resolved_org_id:

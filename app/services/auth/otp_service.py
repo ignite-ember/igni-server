@@ -36,7 +36,7 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.db.redis.sealed import seal, unseal
 from app.db.sql.user import UserDB
-from app.security.subject import refuse_if_deactivated
+from app.security.subject import Subjects
 from app.services.auth.code_throttle import CodeThrottle
 from app.services.auth.jwt_service import JWTService, TokenResponse
 from app.services.identity.account_refusals import AccountRefusals
@@ -294,7 +294,7 @@ class OTPService(metaclass=SingletonMeta):
                 detail='User not found',
             )
 
-        refuse_if_deactivated(user)
+        Subjects.refuse_if_deactivated(user)
         token = JWTService().create_token(str(user.user_id))
         await self._users.note_sign_in(str(user.user_id))
         return TokenResponse(access_token=token)

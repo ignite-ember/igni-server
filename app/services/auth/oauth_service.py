@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.db.redis.oauth_state import OAuthStateDB
 from app.db.sql.user import UserDB
-from app.security.subject import refuse_if_deactivated
+from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService, TokenResponse
 from app.services.identity.account_refusals import AccountRefusals
 
@@ -190,7 +190,7 @@ class OAuthService:
 
         user = await _user_db.get_by_email(user_info.email)
 
-        refuse_if_deactivated(user)
+        Subjects.refuse_if_deactivated(user)
 
         if not user:
             random_pw = secrets.token_urlsafe(16)
