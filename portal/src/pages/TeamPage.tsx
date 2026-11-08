@@ -40,12 +40,7 @@ import { SkeletonText } from '@primer/react/experimental'
 import type { InvitedMember, TeamMember, TeamMemberList, TeamRole, TeamMemberStatus, UserMe } from '../types'
 import './TeamPage.css'
 import { countOf } from '../utils/plural'
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return n.toLocaleString()
-}
+import { formatTokens } from '../utils/formatTokens'
 
 function RoleBadge({ role }: { role: TeamRole }) {
   switch (role) {
