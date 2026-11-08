@@ -22,7 +22,7 @@ from app.monitoring import BUILD_INFO
 from app.monitoring.clock_skew import ClockSkew
 from app.monitoring.router import router as metrics_router
 from app.observability.log_format import configure as configure_logging
-from app.observability.otel import ServerTelemetry
+from app.observability.otel import ProcessTelemetry
 from app.security.startup_checks import (
     check_deployment,
     check_no_bypass_identity_in_database,
@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     feed_started.cancel()
     await clock_skew.stop()
     # The traces still held go to the collector before the process ends.
-    ServerTelemetry.flush()
+    ProcessTelemetry().flush()
 
     logger.info('Application shutdown complete')
 
@@ -199,7 +199,7 @@ def create_app() -> FastAPI:
     # OTEL_EXPORTER_OTLP_ENDPOINT names one; with none nothing is built.
     # After the middleware above, so the request span is the outermost
     # thing a request passes through. docs/observability.md §5.
-    ServerTelemetry.start(application, settings.otel)
+    ProcessTelemetry().start(application, settings.otel)
 
     return application
 

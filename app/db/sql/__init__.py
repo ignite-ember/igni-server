@@ -13,7 +13,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine, AsyncSession, create_async_engine
 
 from app.config import settings
-from app.observability.otel import ServerTelemetry
+from app.observability.otel import ProcessTelemetry
 from app.utils.singleton import SingletonMeta
 
 logger = logging.getLogger(__name__)
@@ -151,7 +151,7 @@ class SQLAlchemySessionManager(metaclass=SingletonMeta):
                 max_overflow=settings.db_max_overflow,
                 pool_timeout=settings.db_pool_timeout,
             )
-            ServerTelemetry.watch_engine(engine)
+            ProcessTelemetry().watch_engine(engine)
             factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
             entry = EngineEntry(engine=engine, factory=factory)
             pools[database] = entry

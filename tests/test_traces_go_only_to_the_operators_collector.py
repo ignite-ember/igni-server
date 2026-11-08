@@ -103,8 +103,13 @@ def relay_app(upstream_url: str) -> FastAPI:
 def _clean(monkeypatch: pytest.MonkeyPatch):
     for name in _OTEL_VARIABLES:
         monkeypatch.delenv(name, raising=False)
-    yield
-    ServerTelemetry.stop()
+
+
+@pytest.fixture
+def telemetry():
+    telemetry = ServerTelemetry()
+    yield telemetry
+    telemetry.stop()
 
 
 def configured(endpoint: str = 'http://otel-collector:4318') -> OtelConfig:
@@ -112,21 +117,21 @@ def configured(endpoint: str = 'http://otel-collector:4318') -> OtelConfig:
 
 
 class TestNoCollectorNoTracing:
-    def test_with_no_endpoint_nothing_is_set_up(self):
+    def test_with_no_endpoint_nothing_is_set_up(self, telemetry):
         config = OtelConfig()
         app = FastAPI()
 
-        started = ServerTelemetry.start(app, config)
+        started = telemetry.start(app, config)
 
         assert config.enabled is False
         assert started.ok is False and started.reason == ''
-        assert ServerTelemetry._provider is None
+        assert not telemetry.tracing
         assert not HTTPXClientInstrumentor().is_instrumented_by_opentelemetry
         assert not getattr(app, '_is_instrumented_by_opentelemetry', False)
         assert not isinstance(otel_trace.get_tracer_provider(), TracerProvider)
 
-    def test_an_endpoint_that_is_not_a_url_is_refused(self, caplog):
-        started = ServerTelemetry.start(FastAPI(), configured('otel-collector:4318'))
+    def test_an_endpoint_that_is_not_a_url_is_refused(self, telemetry, caplog):
+        started = telemetry.start(FastAPI(), configured('otel-collector:4318'))
 
         assert started.ok is False
         assert 'not an http:// or https:// URL' in caplog.text
@@ -157,17 +162,17 @@ class TestTheEndpointIsTheOperators:
 
 
 class TestWhatIsTraced:
-    def test_a_request_is_traced_without_its_body(self):
+    def test_a_request_is_traced_without_its_body(self, telemetry):
         exported = InMemorySpanExporter()
         with Upstream() as upstream:
             app = relay_app(upstream.url)
-            assert ServerTelemetry.start(app, configured(), span_exporter=exported).ok
+            assert telemetry.start(app, configured(), span_exporter=exported).ok
             response = TestClient(app).post(
                 f'/v1/relay?code={QUERY_SECRET}',
                 json={'source': BODY_SECRET},
                 headers={'traceparent': TRACEPARENT, 'user-agent': 'igni-cli/1.0'},
             )
-            ServerTelemetry.flush()
+            telemetry.flush()
 
         assert response.status_code == 200
         spans = exported.get_finished_spans()
@@ -186,22 +191,22 @@ class TestWhatIsTraced:
         for leaked in (BODY_SECRET, QUERY_SECRET, 'igni-cli/1.0', '127.0.0.1:'):
             assert leaked not in everything, f'{leaked!r} was exported'
 
-    def test_a_statement_is_traced_on_an_engine_the_database_layer_reports(self):
+    def test_a_statement_is_traced_on_an_engine_the_database_layer_reports(self, telemetry):
         exported = InMemorySpanExporter()
-        assert ServerTelemetry.start(FastAPI(), configured(), span_exporter=exported).ok
+        assert telemetry.start(FastAPI(), configured(), span_exporter=exported).ok
         engine = create_engine('sqlite://')
-        ServerTelemetry.watch_engine(engine)
+        telemetry.watch_engine(engine)
 
         with engine.connect() as connection:
             connection.execute(text('SELECT 1 WHERE 1 = :one'), {'one': 1})
-        ServerTelemetry.flush()
+        telemetry.flush()
 
         (statement,) = [s for s in exported.get_finished_spans() if s.attributes.get('db.system') == 'sqlite']
         assert 'SELECT 1 WHERE 1 = ?' in str(statement.attributes.get('db.statement'))
 
-    def test_an_engine_reported_while_off_is_left_alone(self):
+    def test_an_engine_reported_while_off_is_left_alone(self, telemetry):
         engine = create_engine('sqlite://')
-        ServerTelemetry.watch_engine(engine)
+        telemetry.watch_engine(engine)
 
         with engine.connect() as connection:
             assert connection.execute(text('SELECT 1')).scalar() == 1

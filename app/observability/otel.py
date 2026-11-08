@@ -11,7 +11,7 @@ instrumentation, no exporter. With one, three instrumentations feed it:
   the inference nodes, the modules and anything else igni server calls, so
   one trace follows a request across the deployment.
 * **SQLAlchemy** — a span per statement, on every engine the database
-  layer reports through :meth:`ServerTelemetry.watch_engine`. The
+  layer reports through :meth:`ProcessTelemetry.watch_engine`. The
   statement is the parameterised SQL; bound values are not recorded.
 
 **Not exported:** request and response bodies (no instrumentation here
@@ -47,6 +47,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import OtelConfig
+from app.utils.singleton import SingletonMeta
 
 logger = logging.getLogger(__name__)
 
@@ -124,21 +125,25 @@ class TelemetryStart(BaseModel):
 
 
 class ServerTelemetry:
-    """The process's one tracer provider, or none.
+    """One tracer provider and what it instruments, or none.
 
-    Held on the class: the instrumentations it feeds are process-wide (httpx's
-    transports and the engines' event listeners are patched once for the whole
-    process), and the database layer reports engines from wherever it makes
-    them.
+    Plain instance state, so a test builds its own and stops it. The
+    process's one is :class:`ProcessTelemetry`.
     """
 
-    _provider: ClassVar[TracerProvider | None] = None
-    _app: ClassVar[FastAPI | None] = None
     #: Paths not traced: scrapes and probes, many times a minute.
     EXCLUDED_URLS: ClassVar[str] = '/metrics$,/health$,/ready$,/version$'
 
-    @classmethod
-    def start(cls, app: FastAPI, config: OtelConfig, *, span_exporter: SpanExporter | None = None) -> TelemetryStart:
+    def __init__(self) -> None:
+        self._provider: TracerProvider | None = None
+        self._app: FastAPI | None = None
+
+    @property
+    def tracing(self) -> bool:
+        """Whether :meth:`start` built a provider that has not been stopped."""
+        return self._provider is not None
+
+    def start(self, app: FastAPI, config: OtelConfig, *, span_exporter: SpanExporter | None = None) -> TelemetryStart:
         """Trace ``app`` to ``config``'s collector, if one is named.
 
         ``span_exporter`` replaces the OTLP exporter, for tests.
@@ -153,17 +158,17 @@ class ServerTelemetry:
             )
             logger.warning(reason)
             return TelemetryStart(ok=False, reason=reason)
-        cls.stop()
+        self.stop()
         provider = TracerProvider(resource=Resource.create({'service.name': config.service_name}))
-        provider.add_span_processor(BatchSpanProcessor(ScrubbingExporter(span_exporter or cls._otlp(config))))
+        provider.add_span_processor(BatchSpanProcessor(ScrubbingExporter(span_exporter or self._otlp(config))))
         FastAPIInstrumentor.instrument_app(
             app,
             tracer_provider=provider,
-            excluded_urls=cls.EXCLUDED_URLS,
+            excluded_urls=self.EXCLUDED_URLS,
             exclude_spans=['receive', 'send'],
         )
         HTTPXClientInstrumentor().instrument(tracer_provider=provider)
-        cls._provider, cls._app = provider, app
+        self._provider, self._app = provider, app
         logger.info('Exporting OpenTelemetry traces to %s (%s).', config.endpoint, config.exporter_otlp_protocol)
         return TelemetryStart(ok=True)
 
@@ -174,29 +179,26 @@ class ServerTelemetry:
             return GrpcSpanExporter(endpoint=base, headers=config.headers(), insecure=base.startswith('http://'))
         return HttpSpanExporter(endpoint=f'{base}/v1/traces', headers=config.headers())
 
-    @classmethod
-    def watch_engine(cls, engine: AsyncEngine | Engine) -> None:
+    def watch_engine(self, engine: AsyncEngine | Engine) -> None:
         """Trace ``engine``'s statements. The database layer calls this for every engine it makes."""
-        if cls._provider is None:
+        if self._provider is None:
             return
         sync_engine = engine.sync_engine if isinstance(engine, AsyncEngine) else engine
         meter = NoOpMeterProvider().get_meter(__name__)
         EngineTracer(
-            cls._provider.get_tracer('app.db'),
+            self._provider.get_tracer('app.db'),
             sync_engine,
             meter.create_up_down_counter('db.client.connections.usage'),
         )
 
-    @classmethod
-    def flush(cls) -> None:
-        if cls._provider is not None:
-            cls._provider.force_flush()
+    def flush(self) -> None:
+        if self._provider is not None:
+            self._provider.force_flush()
 
-    @classmethod
-    def stop(cls) -> None:
+    def stop(self) -> None:
         """Export what is held and stop instrumenting. Safe when not started."""
-        provider, app = cls._provider, cls._app
-        cls._provider, cls._app = None, None
+        provider, app = self._provider, self._app
+        self._provider, self._app = None, None
         if provider is None:
             return
         if app is not None:
@@ -204,3 +206,14 @@ class ServerTelemetry:
         HTTPXClientInstrumentor().uninstrument()
         EngineTracer.remove_all_event_listeners()
         provider.shutdown()
+
+
+class ProcessTelemetry(ServerTelemetry, metaclass=SingletonMeta):
+    """The process's one :class:`ServerTelemetry`.
+
+    A singleton, like the ``*DB`` classes and for the same reason: what it
+    instruments is process-wide (httpx's transports and the engines' event
+    listeners are patched once for the whole process), and the database
+    layer reports engines from wherever it makes them, with no request or
+    app in hand to carry an instance.
+    """
