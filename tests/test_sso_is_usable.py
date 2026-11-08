@@ -138,7 +138,7 @@ class TestPkce:
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni', raising=False)
         monkeypatch.setattr(settings, 'oidc_client_secret', 'shh', raising=False)
         monkeypatch.setattr(OidcClient, 'discover', _discovery)
-        monkeypatch.setattr(OAuthService, 'generate_state', _capture)
+        monkeypatch.setattr(OAuthService, 'generate_state', staticmethod(_capture))
 
         response = await client.get('/auth/oidc', follow_redirects=False)
 
@@ -173,7 +173,7 @@ class TestPkce:
         monkeypatch.setattr(settings, 'oidc_issuer', 'https://idp.example.com', raising=False)
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni', raising=False)
         monkeypatch.setattr(settings, 'oidc_client_secret', 'shh', raising=False)
-        monkeypatch.setattr(OAuthService, 'validate_state', _state)
+        monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(_state))
         monkeypatch.setattr(OidcClient, 'exchange', _exchange)
 
         response = await client.get('/auth/oidc/callback?code=injected&state=s', follow_redirects=False)

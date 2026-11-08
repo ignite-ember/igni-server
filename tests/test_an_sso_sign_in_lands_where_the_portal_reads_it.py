@@ -51,7 +51,7 @@ def configured(monkeypatch):
 
 
 async def _callback(client, return_to: str = ''):
-    state = await OAuthService.generate_state(OidcSignInState(nonce='n-1', pkce='v' * 43, returnTo=return_to))
+    state = await OAuthService().generate_state(OidcSignInState(nonce='n-1', pkce='v' * 43, returnTo=return_to))
     return await client.get(f'/auth/oidc/callback?code=x&state={state}', follow_redirects=False)
 
 

@@ -7,14 +7,16 @@ Google credentials, which is what a deployment offering it would do.
 
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import HTTPException
 import httpx
 import pytest
 from sqlalchemy import select
 
 from app.config import settings
 from app.db.sql.models.org_membership import OrgMembership
-from app.services.auth.oauth_service import OAuthExchangeFailed, OAuthProvider, OAuthService, OAuthUserInfo
+from app.services.auth.google_sign_in import GoogleSignIn
+from app.services.auth.oauth_errors import OAuthExchangeFailed, ProviderAnswerRefused
+from app.services.auth.oauth_models import OAuthProvider, OAuthUserInfo
+from app.services.auth.oauth_service import OAuthService
 from app.services.email.delivery import EmailDelivery
 from app.services.email.service import EmailService
 from tests.conftest import add_invited_member, create_org, create_user
@@ -242,37 +244,37 @@ class TestWhatTheCallbackDoesAroundTheSignIn:
         assert 'code' not in query
         assert 'invalid_grant' not in query['error'][0], 'the upstream reason reached the URL'
 
-    async def test_a_transport_failure_is_an_exchange_failure(self, monkeypatch):
+    async def test_a_transport_failure_is_an_exchange_failure(self):
         """What the callback catches is named by the service, so the
         router does not need to know which HTTP client it uses."""
 
-        async def unreachable(code):
-            raise httpx.ConnectError('no route to host')
-
-        monkeypatch.setattr(OAuthService, '_google_exchange_and_get_user', staticmethod(unreachable))
+        class Unreachable(GoogleSignIn):
+            async def exchange(self, code: str) -> OAuthUserInfo:
+                raise httpx.ConnectError('no route to host')
 
         with pytest.raises(OAuthExchangeFailed) as caught:
-            await OAuthService.exchange_and_get_user(OAuthProvider.GOOGLE, 'c')
+            await OAuthService(google=Unreachable()).exchange_and_get_user(OAuthProvider.GOOGLE, 'c')
 
         assert isinstance(caught.value.__cause__, httpx.ConnectError)
 
     async def test_a_refusal_the_server_raises_is_not_turned_into_a_redirect(self, client, monkeypatch):
-        """An HTTPException from the sign-in itself — a person the
-        deployment refuses — keeps its status rather than being folded
-        into the generic failure redirect."""
+        """A refusal from the sign-in itself — an answer the server
+        will not take — keeps its status rather than being folded into
+        the generic failure redirect."""
 
         async def fake_validate_state(_state, shape):
             return shape()
 
         async def refusing_exchange(provider, code):
-            raise HTTPException(status_code=403, detail='not allowed here')
+            raise ProviderAnswerRefused('Could not retrieve email from Google')
 
         monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(fake_validate_state))
         monkeypatch.setattr(OAuthService, 'exchange_and_get_user', staticmethod(refusing_exchange))
 
         resp = await client.get('/auth/google/callback?code=c&state=s', follow_redirects=False)
 
-        assert resp.status_code == 403
+        assert resp.status_code == 400
+        assert 'Could not retrieve email' in resp.text
 
 
 class TestFindOrCreateUser:
@@ -284,7 +286,7 @@ class TestFindOrCreateUser:
             provider='google',
         )
 
-        result = await OAuthService.find_or_create_user_and_get_token(user_info)
+        result = await OAuthService().find_or_create_user_and_get_token(user_info)
 
         assert result.is_new_user is True
         assert result.email == 'brand-new@test.com'
@@ -300,7 +302,7 @@ class TestFindOrCreateUser:
             provider='google',
         )
 
-        result = await OAuthService.find_or_create_user_and_get_token(user_info)
+        result = await OAuthService().find_or_create_user_and_get_token(user_info)
 
         assert result.is_new_user is False
         assert result.email == 'existing-oauth@test.com'

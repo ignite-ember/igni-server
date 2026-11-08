@@ -9,10 +9,14 @@ from fastapi.responses import RedirectResponse
 from app.api.base_v1.schema.oauth import SocialSignInState
 from app.config import settings
 from app.db.redis.auth_handoff import auth_handoff, AuthHandoffDB
-from app.db.sql.schemas.org_domain import AdmissionRefused
 from app.services.auth.auth_emails import auth_emails, AuthEmails
-from app.services.auth.oauth_service import OAuthExchangeFailed, OAuthProvider, OAuthService
+from app.services.auth.auth_refusals import AuthRefusals
+from app.services.auth.oauth_errors import OAuthExchangeFailed
+from app.services.auth.oauth_models import OAuthProvider
+from app.services.auth.oauth_refusals import OAuthRefusals
+from app.services.auth.oauth_service import oauth_service, OAuthService
 from app.services.auth.providers import is_usable
+from app.services.identity.account_refusals import AccountRefusals
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +63,12 @@ def _to_login(query: dict[str, str]) -> RedirectResponse:
 async def oauth_redirect(
     provider: str,
     returnTo: str = Query(default='', alias='returnTo'),
+    oauth: OAuthService = Depends(oauth_service),
 ):
     resolved = await _resolve_provider(provider)
 
-    state = await OAuthService.generate_state(SocialSignInState(returnTo=returnTo))
-    url = await OAuthService.get_authorize_url(resolved, state)
+    state = await oauth.generate_state(SocialSignInState(returnTo=returnTo))
+    url = oauth.get_authorize_url(resolved, state)
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
 
@@ -78,12 +83,15 @@ async def oauth_callback(
     state: str = Query(...),
     emails: AuthEmails = Depends(auth_emails),
     handoff: AuthHandoffDB = Depends(auth_handoff),
+    oauth: OAuthService = Depends(oauth_service),
 ):
     resolved = await _resolve_provider(provider)
-    signin = await OAuthService.validate_state(state, SocialSignInState)
+    with OAuthRefusals():
+        signin = await oauth.validate_state(state, SocialSignInState)
 
     try:
-        user_info = await OAuthService.exchange_and_get_user(resolved, code)
+        with OAuthRefusals():
+            user_info = await oauth.exchange_and_get_user(resolved, code)
     except OAuthExchangeFailed as exc:
         # The cause goes to the log, not into the URL: it was `str(e)`
         # in the redirect, which showed the person an upstream error
@@ -91,10 +99,8 @@ async def oauth_callback(
         logger.warning('OAuth exchange with %s failed', resolved.value, exc_info=exc)
         return _to_login({'error': 'OAuth sign-in failed. Please try again.'})
 
-    try:
-        result = await OAuthService.find_or_create_user_and_get_token(user_info)
-    except AdmissionRefused as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    with AuthRefusals(), AccountRefusals():
+        result = await oauth.find_or_create_user_and_get_token(user_info)
     if result.is_new_user:
         emails.welcome(bg, email=result.email)
 

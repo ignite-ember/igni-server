@@ -158,7 +158,7 @@ class _SlowProvider(BaseHTTPRequestHandler):
 class TestTheBehaviour:
     """The rule above is static. This is the thing it protects."""
 
-    async def test_a_slow_sign_in_does_not_stall_everything_else(self, monkeypatch):
+    async def test_a_slow_sign_in_does_not_stall_everything_else(self):
         """Both requests from one starting gun.
 
         The first version of this measurement started its clock *after*
@@ -168,16 +168,21 @@ class TestTheBehaviour:
         common start.
         """
         from app.main import app
-        import app.services.auth.oauth_service as oauth
-        from app.services.auth.oauth_service import OAuthProvider, OAuthService
+        from app.services.auth.google_sign_in import GoogleSignIn
+        from app.services.auth.oauth_models import OAuthProvider
+        from app.services.auth.oauth_service import OAuthService
 
         server = HTTPServer(('127.0.0.1', 0), _SlowProvider)
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 
-        monkeypatch.setattr(oauth, 'GOOGLE_TOKEN_URL', f'http://127.0.0.1:{port}/token')
-        monkeypatch.setattr(oauth, 'GOOGLE_USERINFO_URL', f'http://127.0.0.1:{port}/user')
+        oauth = OAuthService(
+            google=GoogleSignIn(
+                token_url=f'http://127.0.0.1:{port}/token',
+                userinfo_url=f'http://127.0.0.1:{port}/user',
+            )
+        )
 
         try:
             transport = httpx.ASGITransport(app=app)
@@ -193,7 +198,7 @@ class TestTheBehaviour:
                     answered['at'] = time.monotonic() - start
 
                 await asyncio.gather(
-                    OAuthService.exchange_and_get_user(OAuthProvider.GOOGLE, 'a-code'),
+                    oauth.exchange_and_get_user(OAuthProvider.GOOGLE, 'a-code'),
                     ask_health(),
                 )
 

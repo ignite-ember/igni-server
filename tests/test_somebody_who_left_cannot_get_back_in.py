@@ -222,13 +222,14 @@ class TestSigningInAgain:
     async def test_a_provider_sign_in_is_refused(self, db):
         from fastapi import HTTPException
 
-        from app.services.auth.oauth_service import OAuthService, OAuthUserInfo
+        from app.services.auth.oauth_models import OAuthUserInfo
+        from app.services.auth.oauth_service import OAuthService
 
         user = await create_user(db, email=f'sso-{uuid.uuid4().hex[:8]}@test.com')
         _deactivate(str(user.user_id))
 
         with pytest.raises(HTTPException) as refused:
-            await OAuthService.find_or_create_user_and_get_token(
+            await OAuthService().find_or_create_user_and_get_token(
                 OAuthUserInfo(email=str(user.email), first_name='Departed', last_name='Person', provider='oidc')
             )
 

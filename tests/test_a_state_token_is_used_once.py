@@ -84,16 +84,16 @@ class TestARecordWithNothingInItIsStillARecord:
     async def test_the_social_callback_can_read_it(self):
         """Through the service the endpoint uses: `/auth/{provider}`
         with no `returnTo` stores an empty record."""
-        state = await OAuthService.generate_state(SocialSignInState())
+        state = await OAuthService().generate_state(SocialSignInState())
 
-        signin = await OAuthService.validate_state(state, SocialSignInState)
+        signin = await OAuthService().validate_state(state, SocialSignInState)
 
         assert signin.return_to == ''
 
     async def test_a_record_with_a_value_still_carries_it(self):
-        state = await OAuthService.generate_state(SocialSignInState(returnTo='/docs'))
+        state = await OAuthService().generate_state(SocialSignInState(returnTo='/docs'))
 
-        assert (await OAuthService.validate_state(state, SocialSignInState)).return_to == '/docs'
+        assert (await OAuthService().validate_state(state, SocialSignInState)).return_to == '/docs'
 
 
 class TestAnotherFlowsRecordIsNotThisFlows:
