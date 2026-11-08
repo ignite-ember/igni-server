@@ -1214,6 +1214,23 @@ class TestTheContextIsWordedAsItAlwaysWas:
 
         assert recipients == ['the SMTP relay at mail.corp.internal, for sign-in codes and invitations']
 
+    def test_a_deployment_that_sends_nothing_says_so(self, monkeypatch):
+        monkeypatch.setattr(settings, 'email_enabled', False)
+
+        recipients = ProcessingDescription().describe().recipients
+
+        assert recipients == [
+            'none. No email relay and no object store are configured, so nothing '
+            'about this person is sent anywhere outside this deployment.'
+        ]
+
+    def test_no_retention_window_is_said_in_words(self, monkeypatch):
+        monkeypatch.setattr(settings, 'audit_retention_days', 0)
+
+        retention = ProcessingDescription().describe().retention
+
+        assert retention.audit_events == 'kept indefinitely — no retention window is configured'
+
 
 class TestTheReportSaysWhoseRecordsTheseAre:
     def test_a_deployment_wide_report_says_what_it_leaves_out(self):
