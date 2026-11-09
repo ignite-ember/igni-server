@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 from datetime import timedelta
 import hashlib
+import json
 from urllib.parse import parse_qs, urlsplit
 import uuid
 
@@ -38,6 +39,30 @@ def _claims(token: str) -> dict:
 
 async def _token(client, form: dict):
     return await client.post('/oauth/token', data=form)
+
+
+def _unsigned(service: RegisteredService) -> str:
+    """`service`'s own claims, with `alg: none` and no signature at all."""
+    signed = service.assertion()
+
+    def part(value: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b'=').decode()
+
+    header = {**jwt.get_unverified_header(signed), 'alg': 'none'}
+    return f'{part(header)}.{part(_claims(signed))}.'
+
+
+#: Assertions that name a client but were not signed with its key.
+_FORGERIES = {
+    'unsigned': _unsigned,
+    'wrong key': lambda service: service.assertion(key=RsaKeyPair.generate()),
+}
+
+
+async def _client_in(state: str) -> RegisteredService:
+    service = RegisteredService(name=f'In state {state}')
+    await service.approve(state=state)
+    return service
 
 
 @pytest.fixture
@@ -136,6 +161,51 @@ class TestClientAuthentication:
 
         assert response.status_code == 401
         assert response.json() == {'error': 'invalid_client', 'error_description': 'no such client'}
+
+    @pytest.mark.parametrize('forgery', sorted(_FORGERIES))
+    @pytest.mark.parametrize('state', ['pending', 'revoked'])
+    async def test_only_a_caller_holding_the_key_learns_the_state(self, client, db, world, state, forgery):
+        """An assertion that does not verify is refused as it would be for an
+        approved client: no `client_state`, no wording that says waiting or
+        revoked. Otherwise anybody who knew a client id could ask."""
+        forge = _FORGERIES[forgery]
+        approved, other = world['service'], await _client_in(state)
+        fields = {'grant_type': 'client_credentials', 'organisation': world['org']}
+
+        for_approved = await _token(client, {**approved.authenticated(**fields), 'client_assertion': forge(approved)})
+        for_other = await _token(client, {**other.authenticated(**fields), 'client_assertion': forge(other)})
+
+        assert for_other.status_code == for_approved.status_code == 401
+        assert for_other.json() == for_approved.json()
+        assert 'client_state' not in for_other.json()
+        assert 'waiting' not in for_other.text and 'revoked' not in for_other.text
+
+    @pytest.mark.parametrize('forgery', sorted(_FORGERIES))
+    async def test_an_unknown_client_learns_no_state_either(self, client, world, forgery):
+        stranger = RegisteredService(name='Never registered')
+        stranger.client_id = str(uuid.uuid4())
+        form = stranger.authenticated('client_credentials', organisation=world['org'])
+
+        response = await _token(client, {**form, 'client_assertion': _FORGERIES[forgery](stranger)})
+
+        assert response.status_code == 401
+        assert response.json() == {'error': 'invalid_client', 'error_description': 'no such client'}
+
+    @pytest.mark.parametrize('state', ['pending', 'revoked'])
+    async def test_the_revocation_endpoint_tells_the_state_the_same_way(self, client, db, world, state):
+        """`/oauth/revoke` authenticates the client with the same code."""
+        other = await _client_in(state)
+
+        def revoking(assertion: str) -> dict:
+            return {'token': 'anything', 'client_assertion_type': ASSERTION_TYPE, 'client_assertion': assertion}
+
+        signed = await client.post('/oauth/revoke', data=revoking(other.assertion()))
+        forged = await client.post('/oauth/revoke', data=revoking(other.assertion(key=RsaKeyPair.generate())))
+
+        assert signed.status_code == forged.status_code == 401
+        assert signed.json()['client_state'] == state
+        assert set(forged.json()) == {'error', 'error_description'}
+        assert 'did not verify' in forged.json()['error_description']
 
     async def test_an_assertion_is_used_once(self, client, world):
         service = world['service']

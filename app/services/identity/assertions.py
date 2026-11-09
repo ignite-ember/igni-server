@@ -37,7 +37,12 @@ class ClientAssertions:
     async def authenticate(
         self, *, assertion_type: str | None, assertion: str | None, audiences: set[str]
     ) -> RegisteredClient:
-        """The approved client that signed `assertion`, or `invalid_client`."""
+        """The approved client that signed `assertion`, or `invalid_client`.
+
+        Only an assertion that verifies against the client's own key is
+        told the client's state (`client_state`); any other is refused the
+        same way whatever that state is.
+        """
         if assertion_type != ASSERTION_TYPE or not assertion:
             raise OAuthError.invalid_client(f'authenticate with client_assertion_type={ASSERTION_TYPE}')
 
@@ -54,15 +59,21 @@ class ClientAssertions:
         client = await self._clients.get(client_id)
         if client is None:
             raise OAuthError.invalid_client('no such client')
+
+        # The state is told only to whoever proves they hold the client's
+        # key. Checked before verification, an unsigned assertion naming any
+        # client id learned whether it was waiting or revoked. A pending or
+        # revoked client keeps its registered keys, so it is verified exactly
+        # as an approved one is — the same work, and the same refusals.
+        key = self._key_for(client, str(header.get('kid') or ''))
+        claims = self._verified(assertion, key, client_id=client_id, audiences=audiences)
+
         if client.state == PENDING:
             raise OAuthError.invalid_client(
                 'this client is waiting for a super admin to approve it', client_state=PENDING
             )
         if client.state != APPROVED:
             raise OAuthError.invalid_client('this client has been revoked', client_state=REVOKED)
-
-        key = self._key_for(client, str(header.get('kid') or ''))
-        claims = self._verified(assertion, key, client_id=client_id, audiences=audiences)
 
         lifetime = int(claims['exp']) - int(datetime.now(timezone.utc).timestamp())
         if lifetime > MAX_ASSERTION_SECONDS:
