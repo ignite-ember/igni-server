@@ -24,8 +24,10 @@ tools — `cosign`, `tar`, `sha256sum` — are the real ones.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
+import json
 import os
 import pathlib
 import re
@@ -697,7 +699,12 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$IGNI_TEST_SKOPEO_LOG"
 case "$1 $2" in
     'inspect --raw')
-        case "$3" in *.sig | *.att) exit 1 ;; esac
+        # The reference is the last argument: `--tls-verify` may come
+        # between `--raw` and it.
+        ref="${*: -1}"
+        case "$ref" in
+            *.sig | *.att) [ "${IGNI_TEST_SIG_ARTIFACTS:-0}" = 1 ] || exit 1 ;;
+        esac
         printf '%s' "$IGNI_TEST_INDEX"
         ;;
     'inspect --format')
@@ -708,6 +715,24 @@ case "$1 $2" in
         dest="${*: -1}"
         mkdir -p "${dest#dir:}"
         printf '%s' "$IGNI_TEST_INDEX" > "${dest#dir:}/manifest.json"
+        ;;
+esac
+"""
+
+# cosign, stubbed: it records the arguments it was called with, and says
+# what the export should believe about the image's signature. `verify`
+# exits with IGNI_TEST_COSIGN_VERIFY_EXIT (0 by default: the image is
+# signed with the release key); `verify-attestation` answers with the
+# attestation the export reads the SBOM out of.
+_EXPORT_COSIGN_STUB = r"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$IGNI_TEST_COSIGN_LOG"
+case "$1" in
+    verify)
+        exit "${IGNI_TEST_COSIGN_VERIFY_EXIT:-0}"
+        ;;
+    verify-attestation)
+        printf '{"payload":"%s"}\n' "$IGNI_TEST_COSIGN_PAYLOAD"
         ;;
 esac
 """
@@ -766,6 +791,135 @@ class TestExportImageNamesTheDigestTheTagNames:
         self._export(tmp_path, host_os='linux')
 
         assert '--format' not in (tmp_path / 'skopeo.log').read_text()
+
+
+class TestTheExportChecksTheSourceRegistrysTransport:
+    """The export reads the source registry over the network, so the
+    transport is checked — unless it is said not to be.
+
+    In production the source is ghcr.io over HTTPS and the check stays on.
+    A lab is different: the air-gap rehearsal's own staging registry is a
+    plain-HTTP registry on the loopback interface, and neither skopeo nor
+    cosign will talk to one without being told. So the export has
+    `--source-tls-verify`, off by default, the same shape as
+    `igni-import --dest-tls-verify` on the customer's side.
+
+    What it must not become is a way past the signature: the transport
+    says who answered, the signature says what the image is, and only the
+    first of the two is ever turned off.
+    """
+
+    def _export(
+        self,
+        tmp_path: pathlib.Path,
+        *,
+        source_tls_verify: str | None = None,
+        cosign_verify_exit: int = 0,
+    ) -> subprocess.CompletedProcess[str]:
+        stub_bin = tmp_path / 'bin'
+        stub_bin.mkdir()
+        (stub_bin / 'skopeo').write_text(_EXPORT_SKOPEO_STUB)
+        (stub_bin / 'skopeo').chmod(0o755)
+        (stub_bin / 'cosign').write_text(_EXPORT_COSIGN_STUB)
+        (stub_bin / 'cosign').chmod(0o755)
+        env = {
+            **os.environ,
+            'PATH': f'{stub_bin}{os.pathsep}{os.environ["PATH"]}',
+            'IGNI_TEST_SKOPEO_LOG': str(tmp_path / 'skopeo.log'),
+            'IGNI_TEST_COSIGN_LOG': str(tmp_path / 'cosign.log'),
+            'IGNI_TEST_INDEX': _EXPORT_INDEX,
+            # The image carries its signature and its attestation, so the
+            # export finds both of them.
+            'IGNI_TEST_SIG_ARTIFACTS': '1',
+            'IGNI_TEST_COSIGN_VERIFY_EXIT': str(cosign_verify_exit),
+            'IGNI_TEST_COSIGN_PAYLOAD': base64.b64encode(
+                json.dumps({'predicate': {'bomFormat': 'CycloneDX', 'specVersion': '1.5'}}).encode()
+            ).decode(),
+            'TMPDIR': str(tmp_path),
+        }
+        argv = [
+            str(_BUNDLE),
+            'export-image',
+            '--staging',
+            str(tmp_path / 'staging'),
+            '--name',
+            'igni-api',
+            '--repository',
+            '127.0.0.1:55100/igni-api',
+            '--source-tag',
+            _VERSION,
+            '--tag',
+            _VERSION,
+            '--cosign-key',
+            str(tmp_path / 'cosign.pub'),
+        ]
+        if source_tls_verify is not None:
+            argv += ['--source-tls-verify', source_tls_verify]
+        return _run(argv, env=env)
+
+    def _skopeo(self, tmp_path: pathlib.Path) -> str:
+        return (tmp_path / 'skopeo.log').read_text()
+
+    def _cosign(self, tmp_path: pathlib.Path) -> str:
+        return (tmp_path / 'cosign.log').read_text()
+
+    def _skopeo_calls(self, tmp_path: pathlib.Path) -> list[str]:
+        return [line for line in self._skopeo(tmp_path).splitlines() if line.strip()]
+
+    def _calls(self, calls: list[str], verb: str) -> list[str]:
+        return [call for call in calls if call.split(' ', 1)[0] == verb]
+
+    def test_the_transport_is_verified_when_nothing_is_said(self, tmp_path: pathlib.Path):
+        result = self._export(tmp_path)
+
+        assert result.returncode == 0, result.stderr
+        assert '--src-tls-verify' not in self._skopeo(tmp_path)
+        assert '--tls-verify' not in self._skopeo(tmp_path)
+        assert '--allow-insecure-registry' not in self._cosign(tmp_path)
+
+    def test_a_plain_http_registry_may_be_said_so(self, tmp_path: pathlib.Path):
+        result = self._export(tmp_path, source_tls_verify='false')
+
+        assert result.returncode == 0, result.stderr
+        # Every call that reaches the source registry carries the switch:
+        # the manifest, the image itself and the signature artefacts are
+        # three separate fetches, and one of them without it would still
+        # be a plain-HTTP fetch.
+        calls = self._skopeo_calls(tmp_path)
+        copies = self._calls(calls, 'copy')
+        inspects = self._calls(calls, 'inspect')
+        assert copies and inspects
+        for call in copies:
+            assert '--src-tls-verify=false' in call, call
+        for call in inspects:
+            assert '--tls-verify=false' in call, call
+        assert '--allow-insecure-registry' in self._cosign(tmp_path)
+
+    def test_saying_true_keeps_the_transport_verified(self, tmp_path: pathlib.Path):
+        result = self._export(tmp_path, source_tls_verify='true')
+
+        assert result.returncode == 0, result.stderr
+        calls = self._skopeo_calls(tmp_path)
+        for call in self._calls(calls, 'copy'):
+            assert '--src-tls-verify=true' in call, call
+        for call in self._calls(calls, 'inspect'):
+            assert '--tls-verify=true' in call, call
+        assert '--allow-insecure-registry' not in self._cosign(tmp_path)
+
+    def test_the_signature_is_still_checked_when_the_transport_is_not(self, tmp_path: pathlib.Path):
+        """The switch turns off the transport check and nothing else."""
+        result = self._export(tmp_path, source_tls_verify='false', cosign_verify_exit=1)
+
+        assert result.returncode == 1
+        assert 'is not signed with the release key' in result.stderr
+        assert not (tmp_path / 'staging/images.tsv').exists()
+
+    def test_a_value_that_is_neither_true_nor_false_is_refused(self, tmp_path: pathlib.Path):
+        result = self._export(tmp_path, source_tls_verify='maybe')
+
+        assert result.returncode == 1
+        assert '--source-tls-verify takes true or false' in result.stderr
+        assert not (tmp_path / 'staging/images.tsv').exists()
 
 
 def containers_release_names() -> list[str]:

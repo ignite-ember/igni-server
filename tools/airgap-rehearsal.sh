@@ -216,8 +216,12 @@ for line in "${images[@]}"; do
     cosign attest "${cosign_flags[@]}" --type cyclonedx --predicate "${WORK}/${name}.cdx.json" "$ref" >/dev/null 2>&1 ||
       fail "cosign could not attest $ref"
   fi
+  # The staging registry is plain HTTP on the loopback interface, so the
+  # export is told so: `--source-tls-verify false` turns off the transport
+  # check and nothing else — the image's signature is still checked
+  # against the TEST key, which is what says what the image is.
   export_args=(--staging "${WORK}/staging/${BUNDLE}" --name "$name" --repository "127.0.0.1:${STAGING_PORT}/${name}"
-    --source-tag "$tag" --tag "$tag")
+    --source-tag "$tag" --tag "$tag" --source-tls-verify false)
   [[ $SIGN -eq 0 ]] || export_args+=(--cosign-key "${WORK}/keys/TEST-cosign.pub")
   "${ROOT}/tools/release/igni-bundle" export-image "${export_args[@]}" >"${WORK}/export-${name}.log" 2>&1 ||
     fail "igni-bundle export-image ${name}: $(tail -5 "${WORK}/export-${name}.log")"
