@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db.redis.authorization_codes import SpentAssertionDB
-from app.db.sql.models.registered_client import APPROVED, PENDING, RegisteredClient
+from app.db.sql.models.registered_client import APPROVED, PENDING, RegisteredClient, REVOKED
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.security import jose
 from app.services.identity.errors import OAuthError
@@ -55,9 +55,11 @@ class ClientAssertions:
         if client is None:
             raise OAuthError.invalid_client('no such client')
         if client.state == PENDING:
-            raise OAuthError.invalid_client('this client is waiting for a super admin to approve it')
+            raise OAuthError.invalid_client(
+                'this client is waiting for a super admin to approve it', client_state=PENDING
+            )
         if client.state != APPROVED:
-            raise OAuthError.invalid_client('this client has been revoked')
+            raise OAuthError.invalid_client('this client has been revoked', client_state=REVOKED)
 
         key = self._key_for(client, str(header.get('kid') or ''))
         claims = self._verified(assertion, key, client_id=client_id, audiences=audiences)

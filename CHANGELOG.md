@@ -17,6 +17,12 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ### Added
 
+- **A refused client is told its registration's state.** When the token or
+  revocation endpoint refuses a client because it is waiting for approval
+  or has been revoked, the `401 invalid_client` answer also carries
+  `client_state` (`pending` or `revoked`, the registration's own `state`),
+  so an SDK need not read `error_description`. Every other refusal is
+  unchanged. [docs/service-identity.md](docs/service-identity.md) §3.
 - **Personal API keys.** A person makes a key on the portal (*API keys*) and
   gives it to a program, which exchanges it at the token endpoint
   (`urn:igni:params:oauth:grant-type:api-key`) for a 15-minute session as

@@ -12,6 +12,7 @@ import base64
 from datetime import timedelta
 import hashlib
 from urllib.parse import parse_qs, urlsplit
+import uuid
 
 import jwt
 import pytest
@@ -104,13 +105,37 @@ class TestClientAuthentication:
         assert response.status_code == 401
         assert 'waiting for a super admin' in response.json()['error_description']
 
+    async def test_a_pending_client_is_told_its_state_without_reading_the_prose(self, client, db, world):
+        """An SDK tells "wait" from "give up" by `client_state`, the registration's own `state`."""
+        pending = RegisteredService(name='Waiting')
+        await pending.approve(state='pending')
+
+        response = await _token(client, pending.authenticated('client_credentials', organisation=world['org']))
+
+        assert response.status_code == 401
+        assert set(response.json()) == {'error', 'error_description', 'client_state'}
+        assert response.json()['error'] == 'invalid_client'
+        assert response.json()['client_state'] == 'pending'
+
     async def test_a_revoked_client_is_refused(self, client, db, world):
         revoked = RegisteredService(name='Gone')
         await revoked.approve(state='revoked')
 
         response = await _token(client, revoked.authenticated('client_credentials', organisation=world['org']))
 
+        assert response.status_code == 401
         assert response.json()['error'] == 'invalid_client'
+        assert set(response.json()) == {'error', 'error_description', 'client_state'}
+        assert response.json()['client_state'] == 'revoked'
+
+    async def test_an_unknown_client_is_told_no_state(self, client, world):
+        stranger = RegisteredService(name='Never registered')
+        stranger.client_id = str(uuid.uuid4())
+
+        response = await _token(client, stranger.authenticated('client_credentials', organisation=world['org']))
+
+        assert response.status_code == 401
+        assert response.json() == {'error': 'invalid_client', 'error_description': 'no such client'}
 
     async def test_an_assertion_is_used_once(self, client, world):
         service = world['service']
@@ -122,6 +147,7 @@ class TestClientAuthentication:
         assert first.status_code == 200
         assert replay.status_code == 401
         assert 'already been used' in replay.json()['error_description']
+        assert 'client_state' not in replay.json()
 
     async def test_an_assertion_signed_with_another_key(self, client, world):
         service = world['service']
@@ -133,6 +159,7 @@ class TestClientAuthentication:
         response = await _token(client, form)
 
         assert response.json()['error'] == 'invalid_client'
+        assert set(response.json()) == {'error', 'error_description'}
 
     async def test_an_assertion_for_another_server(self, client, world):
         service = world['service']
@@ -161,6 +188,7 @@ class TestClientAuthentication:
         response = await _token(client, {'grant_type': 'client_credentials', 'organisation': world['org']})
 
         assert response.status_code == 401
+        assert set(response.json()) == {'error', 'error_description'}
 
     async def test_an_unknown_grant(self, client):
         response = await _token(client, {'grant_type': 'password'})
