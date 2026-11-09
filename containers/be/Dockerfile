@@ -13,7 +13,17 @@
 # Demonstrated with PEP 696 type-parameter defaults — ``type A[T = int]``
 # parses on 3.13 and is a SyntaxError on 3.12, which fails at import, so
 # the container would not have started at all.
-FROM python:3.13-slim AS builder
+#
+# **The Debian release is named, not inherited.** ``python:3.13-slim`` is a
+# moving tag: it was bookworm and became trixie, silently, between two
+# builds of this image. That is how the zlib in the shipped image changed
+# under us without a line of this file changing — the image kept the same
+# tag and the same declared base, and the OS underneath it moved. Writing
+# ``-trixie`` makes the Debian release an explicit, auditable choice
+# instead of a property of whatever the tag pointed at that morning.
+# Slim rather than alpine because the wheels this project installs are
+# built against glibc.
+FROM python:3.13-slim-trixie AS builder
 
 WORKDIR /app
 
@@ -31,12 +41,45 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev && uv pip freeze > requirements.txt
 
 # Stage 2: Final image
-FROM python:3.13-slim
+#
+# The same base as the builder, so the two stages cannot disagree about
+# which Debian release and which glibc the wheels are built and shipped
+# against.
+FROM python:3.13-slim-trixie
 
 WORKDIR /app
 
 # Copy requirements.txt from builder
 COPY --from=builder /app/requirements.txt ./
+
+# **The security update, because the base image is older than it.**
+#
+# The scheduled scan (V-4, V-7) gates on the image's CVEs and it went red
+# on two HIGH advisories in the base OS's zlib: CVE-2026-76844 (disclosure
+# via path traversal) and CVE-2026-85091 (a heap buffer overflow in
+# ``gz_vacate()``). The scan reads the *installed* version and said so:
+# ``1:1.3.dfsg+really1.3.1-1+b1``, status "fixed", fixed in
+# ``1:1.3.dfsg+really1.3.1-1+deb13u1``.
+#
+# That fixed version exists — in trixie-security, which is where the
+# ``+deb13u1`` suffix means it came from — but not in the image: the
+# published slim image was built before the update landed and still
+# carries the older zlib. So the base image is the stale part, and moving
+# the base tag does not fix it. It has to be pulled in here.
+#
+# ``--only-upgrade`` on purpose: it takes the security update and leaves
+# every other package in the image exactly where the base image put it,
+# so this is the smallest change that closes the finding. A full
+# ``apt-get upgrade`` would drag every package in the base forward, which
+# is a different change with a different blast radius, and this is not
+# that change.
+#
+# The scan is the backstop. If a future advisory lands in zlib1g, this
+# line takes the fix as long as Debian has published one, and the daily
+# scan says so if it does not.
+RUN apt-get update \
+ && apt-get install --yes --only-upgrade zlib1g \
+ && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies, then remove pip itself. pip is an install-time
 # tool and nothing in the running image calls it, but it carries its own
