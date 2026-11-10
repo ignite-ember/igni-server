@@ -17,6 +17,14 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ### Added
 
+- **A refused client is told its registration's state.** When the token or
+  revocation endpoint refuses a client because it is waiting for approval
+  or has been revoked, the `401 invalid_client` answer also carries
+  `client_state` (`pending` or `revoked`, the registration's own `state`),
+  so an SDK need not read `error_description`. Only an assertion that
+  verifies against the client's key is told it (see Security below); every
+  other refusal is unchanged.
+  [docs/service-identity.md](docs/service-identity.md) §3.
 - **Personal API keys.** A person makes a key on the portal (*API keys*) and
   gives it to a program, which exchanges it at the token endpoint
   (`urn:igni:params:oauth:grant-type:api-key`) for a 15-minute session as
@@ -80,6 +88,12 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ### Security
 
+- **A client's state is told only to whoever holds its key.** The token and
+  revocation endpoints checked a client's registration state before its
+  assertion's signature, so an unsigned assertion naming any client id
+  learned whether that client was waiting for approval or revoked. The
+  signature is now verified first: an assertion that does not verify is
+  refused the same way whatever the client's state.
 - **The API and worker image ships the fixed zlib1g.** Two HIGH advisories in
   the base OS's zlib — CVE-2026-76844 (disclosure via path traversal) and
   CVE-2026-85091 (a heap buffer overflow in `gz_vacate()`) — were in the

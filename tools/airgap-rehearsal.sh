@@ -30,10 +30,10 @@
 #      the Helm chart from the verified bundle, nothing else.
 #   4. Smoke: migration job, rollouts, /health, /ready, /version, the
 #      portal; then sign-up, an organisation, a member, the igni CLI's
-#      own /login (its AuthController, with the portal's /cli-auth hop
-#      done over HTTP) and `igni -m` to a stub model that runs inside the
-#      cluster. The CLI steps need the igni checkout (IGNI_CLI, default
-#      ../igni, with `uv sync` run); without it they are skipped, and say so.
+#      own `igni login` (with the portal's /cli-auth hop done over HTTP)
+#      and `igni -m` to a stub model that runs inside the cluster. The
+#      CLI steps need the igni checkout (IGNI_CLI, default ../igni, with
+#      `uv sync` run); without it they are skipped, and say so.
 #   5. The report: every image pull the cluster made (events, containerd),
 #      every DNS name looked up (CoreDNS `log`), and every packet the gap
 #      dropped (NFLOG capture), each with the pod or node process it came
@@ -498,7 +498,7 @@ max_role=$(call GET /v1/portal/me "$max" "$org" | jq -r .role)
 note "member     ${MAX} invited, signed up, role ${max_role}"
 
 if [[ -x "${CLI}/.venv/bin/igni" ]]; then
-  step "Journey: the igni CLI's /login, and a chat to the stub model inside the gap"
+  step "Journey: the igni CLI's login, and a chat to the stub model inside the gap"
   home="${WORK}/cli/home"
   project="${WORK}/cli/project"
   mkdir -p "${home}/.igni" "${project}/.igni"
@@ -507,10 +507,10 @@ if [[ -x "${CLI}/.venv/bin/igni" ]]; then
   git -C "$project" init -q
   cli_env=(env -u VIRTUAL_ENV -u PYTHONPATH -u PYTHONHOME HOME="$home" HF_HUB_OFFLINE=1 NO_COLOR=1)
   url_file="${WORK}/cli/login-url"
-  # The CLI's own AuthController: callback server, /v1/auth/exchange,
+  # The CLI's own ``igni login``: callback server, /v1/auth/exchange,
   # /v1/portal/me, credentials file. Its "browser" writes the URL down.
   (cd "$project" && "${cli_env[@]}" BROWSER="${ROOT}/tools/e2e_journey/record_url.sh %s" CLI_LOGIN_URL_FILE="$url_file" \
-    "${CLI}/.venv/bin/python" "${ROOT}/tools/e2e_journey/cli_login.py" --project "$project" --timeout 90 \
+    "${CLI}/.venv/bin/igni" login --timeout 90 \
     >"${WORK}/cli/login.log" 2>&1) &
   login_pid=$!
   for _ in $(seq 1 60); do [[ -s "$url_file" ]] && break; sleep 0.5; done
@@ -533,7 +533,7 @@ if [[ -x "${CLI}/.venv/bin/igni" ]]; then
   [[ "${posts:-0}" -gt 0 ]] || fail "the stub model saw no completion request"
   note "chat       igni -m printed the stub's reply; the stub saw ${posts} completion request(s)"
 else
-  note "SKIPPED: the CLI's /login and igni -m — no igni CLI at ${CLI} (IGNI_CLI, with \`uv sync\` run in it)"
+  note "SKIPPED: the CLI's login and igni -m — no igni CLI at ${CLI} (IGNI_CLI, with \`uv sync\` run in it)"
   step "Journey: an org-scoped CLI token and a chat to the stub model inside the gap, over HTTP"
   cli_token=$(call POST /v1/cli/token "$max" '' "{\"org_id\":\"${org}\"}" | jq -r .access_token)
   reply=$(call POST /v1/chat/completions "$cli_token" '' \

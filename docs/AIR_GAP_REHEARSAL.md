@@ -71,7 +71,7 @@ answer, and the portal serves the app. Then the journey:
 - it creates an organisation with a claimed domain;
 - it invites a member, and the member signs up and is a `member` of the
   organisation;
-- the igni CLI runs its own `/login`: `AuthController`, callback server,
+- the igni CLI runs its own `igni login`: callback server,
   `/v1/auth/exchange`, credentials file. The portal's `/cli-auth` step is
   done over HTTP (`/v1/cli/token`, then the CLI's callback), not in a
   browser;

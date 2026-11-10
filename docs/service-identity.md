@@ -130,6 +130,25 @@ client_assertion=<JWT signed with the registered key:
 
 Each `jti` is accepted once. **Every token names one organisation.**
 
+A client that cannot authenticate gets `401 {"error": "invalid_client",
+"error_description": ...}`. When the reason is the registration's state,
+the answer also has `client_state` — the same value as the registration's
+`state` (§2) — so a program reads that, not the description. The state is
+told **only to a caller whose assertion verifies** against the client's
+registered key: an unsigned, wrongly signed or otherwise unverifiable
+assertion is refused exactly as it would be for an approved client, with
+no `client_state` and nothing in the description that says waiting or
+revoked, so knowing a client id is not enough to learn its state.
+
+| `client_state` | Means |
+|---|---|
+| `pending` | registered, waiting for a super admin to approve it: try again later |
+| `revoked` | revoked by a super admin: stop; registering again returns the same registration |
+| *absent* | any other `invalid_client` — no such client, an assertion that is not a JWT, does not verify, names the wrong `aud`, lives too long or was used already, whatever the client's state |
+
+The revocation endpoint (§3.1) authenticates the client the same way and
+answers the same.
+
 | Grant | Who | Gets |
 |---|---|---|
 | `client_credentials` + `organisation=<org_id>` | a **service**, as itself | a service token for igni: `sub` = client id, `aud` = issuer, `token_use` = `service`, `org` |

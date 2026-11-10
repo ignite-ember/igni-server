@@ -19,17 +19,23 @@ def _project(j: Journey) -> None:
 
 
 def cli_login(j: Journey) -> str:
-    """``/login`` with a real browser: the CLI opens the portal, Chromium signs in with SSO."""
+    """``igni login`` with a real browser: the CLI opens the portal, Chromium signs in with SSO.
+
+    The shipped command, not a script that reaches into igni-core's
+    internals: the CLI starts its callback server and opens the portal's
+    ``/cli-auth`` page, and ``BROWSER`` (``record_url.sh``) makes that
+    "browser" write the address down for Chromium to open.
+    """
     s = j.state
     _project(j)
     url_file = Path(j.o.work) / 'cli-login-url.txt'
     url_file.unlink(missing_ok=True)
     log = Path(j.o.out) / 'logs' / 'cli-login.log'
     env = j.igni_env(BROWSER=f'{HERE / "record_url.sh"} %s', CLI_LOGIN_URL_FILE=str(url_file))
-    cmd = [j.o.igni_python, str(HERE / 'cli_login.py'), '--project', str(j.project)]
+    cmd = [j.o.igni_bin, 'login', '--timeout', '180']
     with open(log, 'w') as out:
         proc = subprocess.Popen(cmd, cwd=j.project, env=env, stdout=out, stderr=subprocess.STDOUT)
-    j.note(f"$ (cd project && HOME=… BROWSER='record_url.sh %s' python cli_login.py) pid={proc.pid}")
+    j.note(f"$ (cd project && HOME=… BROWSER='record_url.sh %s' igni login) pid={proc.pid}")
     try:
         deadline = time.time() + 60
         while not url_file.exists() and proc.poll() is None and time.time() < deadline:
@@ -49,17 +55,15 @@ def cli_login(j: Journey) -> str:
         )
         if not answer.get('ok'):
             raise StepFailed(f'browser: {json.dumps(answer)[:600]}')
-        proc.wait(60)
+        try:
+            proc.wait(60)
+        except subprocess.TimeoutExpired as exc:
+            raise StepFailed(f'igni login did not finish: {log.read_text()[-500:]}') from exc
     finally:
         if proc.poll() is None:
             proc.kill()
-    lines = log.read_text().strip().splitlines()
-    try:
-        result = json.loads(lines[-1])
-    except (IndexError, ValueError) as exc:
-        raise StepFailed(f'rc={proc.returncode}: {log.read_text()[-500:]}') from exc
-    if not result.get('ok'):
-        raise StepFailed(json.dumps(result))
+    if proc.returncode != 0:
+        raise StepFailed(f'igni login failed (rc={proc.returncode}): {log.read_text()[-500:]}')
     creds = json.loads((j.igni_home / 'credentials.json').read_text())
     s.max_cli = creds['access_token']
     token_org = claims(s.max_cli).get('org')
@@ -115,7 +119,7 @@ def repository_linking(j: Journey) -> Outcome:
 
 STEPS = [
     Step(
-        name='3a igni CLI /login in Chromium: CLI opens /cli-auth -> sign in with SSO -> CLI callback -> credentials',
+        name='3a igni login in Chromium: CLI opens /cli-auth -> sign in with SSO -> CLI callback -> credentials',
         area='cli',
         run=cli_login,
     ),
