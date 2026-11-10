@@ -88,7 +88,7 @@ const commands = {
       return { ok: stillAtDex && Boolean(dexSays) && !token, stillAtDex, dexSays, portal: page.url(), token }
     }),
 
-  // The CLI's /login, in a browser that has never signed in: /cli-auth sends
+  // The CLI's sign-in, in a browser that has never signed in: /cli-auth sends
   // it to sign in, SSO brings it back, and the portal hands the CLI its code.
   'cli-authorize': () =>
     withPage(async (page) => {
