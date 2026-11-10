@@ -557,7 +557,17 @@ class TestAnOrganisationsSessionIsTheManagersScope:
         failures = [r for r in results if isinstance(r, PoolTimeout)]
         assert len(failures) == 1, results
         assert DB_POOL_TIMEOUTS._value.get() == before + 1
-        assert [r.getMessage() for r in caplog.records if r.name == 'app.db.sql'] == [
+        # The errors of that logger, and only those: the pool saying it is
+        # ready is said at INFO, and it is said before this window — the
+        # engine this test's own pool needs is built as the test opens its
+        # first connection. Whether that reaches the log at all depends on
+        # what another test left the root logger's level at.
+        said = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == 'app.db.sql' and r.levelno == logging.ERROR
+        ]
+        assert said == [
             'Database pool exhausted: no connection within 0.5s (ceiling 1). '
             'Raise DB_POOL_SIZE/DB_MAX_OVERFLOW, or reduce concurrency in front of it.'
         ]
