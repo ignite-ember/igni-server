@@ -61,6 +61,18 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 - The `dev` and `stage` images of `igni-api` and `igni-portal` (`:dev-<sha>`,
   `:dev`, `:stage-<sha>`, `:stage`): nothing deployed them.
 
+### Security
+
+- **The API and worker image ships the fixed zlib1g.** Two HIGH advisories in
+  the base OS's zlib — CVE-2026-76844 (disclosure via path traversal) and
+  CVE-2026-85091 (a heap buffer overflow in `gz_vacate()`) — were in the
+  image the scheduled vulnerability scan builds, which went red on them. The
+  image now installs the security update (`zlib1g`
+  `1:1.3.dfsg+really1.3.1-1+deb13u1`) on top of its base, and the base's
+  Debian release is named in the tag (`python:3.13-slim-trixie`) rather than
+  inherited from `python:3.13-slim`, which moved from bookworm to trixie
+  between two builds of the image without this file changing.
+
 ## [0.6.0] - 2026-11-03
 
 The first tagged release. Versions before it were not tagged, so this entry
