@@ -225,8 +225,25 @@ class TestTheToolsEndpoint:
         assert (await client.get('/portal/agent-tools', headers=headers)).status_code == 200
 
 
+def _igni_checkout() -> Path:
+    """Where igni's core is checked out, if it is.
+
+    It left the monorepo for a repository of its own, `igni-core`, which
+    CI checks out under that name beside this one. A checkout under the
+    old name is used too — but only if it holds `src/igni_core`: the
+    frozen monorepo that stands at that name locally has stopped
+    following igni.
+    """
+    root = Path(__file__).resolve().parents[2]
+    for name in ('igni-core', 'igni'):
+        candidate = root / name
+        if (candidate / 'src' / 'igni_core').is_dir():
+            return candidate
+    return root / 'igni-core'
+
+
 #: The CLI checkout beside this one, where `make refresh-agent-tools` reads.
-_IGNI_PYTHON = Path(__file__).resolve().parents[2] / 'igni' / '.venv' / 'bin' / 'python'
+_IGNI_PYTHON = _igni_checkout() / '.venv' / 'bin' / 'python'
 
 
 class TestTheListIsIgnis:
@@ -243,7 +260,7 @@ class TestTheListIsIgnis:
             [
                 str(_IGNI_PYTHON),
                 '-c',
-                'from ember_code.core.tools.registry import ToolRegistry; '
+                'from igni_core.core.tools.registry import ToolRegistry; '
                 "print(chr(10).join(ToolRegistry(base_dir='.').available_tools))",
             ],
             capture_output=True,

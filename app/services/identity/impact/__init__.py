@@ -10,7 +10,7 @@ Services page and on every machine. Nothing is ever held back from
 distribution for a collision.
 
 This is igni server's half of a rule igni states too
-(`src/ember_code/extensions/impact.py` in igni). The two are held to one
+(`src/igni_core/extensions/impact.py` in igni-core). The two are held to one
 answer by `tests/fixtures/extension_impact_cases.json`, a file both
 repositories carry and both run.
 

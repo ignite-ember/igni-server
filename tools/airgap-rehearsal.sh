@@ -32,8 +32,8 @@
 #      portal; then sign-up, an organisation, a member, the igni CLI's
 #      own `igni login` (with the portal's /cli-auth hop done over HTTP)
 #      and `igni -m` to a stub model that runs inside the cluster. The
-#      CLI steps need the igni checkout (IGNI_CLI, default ../igni, with
-#      `uv sync` run); without it they are skipped, and say so.
+#      CLI steps need the igni checkout (IGNI_CLI, default ../igni-core,
+#      with `uv sync` run); without it they are skipped, and say so.
 #   5. The report: every image pull the cluster made (events, containerd),
 #      every DNS name looked up (CoreDNS `log`), and every packet the gap
 #      dropped (NFLOG capture), each with the pod or node process it came
@@ -53,11 +53,29 @@
 #   IGNI_AIRGAP_WORK      working directory (${TMPDIR:-/tmp}/igni-airgap-rehearsal)
 #   IGNI_AIRGAP_SUBNET    the gap's Docker network (172.30.250.0/24)
 #   IGNI_AIRGAP_SKIP_BUILD=1   use igni-api:airgap and igni-portal:airgap as built
-#   IGNI_CLI              the igni CLI checkout (../igni)
+#   IGNI_CLI              the igni CLI checkout (../igni-core)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${HERE}/.." && pwd)"
+
+# igni's core left the monorepo for a repository of its own, and the
+# monorepo's copy is frozen: it still has the pre-split package name, and
+# it is not the CLI any more. Prefer igni-core beside this one, and fall
+# back to the old name only for a checkout that really is igni-core: the
+# frozen monorepo that stands at that name locally has no `src/igni_core`,
+# so it is passed over.
+_cli_checkout() {
+  local candidate
+  for candidate in "${ROOT}/../igni-core" "${ROOT}/../igni"; do
+    if [ -d "${candidate}/src/igni_core" ]; then
+      printf '%s' "${candidate}"
+      return
+    fi
+  done
+  printf '%s' "${ROOT}/../igni"
+}
+
 KEEP=0
 [[ "${1:-}" == "--keep" ]] && KEEP=1
 
@@ -85,7 +103,7 @@ API_FWD=18777
 PORTAL_FWD=18300
 IN_GAP="${REGISTRY}:5000/igni"  # what pods pull from
 FROM_HOST="127.0.0.1:${REGISTRY_PORT}/igni"  # the same registry, as the import host reaches it
-CLI="${IGNI_CLI:-${ROOT}/../igni}"
+CLI="${IGNI_CLI:-$(_cli_checkout)}"
 PG_IMAGE=postgres:17.6-alpine
 REDIS_IMAGE=redis:7.4-alpine
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "${ROOT}/pyproject.toml" | head -1)"

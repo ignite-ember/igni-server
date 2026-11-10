@@ -46,6 +46,19 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ### Changed
 
+- **A new organisation's Default group holds igni's agents as they are
+  now.** The seed is a copy of the agents and skills igni bundles, and it
+  had drifted: every agent differed, `plan_researcher` still named tools
+  (`Read`, `Grep`, `Glob`, `LS`) igni no longer has, and the prompts still
+  told the model to look for `ember.md`. The seed is now copied from
+  igni's core, in the repository it now lives in (`igni-core`), and
+  tenant migration `t0029` carries the refreshed seed to the
+  organisations that already have a Default group.
+- **igni's core is read from the repository it lives in.** igni's core
+  left the monorepo for a repository of its own; the monorepo's copy is
+  frozen and has stopped following igni. The refresh, the rehearsal
+  scripts and the decision generator read `../igni-core` now, and CI
+  checks that repository out under that name.
 - **The offline bundle is signed with cosign instead of minisign**, with the
   same release key as the images. A customer now holds one public key
   (`cosign.pub`) and needs one tool (`cosign`): `igni-import --public-key

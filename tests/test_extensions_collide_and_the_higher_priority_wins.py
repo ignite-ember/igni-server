@@ -30,7 +30,39 @@ from app.services.identity.impact.resolver import ImpactResolver
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'extension_impact_cases.json'
 CASES: dict[str, Any] = json.loads(FIXTURE.read_text())
-IGNI = Path(__file__).resolve().parents[2] / 'igni'
+
+
+def _igni_checkout() -> Path:
+    """Where igni's core is checked out.
+
+    igni's core left the monorepo for a repository of its own,
+    ``igni-core``; a checkout beside this one may carry either name, and
+    the one that is used is the one that holds ``src/igni_core`` — the
+    frozen monorepo that stands at the older name locally is passed over,
+    because it has stopped following igni.
+    """
+    root = Path(__file__).resolve().parents[2]
+    for name in ('igni-core', 'igni'):
+        candidate = root / name
+        if (candidate / 'src' / 'igni_core').is_dir():
+            return candidate
+    return root / 'igni-core'
+
+
+def _igni_hooks() -> Path | None:
+    """Where igni's hook events live, if igni is checked out.
+
+    The core package was renamed from ``ember_code`` to ``igni_core`` when it
+    left the monorepo, so both spellings are looked for.
+    """
+    for package in ('igni_core', 'ember_code'):
+        hooks = IGNI / 'src' / package / 'core' / 'hooks'
+        if hooks.is_dir():
+            return hooks
+    return None
+
+
+IGNI = _igni_checkout()
 
 
 def _impact(manifest: dict[str, Any]) -> ExtensionImpact:
@@ -84,12 +116,18 @@ def test_an_event_igni_does_not_have_is_refused():
 
 def test_the_hook_events_are_igni_s():
     """The list here is igni's HookEvent, and the deciding five its DECIDING."""
-    igni = Path(__file__).resolve().parents[2] / 'igni' / 'src' / 'ember_code' / 'core' / 'hooks'
-    if not igni.is_dir():
+    hooks = _igni_hooks()
+    if hooks is None:
         pytest.skip('igni is not checked out beside igni server')
-    events = set(re.findall(r'= "([A-Za-z]+)"', (igni / 'events.py').read_text()))
+    events = set(re.findall(r'= "([A-Za-z]+)"', (hooks / 'events.py').read_text()))
     assert events == set(HOOK_EVENTS)
-    deciding = set(re.findall(r'event=HookEvent\.([A-Z_]+)', (igni / 'extension_gate.py').read_text()))
+    # The deciding events moved to the spec module when igni's core left the
+    # monorepo; the gate module is where they were before.
+    deciding: set[str] = set()
+    for module in ('extension_spec.py', 'extension_gate.py'):
+        path = hooks / module
+        if path.is_file():
+            deciding |= set(re.findall(r'event=HookEvent\.([A-Z_]+)', path.read_text()))
     assert {name.title().replace('_', '') for name in deciding} == set(DECIDING_HOOKS)
 
 

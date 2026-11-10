@@ -349,7 +349,7 @@ The Agno framework's own run telemetry (to `os-api.agno.com`) is off in
 every client process: `AGNO_TELEMETRY=false` is set before Agno is
 imported, every agent and team igni builds passes `telemetry=False`, and
 the extension services the client starts are handed the variable
-(`igni` `src/ember_code/core/agno_telemetry.py`). An explicit
+(`igni-core` `src/igni_core/core/agno_telemetry.py`). An explicit
 `AGNO_TELEMETRY=true` is honoured outside air-gapped mode and overruled,
 with a warning, under it. A runtime test runs agent turns and fails on any
 attempt to reach an `agno.com` host

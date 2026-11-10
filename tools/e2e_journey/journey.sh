@@ -11,7 +11,11 @@
 #   tools/e2e_journey/journey.sh service  which service the steps would use: starter, fixture or none
 #
 # Checkouts it expects beside this one (override with the variables):
-#   IGNI_CLI      ../igni                     the CLI, with `uv sync` run in it
+#   IGNI_CLI      ../igni-core                the CLI, with `uv sync` run in it
+#                                             (a checkout under the old name,
+#                                              ../igni, is used too — but only
+#                                              if it is igni-core and not the
+#                                              frozen monorepo)
 #   IGNI_SDK      ../igni-sdk                 igni's SDKs, built into wheels
 #
 # And in portal/: `npm ci`, then `npx playwright install chromium` (what CI's
@@ -45,7 +49,25 @@ E2E="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER="$(cd "$E2E/../.." && pwd)"
 RUN="${E2E_RUN_DIR:-$E2E/run}"
 LOGS="$RUN/logs"
-CLI="${IGNI_CLI:-$SERVER/../igni}"
+
+# igni's core left the monorepo for a repository of its own, and the
+# monorepo's copy is frozen: it still has the pre-split package name, and
+# it is not the CLI any more. Prefer igni-core beside this one, and fall
+# back to the old name only for a checkout that really is igni-core: the
+# frozen monorepo that stands at that name locally has no `src/igni_core`,
+# so it is passed over.
+_cli_checkout() {
+  local candidate
+  for candidate in "$SERVER/../igni-core" "$SERVER/../igni"; do
+    if [ -d "$candidate/src/igni_core" ]; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done
+  printf '%s' "$SERVER/../igni"
+}
+
+CLI="${IGNI_CLI:-$(_cli_checkout)}"
 SDK="${IGNI_SDK:-$SERVER/../igni-sdk}"
 STARTER="${IGNI_STARTER:-$SERVER/../igni__extension-starter}"
 

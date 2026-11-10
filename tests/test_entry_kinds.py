@@ -76,7 +76,7 @@ class TestWhatTheClientCanActuallyLoad:
         'settings': 'json',
     }
 
-    def test_the_kinds_are_the_ones_ember_code_reads(self):
+    def test_the_kinds_are_the_ones_igni_core_reads(self):
         assert VALID_KINDS == set(self.EXPECTED)
 
     def test_each_carries_the_format_its_loader_parses(self):
