@@ -149,21 +149,29 @@ class TestEveryResolverLooksAtSomething:
         assert state_of(decision) == 'answered'
 
     def test_the_cli_resolver_finds_the_sibling_setting(self):
-        """`igni` is a separate checkout, so this is the one
+        """igni's core is a separate checkout, so this is the one
         resolver that can legitimately not look — but when the checkout
         is present it must find the real default rather than silently
-        answering False."""
-        settings = _ROOT.parent / 'igni/src/ember_code/core/config/settings.py'
+        answering False.
+
+        It reads the file the resolver reads: the monorepo's copy is
+        frozen, left behind when igni's core left for a repository of
+        its own, and checking that one would say nothing about the
+        resolver."""
+        settings = _ROOT.parent / 'igni-core' / 'src' / 'igni_core' / 'core' / 'config' / 'settings.py'
         if not settings.exists():
-            pytest.skip('the igni checkout is not present — skipped, not passed')
+            pytest.skip('the igni-core checkout is not present — skipped, not passed')
         assert re.search(r'api_url[^=\n]*=\s*[\'"]', settings.read_text()), (
             'the resolver cannot find `api_url` in the sibling settings, so DEC-14 would read '
             '`open` whatever the default is'
         )
         # Not pinned either way: DEC-14 is decided and the change lands
-        # in `igni`, so the value here is expected to flip. What is
-        # pinned is that the resolver found the setting to read.
-        assert isinstance(_GEN.cli_api_url_default_is_gone(), bool)
+        # in igni's core, so the value here is expected to flip. What is
+        # pinned is that the resolver read *this* file: it answers
+        # whether the default in the file is gone, so the two must
+        # agree whatever the default is.
+        default = re.search(r'api_url[^=\n]*=\s*[\'"]([^\'"]*)[\'"]', settings.read_text()).group(1)
+        assert _GEN.cli_api_url_default_is_gone() is (default == '')
 
     def test_a_resolver_that_cannot_look_says_unknown_rather_than_open(self):
         """`state_of` catches an exception and reports `unknown`. Without
@@ -336,9 +344,10 @@ class TestEachDecisionIsActuallyDecidable:
 class TestTheDocumentDoesNotDependOnASiblingCheckout:
     """The generated file must mean the same thing everywhere.
 
-    Two resolvers read ``../igni``. When it is absent — which is
-    always, in CI — they returned ``False``, which the state machine
-    reads as "checked, and the code has not done it". So the committed
+    Two resolvers read ``../igni-core`` and ``../igni-app``. When they
+    are absent — which is always, in CI — they returned ``False``, which
+    the state machine reads as "checked, and the code has not done it".
+    So the committed
     document, generated on a machine where the sibling exists, never
     matched the one CI generated, and `test_the_committed_file_matches_the_generator`
     failed on every pull request regardless of its contents.
@@ -350,7 +359,8 @@ class TestTheDocumentDoesNotDependOnASiblingCheckout:
 
     def test_render_is_identical_without_the_sibling(self, monkeypatch):
         with_sibling = _GEN.render()
-        monkeypatch.setattr(_GEN, '_IGNI', pathlib.Path('/nonexistent/igni'))
+        monkeypatch.setattr(_GEN, '_IGNI', pathlib.Path('/nonexistent/igni-core'))
+        monkeypatch.setattr(_GEN, '_IGNI_APP', pathlib.Path('/nonexistent/igni-app'))
         without_sibling = _GEN.render()
         assert with_sibling == without_sibling
 

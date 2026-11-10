@@ -13,7 +13,7 @@ tools/airgap-rehearsal.sh --keep   # leave the cluster and the gap's registry up
 ```
 
 Run it from a checkout of igni-server, with the igni CLI checked out beside
-it (`../igni`, `uv sync` run) if you want the CLI steps. Needs docker,
+it (`../igni-core`, `uv sync` run) if you want the CLI steps. Needs docker,
 kind, kubectl, helm, skopeo, cosign, jq and python3. syft is optional:
 with it, the images are signed and their SBOMs attested, and
 `igni-import --cosign-key` checks both. It takes about 15 minutes on
@@ -118,7 +118,7 @@ signs releases.
 | `IGNI_AIRGAP_WORK` | `${TMPDIR:-/tmp}/igni-airgap-rehearsal` | bundle, evidence, report |
 | `IGNI_AIRGAP_SUBNET` | `172.30.250.0/24` | the gap's Docker network |
 | `IGNI_AIRGAP_SKIP_BUILD` | unset | `1` reuses `igni-api:airgap` and `igni-portal:airgap` |
-| `IGNI_CLI` | `../igni` | the CLI checkout |
+| `IGNI_CLI` | `../igni-core` | the CLI checkout |
 
 Ports on 127.0.0.1: 55100 (staging registry, only during step 1), 55101
 (the gap's registry, as the import host sees it), 56443 (the cluster's

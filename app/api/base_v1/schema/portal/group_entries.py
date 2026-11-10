@@ -150,7 +150,7 @@ class CreateEntryRequest(BaseModel):
         """Reject half-filled plugin source specs (ref/subdir without URL).
 
         Mirrors the Pydantic rule in
-        ``ember_code.core.config.group_policy.GroupPolicyEntryEntry``
+        ``igni_core.core.config.group_policy.entry.GroupPolicyEntry``
         so the FE catches the same mistake before hitting the wire.
         Empty strings are treated as absent — wire formats commonly
         serialize "no value" as ``""``, so ``is None`` alone would

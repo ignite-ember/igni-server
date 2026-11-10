@@ -530,12 +530,12 @@ jobs:
           path: igni-server
 
       # Public, so the job's own token reads it. Beside the server, where
-      # the script looks for it (IGNI_CLI defaults to ../igni).
+      # the script looks for it (IGNI_CLI defaults to ../igni-core).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ignite-ember/igni-core
           ref: ${{ env.IGNI_CLI_REF }}
-          path: igni
+          path: igni-core
 
       # igni's SDKs, which the journey's services are built with; beside
       # the server, where the script looks for them (IGNI_SDK defaults to
@@ -557,7 +557,7 @@ jobs:
 
       # The CLI pins its own Python (3.12); uv fetches it.
       - name: Install the CLI
-        working-directory: igni
+        working-directory: igni-core
         run: uv sync
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

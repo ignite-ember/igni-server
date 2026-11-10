@@ -557,7 +557,7 @@ there, with the reason shown in igni's extensions panel. A development
 install the order does not name ranks below every extension it does.
 
 The rule is implemented twice, here (`app/services/identity/impact/`)
-and in igni (`src/ember_code/extensions/impact.py`), and both run the
+and in igni-core (`src/igni_core/extensions/impact.py`), and both run the
 cases in `tests/fixtures/extension_impact_cases.json`, which each
 repository carries.
 

@@ -38,18 +38,18 @@ jobs:
           path: igni-server
 
       # Beside the server, where the script looks for it (IGNI_CLI
-      # defaults to ../igni). Public, so the job's own token reads it.
+      # defaults to ../igni-core). Public, so the job's own token reads it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ignite-ember/igni-core
           ref: ${{ env.IGNI_CLI_REF }}
-          path: igni
+          path: igni-core
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       # The CLI pins its own Python (3.12); uv fetches it.
       - name: Install the CLI
-        working-directory: igni
+        working-directory: igni-core
         run: uv sync
 
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1

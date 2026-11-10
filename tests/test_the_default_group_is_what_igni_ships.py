@@ -5,8 +5,10 @@ made by `make refresh-default-seed`. It had drifted: every agent
 differed, `plan_researcher` named tools (`Read`, `Grep`, `Glob`, `LS`)
 igni no longer has, so a new member was warned about an agent nobody in
 their organisation had touched, and the prompts still told the model to
-look for `ember.md`. The refresh pointed at `../ember-code`, the CLI's
-old name; it points at `../igni` now.
+look for `ember.md`. The refresh pointed at `../igni`, the monorepo's
+name, and that copy is frozen — it has stopped following igni. It points
+at `../igni-core` now, which is where igni's core lives since it left
+the monorepo.
 """
 
 from __future__ import annotations
@@ -18,8 +20,27 @@ import pytest
 from app.services.portal.default_group_seed import BUNDLED_SEED
 
 _ROOT = Path(__file__).resolve().parents[1]
+
+
+def _igni_checkout() -> Path:
+    """Where igni's core is checked out, if it is.
+
+    It left the monorepo for a repository of its own, `igni-core`, which
+    CI checks out under that name beside this one. A checkout under the
+    old name is used too — but only if it holds `src/igni_core`: the
+    frozen monorepo that stands at that name locally has stopped
+    following igni.
+    """
+    root = _ROOT.parent
+    for name in ('igni-core', 'igni'):
+        candidate = root / name
+        if (candidate / 'src' / 'igni_core').is_dir():
+            return candidate
+    return root / 'igni-core'
+
+
 #: The CLI checkout beside this one, where `make refresh-default-seed` reads.
-_IGNI = _ROOT.parent / 'igni' / 'src' / 'ember_code'
+_IGNI = _igni_checkout() / 'src' / 'igni_core'
 
 
 def _seeded(kind: str) -> dict[str, str]:
@@ -27,7 +48,7 @@ def _seeded(kind: str) -> dict[str, str]:
 
 
 def test_the_refresh_reads_the_igni_checkout():
-    assert 'IGNI_CLI ?= ../igni\n' in (_ROOT / 'Makefile').read_text()
+    assert 'IGNI_CLI ?= ../igni-core\n' in (_ROOT / 'Makefile').read_text()
 
 
 def test_nothing_seeded_uses_igni_s_old_name():

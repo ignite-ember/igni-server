@@ -39,7 +39,12 @@ import sys
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TRACKER = _ROOT / 'docs/COMPLIANCE_TRACKER.md'
 _READINESS = _ROOT / 'docs/REVIEW_FINDINGS.md'
-_IGNI = _ROOT.parent / 'igni'
+#: Where igni's core lives: it left the monorepo for a repository of its
+#: own, and the monorepo's copy is frozen and has stopped following igni.
+_IGNI = _ROOT.parent / 'igni-core'
+#: Where igni's desktop app lives: it left the monorepo too, and the
+#: Tauri shell went with it.
+_IGNI_APP = _ROOT.parent / 'igni-app'
 _CODE_INDEX = _ROOT.parent / 'igni__code-index'
 _OUTPUT = _ROOT / 'docs/DECISIONS.md'
 
@@ -72,7 +77,7 @@ class Decision:
     #: on which branch it has checked out. A document that changes with
     #: the reader's filesystem cannot be committed and checked, which is
     #: exactly what happened: the generator is green on a developer's
-    #: machine, where ``../igni`` exists, and red in CI, where it
+    #: machine, where ``../igni-core`` exists, and red in CI, where it
     #: never does. The resolver is still run by ``--check-siblings``,
     #: which reports without touching the document.
     evidence_in: str = ''
@@ -119,11 +124,19 @@ def updater_endpoint_is_configurable() -> bool:
     Read from the Rust side, because that is the process that makes the
     request: a check that consults a setting one process away can be
     reached without consulting it.
+
+    The setting and the request live in two modules, not in one: the
+    endpoint is read from the settings (`desktop_settings.rs`) and handed
+    to the updater (`updater.rs`), which is where the request is made.
     """
-    lib = _IGNI / 'clients/tauri/src-tauri/src/lib.rs'
-    if not lib.exists():
+    sources = []
+    for module in ('desktop_settings.rs', 'updater.rs'):
+        path = _IGNI_APP / 'clients/tauri/src-tauri/src' / module
+        if path.exists():
+            sources.append(path.read_text())
+    if not sources:
         return False
-    source = lib.read_text()
+    source = '\n'.join(sources)
     return 'update_endpoint' in source and 'endpoints(' in source
 
 
@@ -150,17 +163,12 @@ def celery_question_is_settled() -> bool:
 def cli_api_url_default_is_gone() -> bool:
     """DP-5a. Answered when the CLI no longer defaults `api_url` to a
     vendor host."""
-    for candidate in (
-        'src/igni_core/core/config/settings.py',
-        'src/ember_code/core/config/settings.py',
-        'src/ember_code/config.py',
-    ):
-        path = _IGNI / candidate
-        if path.exists():
-            text = path.read_text()
-            match = re.search(r'api_url[^=\n]*=\s*[\'"]([^\'"]*)[\'"]', text)
-            if match:
-                return match.group(1) == ''
+    path = _IGNI / 'src/igni_core/core/config/settings.py'
+    if path.exists():
+        text = path.read_text()
+        match = re.search(r'api_url[^=\n]*=\s*[\'"]([^\'"]*)[\'"]', text)
+        if match:
+            return match.group(1) == ''
     return False
 
 
@@ -230,12 +238,12 @@ DECISIONS: tuple[Decision, ...] = (
         'The first. It changes what a release *is* — a mirrored artefact somebody publishes — '
         'which is why it is a decision rather than a change.',
         'updater_endpoint_is_configurable',
-        decided='A configurable endpoint. It lives in `igni`, so this reads `decided` '
+        decided='A configurable endpoint. It lives in the desktop app (`igni-app`), so this reads `decided` '
         'until the Tauri config stops naming a single host — the state that did not exist '
         'before this decision was taken.',
-        unverifiable='The evidence is in `igni`, a separate repository. Run '
+        unverifiable='The evidence is in `igni-app`, a separate repository. Run '
         '`make docs-check-siblings` beside a checkout of it to see what the code says today.',
-        evidence_in='igni',
+        evidence_in='igni-app',
         rows=('DP-5',),
     ),
     Decision(
@@ -326,12 +334,12 @@ DECISIONS: tuple[Decision, ...] = (
                 'default to.',
             ),
         ),
-        'The first, and it lives in `igni` — which is why B3 is `blocked` here rather than open.',
+        'The first, and it lives in `igni-core` — which is why B3 is `blocked` here rather than open.',
         'cli_api_url_default_is_gone',
-        decided='Empty default plus a refusal path, in `igni`.',
-        unverifiable='The evidence is in `igni`, a separate repository. Run '
+        decided='Empty default plus a refusal path, in `igni-core`.',
+        unverifiable='The evidence is in `igni-core`, a separate repository. Run '
         '`make docs-check-siblings` beside a checkout of it to see what the code says today.',
-        evidence_in='igni',
+        evidence_in='igni-core',
         rows=('DP-5',),
     ),
     Decision(

@@ -125,7 +125,10 @@ portal-build:
 # existing Default group needs an alembic_tenant migration that freezes the
 # new seed (`make default-seed-migration`, see t0025), and the suite fails
 # until it has one.
-IGNI_CLI ?= ../igni
+# `../igni-core` is where igni's core lives now: it left the monorepo for a
+# repository of its own, and the monorepo's copy is frozen and has stopped
+# following igni. Pass IGNI_CLI=<path> to read another checkout.
+IGNI_CLI ?= ../igni-core
 refresh-default-seed:
 	@test -d "$(IGNI_CLI)/src/igni_core/bundled_agents" || \
 		(echo "No igni checkout at $(IGNI_CLI); pass IGNI_CLI=<path>" && exit 1)

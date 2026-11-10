@@ -41,7 +41,7 @@ customer's data is in them: Ignite Ember never receives any.
 | The model weights | Files on the customer's GPU hosts | Nothing. Weights are data, not a program |
 | The inference server | vLLM, run by the customer on its own GPUs, on premises or rented | Whatever the customer allows (section 3) |
 | igni server | The customer's servers | Each inference node's `base_url`, over the OpenAI-compatible API ([gpu-clusters.md](gpu-clusters.md)) |
-| The client's decision model, Laya (`convaiinnovations/laya`, Apache-2.0) | Developer machines, when the decisions extra is installed | Hugging Face on first use, unless `air_gapped: true`, which loads it only from a pre-seeded local cache (`igni/src/ember_code/decisions_server/model.py`) |
+| The client's decision model, Laya (`convaiinnovations/laya`, Apache-2.0) | Developer machines, when the decisions extra is installed | Hugging Face on first use, unless `air_gapped: true`, which loads it only from a pre-seeded local cache (`igni-core/src/igni_core/decisions_server/model.py`) |
 
 igni server does not download, sign or check model weights. Nothing in it
 checks a licence before routing to a node, and the weights carry no licence
