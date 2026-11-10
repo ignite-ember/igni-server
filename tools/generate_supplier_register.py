@@ -73,10 +73,14 @@ class Supplier:
 
 SUPPLIERS: tuple[Supplier, ...] = (
     Supplier(
-        'python:3.13-slim',
+        'python:3.13-slim-trixie',
         'Base image for the API and worker',
         'Both stages of `containers/be/Dockerfile`. Slim rather than alpine because the wheels '
-        'this project installs are built against glibc.',
+        'this project installs are built against glibc. The Debian release is named in the tag '
+        'rather than inherited from `python:3.13-slim`, which was bookworm and became trixie '
+        'silently, between two builds of this image; and the image installs the zlib1g security '
+        'update for CVE-2026-76844 and CVE-2026-85091, the two HIGH advisories the scheduled '
+        'scan gates on, because the published base image predates that update.',
         'The largest single supply-chain exposure in the product: it is the OS under the process '
         'that holds the database credentials and the encryption key. Scanned on every pull '
         'request and daily against the default branch (V-4, V-7), and the scheduled scan gates.',
@@ -440,7 +444,7 @@ def render() -> str:
     out.append('')
     out.append('## What this register does not do')
     out.append('')
-    out.append("**Assess the suppliers on the customer's behalf.** Whether `python:3.13-slim` is")
+    out.append("**Assess the suppliers on the customer's behalf.** Whether `python:3.13-slim-trixie` is")
     out.append('an acceptable dependency is a judgement about a threat model this document does')
     out.append('not know. What it provides is the list, pinned versions, and where each one sits')
     out.append('in the artefact.')
