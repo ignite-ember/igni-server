@@ -34,15 +34,24 @@ from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from app.api.base_v1.schema.portal.user import PortalUser
-from app.middlewares.audit import set_audit_detail
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import require_admin
-from app.services.subject_access import SubjectAccessReport, SubjectAccessService
+from app.services.subject_access.schemas import SubjectAccessReport
+from app.services.subject_access.service import SubjectAccessService
+from app.utils.email_mask import mask_email
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_service = SubjectAccessService()
+
+def subject_access_service() -> SubjectAccessService:
+    """One service per request.
+
+    A provider rather than `Depends(SubjectAccessService)`: FastAPI would
+    read the constructor's keyword arguments as query parameters.
+    """
+    return SubjectAccessService()
 
 
 class SubjectAccessAudit(BaseModel):
@@ -51,7 +60,7 @@ class SubjectAccessAudit(BaseModel):
     Masked and counted, never the address: F90 retains these rows for
     the whole window, so an export of somebody's data must not leave
     their email sitting in the record of it. This was a nested dict
-    literal inside the `set_audit_detail` call — a retained record
+    literal inside the audit detail call — a retained record
     with a fixed key set, described by its own construction.
     """
 
@@ -60,13 +69,14 @@ class SubjectAccessAudit(BaseModel):
     has_account: bool
 
 
+class SubjectAccessAuditDetail(BaseModel):
+    """The audit detail an export leaves, under its own key."""
+
+    subject_access: SubjectAccessAudit
+
+
 class SubjectAccessRequest(BaseModel):
     email: EmailStr = Field(description='The address the request concerns.')
-
-
-def _mask(email: str) -> str:
-    local, _, domain = email.partition('@')
-    return f'{local[:1]}***@{domain}' if domain else '***'
 
 
 @router.post(
@@ -83,29 +93,29 @@ async def subject_access(
     request: Request,
     body: SubjectAccessRequest = Body(...),
     current_user: PortalUser = Depends(require_admin),
+    service: SubjectAccessService = Depends(subject_access_service),
 ) -> SubjectAccessReport:
     email = str(body.email)
 
-    report = await _service.export(email=email, org_id=current_user.org_id)
+    report = await service.export(email=email, org_id=current_user.org_id)
 
     # Added to the audit record F90 writes for this request. Masked and
     # counted: the audit trail is retained, so an export of somebody's
     # data must not leave their address sitting in it.
-    set_audit_detail(
-        request,
-        {
-            'subject_access': SubjectAccessAudit(
-                subject=_mask(email),
-                sections=len(report.sections),
-                has_account=bool(report.sections.get('account')),
-            ).model_dump()
-        },
+    RequestAudit.of(request).add_detail(
+        SubjectAccessAuditDetail(
+            subject_access=SubjectAccessAudit(
+                subject=mask_email(email),
+                sections=report.sections.present_count(),
+                has_account=report.sections.has_account(),
+            )
+        )
     )
     logger.info(
         'Subject access export by %s for %s (%d sections)',
         current_user.user_id,
-        _mask(email),
-        len(report.sections),
+        mask_email(email),
+        report.sections.present_count(),
     )
 
     return report

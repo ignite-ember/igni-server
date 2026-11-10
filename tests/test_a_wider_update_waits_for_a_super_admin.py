@@ -118,6 +118,8 @@ class TestOnUpload:
 
         assert held['sha256'] == hashlib.sha256(bundle.archive).hexdigest()
         assert held['held'] is True
+        assert held['reason'] == 'held for a super admin: it asks for more than the approved version'
+        assert held['added'] == []
 
     async def test_a_newer_upload_replaces_the_held_one(self, client, db):
         service = await _approved_with_one_version(client)

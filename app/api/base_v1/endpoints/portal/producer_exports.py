@@ -3,8 +3,9 @@
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import StreamingResponse
 
+from app.api.base_v1.schema.audit_detail import ExportRequestedAudit
 from app.api.base_v1.schema.retention import ExportList, ExportRecord, ExportRequest
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.org_authority import OrgAuthority, require_org_authority
 from app.services.cloud.producer_exports import ProducerExports
 
@@ -21,8 +22,8 @@ async def request_export(
 ) -> ExportRecord:
     """Ask for an export of a removed incarnation's data while it waits for erasure."""
     export = await ProducerExports().request(authority, user_id, body.incarnation)
-    set_audit_target(request, target_type='producer_export', target_id=export.export_id)
-    set_audit_detail(request, {'person': user_id, 'incarnation': export.incarnation})
+    RequestAudit.of(request).set_target(target_type='producer_export', target_id=export.export_id)
+    RequestAudit.of(request).add_detail(ExportRequestedAudit(person=user_id, incarnation=export.incarnation))
     return export
 
 
@@ -41,7 +42,7 @@ async def download(
     request: Request, export_id: str, authority: OrgAuthority = Depends(require_org_authority)
 ) -> StreamingResponse:
     row, chunks = await ProducerExports().archive(authority.org_id, export_id)
-    set_audit_target(request, target_type='producer_export', target_id=export_id)
+    RequestAudit.of(request).set_target(target_type='producer_export', target_id=export_id)
     return StreamingResponse(
         chunks,
         media_type='application/octet-stream',

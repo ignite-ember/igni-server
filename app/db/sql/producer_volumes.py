@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from app.db.sql.bind_chunks import chunks
 from app.db.sql.models.producer_volume import ProducerVolumeSize
-from app.db.sql.producer_feed import chunks
 from app.db.sql.tenancy import TenantData
 
 

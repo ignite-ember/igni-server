@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.base_v1.schema.retention import ExportFailed, ExportRecord, PendingExports
-from app.middlewares.audit import set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.platform_caller import PlatformCaller, require_platform
 from app.services.cloud.producer_exports import ProducerExports
 
@@ -21,7 +21,7 @@ async def upload(
     request: Request, org_id: str, export_id: str, _platform: PlatformCaller = Depends(require_platform)
 ) -> ExportRecord:
     """The archive `export-producer` wrote, as the body."""
-    set_audit_target(request, target_type='producer_export', target_id=export_id)
+    RequestAudit.of(request).set_target(target_type='producer_export', target_id=export_id)
     return await ProducerExports().upload(org_id, export_id, request.stream())
 
 
@@ -33,6 +33,6 @@ async def failed(
     body: ExportFailed,
     _platform: PlatformCaller = Depends(require_platform),
 ) -> Response:
-    set_audit_target(request, target_type='producer_export', target_id=export_id)
+    RequestAudit.of(request).set_target(target_type='producer_export', target_id=export_id)
     await ProducerExports().failed(org_id, export_id, body.error)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

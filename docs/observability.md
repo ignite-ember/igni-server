@@ -34,18 +34,7 @@ CloudWatch. `LOG_FORMAT=json` emits the same records as objects:
 ```
 
 Fields: `ts` (UTC, ISO 8601, milliseconds), `level`, `logger`, `message`,
-plus `exception` when there is a traceback, plus `repo`, `event_id` and
-`commit` when a caller sets the request context. Those last three are the
-reason to bother — the text format renders them as an opaque
-`[acme/api|evt:42|abc1234]` prefix, and as fields they answer "everything
-that happened while indexing this repository" with a filter instead of a
-regular expression.
-
-**Nothing sets them today.** They were written for the Celery task that
-indexed a push, and DEC-13 removed that; the filter is still installed
-and the keys are still in the fixed list, so the fields are present and
-empty rather than absent. `app/logging_context.py` says the same thing at
-more length, including why the keys were kept.
+plus `exception` when there is a traceback.
 
 The field list is fixed. Nothing a caller attaches with `extra=` reaches
 the output, which is deliberate: that would be an open channel for

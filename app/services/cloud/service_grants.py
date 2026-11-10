@@ -7,7 +7,8 @@ from fastapi import HTTPException, status
 from app.db.sql.models.service_extension import ServiceExtension
 from app.db.sql.service_extensions import ServiceExtensionDB
 from app.security.service_caller import ServiceCaller
-from app.services.identity.impact import ExtensionImpact
+from app.services.identity.impact.extension_impact import ExtensionImpact
+from app.services.identity.impact.grants import ServiceGrant
 
 
 class ServiceGrants:
@@ -18,11 +19,11 @@ class ServiceGrants:
     """
 
     @staticmethod
-    def of(extension: ServiceExtension) -> frozenset[str]:
+    def of(extension: ServiceExtension) -> frozenset[ServiceGrant]:
         return frozenset(ExtensionImpact.model_validate(extension.impact or {}).service)
 
     @classmethod
-    def require(cls, extension: ServiceExtension, needed: set[str]) -> None:
+    def require(cls, extension: ServiceExtension, needed: set[ServiceGrant]) -> None:
         missing = sorted(needed - cls.of(extension))
         if missing:
             raise HTTPException(

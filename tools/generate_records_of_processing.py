@@ -13,7 +13,7 @@ was maintained by hand and spent five passes claiming five controls did
 not exist, while the register beside it — which has a test — stayed
 correct. An Article 30 record listing tables and retention windows is
 exactly the kind of document that goes stale on the next migration, so
-the categories of personal data come from `PERSONAL_DATA_COLUMNS` (the
+the categories of personal data come from `ColumnRegistry` (the
 classification F115 built and asserts against the live schema), the
 retention windows come from `app/config.py`, and
 `tests/test_records_of_processing.py` fails if the committed file stops
@@ -42,12 +42,12 @@ import sys
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from app.services.subject_access import (  # noqa: E402
-    NOT_PERSONAL_COLUMNS,
-    PERSONAL_DATA_COLUMNS,
-)
+from app.services.subject_access.classification import ColumnRegistry  # noqa: E402
 
 OUT = _ROOT / 'docs/RECORDS_OF_PROCESSING.md'
+
+#: The column classification, read through the one object that reads it.
+_REGISTRY = ColumnRegistry()
 
 PLACEHOLDER = '`__CONTROLLER_TO_COMPLETE__`'
 """Marked, not guessed.
@@ -212,14 +212,14 @@ ACTIVITIES: tuple[Activity, ...] = (
         name="The cloud's producers and their VMs",
         purpose=(
             'Run each producer — a person, an app an org admin registered, or '
-            "a space the app declared for one of its own users — in a microVM "
+            'a space the app declared for one of its own users — in a microVM '
             'of its own: which apps an organisation has and who '
             'owns them, which extensions each app has on, which VM profile '
             'each group and app gets and who defined it, what an app or an '
             'extension asked its VM to get and which admin approved or '
             'rejected it, the commands run as '
             "root in a producer's VM with who asked and what came of them, the "
-            "messages, chats, actions and events services asked to deliver to a "
+            'messages, chats, actions and events services asked to deliver to a '
             "producer's agent or extension, with the thread key and the files "
             'that came with them, and which MCP '
             "servers a person approved, and the credential each producer's VM "
@@ -273,11 +273,11 @@ ACTIVITIES: tuple[Activity, ...] = (
             "gateway's feed keeps one row per producer — whether they are one "
             'still, and when that changed. A member removed from an organisation '
             "has their VM's state, volume and keys erased after the organisation's "
-            '`removed_member_retention_days` (default 30, at most the platform\'s '
+            "`removed_member_retention_days` (default 30, at most the platform's "
             'maximum; 0 is at once), or at once on an erasure request; a legal hold '
             'an admin places stops that clock until it is released, and an erasure '
             'request is refused while it stands. Every erasure scheduled, moved or '
-            'stopped is audited. An export of a removed member\'s data an admin '
+            "stopped is audited. An export of a removed member's data an admin "
             'asks for during retention is kept `PRODUCER_EXPORT_RETENTION_DAYS` (7) '
             'for the organisation to download. A feed row is kept `PRODUCER_FEED_RETENTION_DAYS` '
             '(30) after the erasure, by `app/services/retention.py`. A member who '
@@ -320,7 +320,7 @@ ACTIVITIES: tuple[Activity, ...] = (
 #: Shared-plane tables that hold no personal data, and why.
 #:
 #: The coverage rule above runs from the column classification: a table
-#: appears in an activity only if `app/services/subject_access.py`
+#: appears in an activity only if `app/services/subject_access/`
 #: classifies it, and it is classified only if a column could name a
 #: person. These have no such column, so no activity can claim them — and
 #: a record that left them out without saying so would read, to somebody
@@ -385,10 +385,10 @@ NO_PERSONAL_DATA: tuple[tuple[str, str], ...] = (
 def _tables_in_classification() -> dict[str, list[tuple[str, str]]]:
     """Every classified table, with its columns and dispositions."""
     tables: dict[str, list[tuple[str, str]]] = defaultdict(list)
-    for key, disposition in PERSONAL_DATA_COLUMNS.items():
+    for key, classification in _REGISTRY.personal().items():
         table, column = key.split('.', 1)
-        tables[table].append((column, disposition))
-    for key in NOT_PERSONAL_COLUMNS:
+        tables[table].append((column, classification.verdict.value))
+    for key in _REGISTRY.not_personal():
         table, column = key.split('.', 1)
         tables[table].append((column, 'not personal'))
     for columns in tables.values():
@@ -474,7 +474,7 @@ def misdescribed_tables() -> list[str]:
 
 def render() -> str:
     tables = _tables_in_classification()
-    personal_total = len(PERSONAL_DATA_COLUMNS)
+    personal_total = len(_REGISTRY.personal())
 
     out: list[str] = []
     w = out.append
@@ -483,7 +483,7 @@ def render() -> str:
     w('  GENERATED by tools/generate_records_of_processing.py — do not edit.')
     w('')
     w('  The categories below come from the column classification in')
-    w('  app/services/subject_access.py, which is itself asserted against')
+    w('  app/services/subject_access/, which is itself asserted against')
     w('  the live schema (F115). Edit the activities in the generator, or')
     w('  the classification, and regenerate:')
     w('')
@@ -668,7 +668,7 @@ def render() -> str:
         'returned to the subject: a password hash, an OAuth token, the '
         'free-text detail of an audit entry that may name a third party. '
         'Withholding is a decision recorded column by column in '
-        '`app/services/subject_access.py`, with the reason, and the '
+        '`app/services/subject_access/personal_columns.py`, with the reason, and the '
         'subject-access report says that a value was withheld rather than '
         'pretending the column does not exist.'
     )

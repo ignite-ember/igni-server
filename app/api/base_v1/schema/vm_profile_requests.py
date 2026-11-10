@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AliasGenerator, BaseModel, ConfigDict, Field
+from pydantic import AliasGenerator, BaseModel, ConfigDict, Field, TypeAdapter
 from pydantic.alias_generators import to_camel
 
 from app.api.base_v1.schema.effective_vm_profile import EffectiveVmProfile
@@ -18,6 +18,8 @@ from app.api.base_v1.schema.vm_profiles import VmProfileShape
 #: Who asked: an app, or an extension (through its manifest).
 SubjectKind = Literal['app', 'extension']
 RequestState = Literal['pending', 'approved', 'rejected']
+#: Who keeps a request: the app itself, or the service whose extension's manifest asks.
+RequesterKind = Literal['app', 'service']
 
 #: The longest reason a rejection may give.
 MAX_REASON = 500
@@ -49,11 +51,25 @@ class RequestSubject(BaseModel):
     #: The app's registered name, or the extension's.
     name: str
 
+    @classmethod
+    def stored(cls, kind: str, *, subject_id: str, name: str) -> RequestSubject:
+        """A subject as the table stores it, its kind checked rather than assumed."""
+        return cls(kind=_SUBJECT_KINDS.validate_python(kind), id=subject_id, name=name)
+
+    def profile_name(self) -> str:
+        """What a profile an approval makes is called, before a number is added for a name taken."""
+        return f'{self.kind.capitalize()}: {self.name}'
+
 
 class RequestedBy(BaseModel):
     #: `app`: the app itself; `service`: the service whose extension's manifest asks.
-    kind: Literal['app', 'service']
+    kind: RequesterKind
     id: str
+
+    @classmethod
+    def stored(cls, kind: str, requester_id: str) -> RequestedBy:
+        """A requester as the table stores it, its kind checked rather than assumed."""
+        return cls(kind=_REQUESTER_KINDS.validate_python(kind), id=requester_id)
 
 
 class VmProfileRequestRecord(BaseModel):
@@ -79,6 +95,11 @@ class VmProfileRequestRecord(BaseModel):
     reason: str | None = None
     #: The profile an approval made, holding what was last approved; null before any.
     profile_id: str | None = None
+
+    @staticmethod
+    def stored_state(state: str) -> RequestState:
+        """A state as the table stores it, checked rather than assumed."""
+        return _STATES.validate_python(state)
 
 
 class VmProfileRequestList(BaseModel):
@@ -111,3 +132,8 @@ class ServiceVmProfile(BaseModel):
     profile: EffectiveVmProfile | None = None
     #: How many groups and apps the organisation gave that profile.
     assigned: AssignedCounts = Field(default_factory=lambda: AssignedCounts(groups=0, apps=0))
+
+
+_SUBJECT_KINDS: TypeAdapter[SubjectKind] = TypeAdapter(SubjectKind)
+_REQUESTER_KINDS: TypeAdapter[RequesterKind] = TypeAdapter(RequesterKind)
+_STATES: TypeAdapter[RequestState] = TypeAdapter(RequestState)

@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, func, select, text
 
 from app.db.sql import SQLAlchemySessionManager
+from app.db.sql.bind_chunks import chunks
 from app.db.sql.models.app_space import AppSpace
 from app.db.sql.models.space_limits import OrgSpaceQuota, PlatformSpaceCaps
-from app.db.sql.producer_feed import chunks
 from app.db.sql.tenancy import TenantData
 from app.utils.singleton import SingletonMeta
 

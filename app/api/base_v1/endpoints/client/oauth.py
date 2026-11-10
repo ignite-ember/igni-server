@@ -3,21 +3,27 @@
 import logging
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
+from app.api.base_v1.schema.oauth import SocialSignInState
 from app.config import settings
-from app.db.redis.auth_handoff import AuthHandoffDB
-from app.services.auth.oauth_service import OAuthProvider, OAuthService
+from app.db.redis.auth_handoff import auth_handoff, AuthHandoffDB
+from app.services.auth.auth_emails import auth_emails, AuthEmails
+from app.services.auth.auth_refusals import AuthRefusals
+from app.services.auth.oauth_errors import OAuthExchangeFailed
+from app.services.auth.oauth_models import OAuthProvider
+from app.services.auth.oauth_refusals import OAuthRefusals
+from app.services.auth.oauth_service import oauth_service, OAuthService
 from app.services.auth.providers import is_usable
-from app.services.email.delivery import EmailDelivery
-from app.services.email.service import EmailService
+from app.services.identity.account_refusals import AccountRefusals
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_handoff = AuthHandoffDB()
+#: What the portal's sign-in form shows for any failure after the provider sent the person back.
+_SIGN_IN_FAILED = 'OAuth sign-in failed. Please try again.'
 
 
 async def _resolve_provider(name: str) -> OAuthProvider:
@@ -46,6 +52,13 @@ async def _resolve_provider(name: str) -> OAuthProvider:
     return provider
 
 
+def _to_login(query: dict[str, str]) -> RedirectResponse:
+    return RedirectResponse(
+        url=f'{settings.oauth_frontend_base_url}/login?{urlencode(query)}',
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
 @router.get(
     '/auth/{provider}',
     description='Redirect to OAuth provider authorization page',
@@ -53,12 +66,12 @@ async def _resolve_provider(name: str) -> OAuthProvider:
 async def oauth_redirect(
     provider: str,
     returnTo: str = Query(default='', alias='returnTo'),
+    oauth: OAuthService = Depends(oauth_service),
 ):
     resolved = await _resolve_provider(provider)
 
-    metadata = {'returnTo': returnTo} if returnTo else None
-    state = await OAuthService.generate_state(metadata)
-    url = await OAuthService.get_authorize_url(resolved, state)
+    state = await oauth.generate_state(SocialSignInState(returnTo=returnTo))
+    url = oauth.get_authorize_url(resolved, state)
     return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
 
 
@@ -71,40 +84,43 @@ async def oauth_callback(
     bg: BackgroundTasks,
     code: str = Query(...),
     state: str = Query(...),
+    emails: AuthEmails = Depends(auth_emails),
+    handoff: AuthHandoffDB = Depends(auth_handoff),
+    oauth: OAuthService = Depends(oauth_service),
 ):
     resolved = await _resolve_provider(provider)
-    metadata = await OAuthService.validate_state(state)
+    with OAuthRefusals():
+        signin = await oauth.validate_state(state, SocialSignInState)
 
+    # Whatever goes wrong from here on sends the person back to the
+    # portal's sign-in form with a reason, not to a 500 page on the API's
+    # host — except a refusal the server raises on purpose, which keeps
+    # its status. The cause goes to the log, never into the URL: it was
+    # `str(e)` in the redirect, which showed the person an upstream error
+    # body and left it in their history and the proxy's access log.
     try:
-        user_info = await OAuthService.exchange_and_get_user(resolved, code)
-        result = await OAuthService.find_or_create_user_and_get_token(user_info)
+        with OAuthRefusals():
+            user_info = await oauth.exchange_and_get_user(resolved, code)
 
+        with AuthRefusals(), AccountRefusals():
+            result = await oauth.find_or_create_user_and_get_token(user_info)
         if result.is_new_user:
-            if EmailDelivery().enabled:
-                bg.add_task(EmailService().send_welcome, to_email=result.email)
-            else:
-                EmailDelivery().note_undeliverable(purpose='welcome', email=result.email)
+            emails.welcome(bg, email=result.email)
 
         # A one-time code, never the token. `?token=<jwt>` put a working
         # credential in the browser history, in the `Referer` of
         # anything this page touches, and in the access log of whatever
         # proxies the portal. See app/db/redis/auth_handoff.py.
-        query: dict[str, str] = {'code': await _handoff.issue(result.token.access_token)}
-        return_to = metadata.get('returnTo', '')
-        if return_to:
-            query['returnTo'] = return_to
-        params = urlencode(query)
-        return RedirectResponse(
-            url=f'{settings.oauth_frontend_base_url}/login?{params}',
-            status_code=status.HTTP_302_FOUND,
-        )
-
+        query: dict[str, str] = {'code': await handoff.issue(result.token.access_token)}
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f'OAuth callback error for {provider}: {e}', exc_info=True)
-        params = urlencode({'error': f'OAuth sign-in failed: {e}'})
-        return RedirectResponse(
-            url=f'{settings.oauth_frontend_base_url}/login?{params}',
-            status_code=status.HTTP_302_FOUND,
-        )
+    except OAuthExchangeFailed as exc:
+        logger.warning('OAuth exchange with %s failed', resolved.value, exc_info=exc)
+        return _to_login({'error': _SIGN_IN_FAILED})
+    except Exception:  # noqa: BLE001 — the person is sent back to sign in, not shown a 500
+        logger.exception('OAuth callback for %s failed', resolved.value)
+        return _to_login({'error': _SIGN_IN_FAILED})
+
+    if signin.return_to:
+        query['returnTo'] = signin.return_to
+    return _to_login(query)

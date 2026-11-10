@@ -39,7 +39,7 @@ class TestLivenessChecksNothing:
         tell a check that passed from no check at all."""
         import inspect
 
-        from app.main import health_check
+        from app.api.health import health_check
 
         body = inspect.getsource(health_check)
         for forbidden in ('session_scope', 'execute', 'ping', 'redis'):
@@ -61,16 +61,11 @@ class TestReadinessChecksBoth:
     async def test_a_dead_database_makes_it_503(self, client, monkeypatch):
         """503 rather than 500: the instance is alive and should be
         drained, not killed."""
-        import app.main as main
 
         class _Boom:
             def session_scope(self):
                 raise ConnectionRefusedError('nope')
 
-        monkeypatch.setattr(main, 'SQLAlchemySessionManager', lambda: _Boom(), raising=False)
-
-        # The endpoint imports the manager inside the function, so patch
-        # where it is looked up.
         import app.db.sql as sql_module
 
         monkeypatch.setattr(sql_module, 'SQLAlchemySessionManager', lambda: _Boom())

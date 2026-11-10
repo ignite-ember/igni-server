@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ActionList, ActionMenu, FormControl, Stack, Text } from '@primer/react'
 
 import client from '../api/client'
+import type { AvailableModels } from '../types'
 
 /**
  * Which model one agent runs against.
@@ -36,7 +37,7 @@ export function AgentModelField({
   // reads as an expired login.
   const modelsQuery = useQuery({
     queryKey: ['portal-inference-models'],
-    queryFn: () => client.get<{ models: string[] }>('/portal/inference/models').then((r) => r.data),
+    queryFn: () => client.get<AvailableModels>('/portal/inference/models').then((r) => r.data),
     enabled: !disabled,
   })
 

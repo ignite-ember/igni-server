@@ -32,20 +32,23 @@ megabyte file instead of starting it again.
 
 from __future__ import annotations
 
-from datetime import datetime
 import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from app.db.sql.service_extensions import ServiceExtensionDB
+from app.api.base_v1.schema.extensions import Distributed, HeldAsset, Published
 from app.security.producer import current_producer, ProducerCaller
-from app.services.identity.extension_assets import AssetRefused, BundleAssets, ByteRange, ExtensionAssets
-from app.services.identity.extension_grants import AddedGrant
-from app.services.identity.extensions import ExtensionConflict, ExtensionRefused, MAX_ARCHIVE_BYTES, ServiceExtensions
-from app.services.identity.priority import ExtensionPriority
-from app.services.portal.group_extensions import GroupExtensions
+from app.services.identity.extension_assets import AssetRefused, extension_assets, ExtensionAssets
+from app.services.identity.extension_bundle import MAX_ARCHIVE_BYTES
+from app.services.identity.extension_distribution import (
+    AssetNotDistributed,
+    extension_distribution,
+    ExtensionDistribution,
+    ExtensionNotDistributed,
+)
+from app.services.identity.extension_errors import ExtensionConflict, ExtensionRefused
+from app.services.identity.extensions import service_extensions, ServiceExtensions
 
 router = APIRouter()
 
@@ -58,153 +61,57 @@ ASSET_SIGNATURE_HEADER = 'X-Igni-Asset-Signature'
 _SHA256 = re.compile(r'^[0-9a-f]{64}$')
 
 
-class HeldAsset(BaseModel):
-    sha256: str
-    size: int
-
-
-class Published(BaseModel):
-    extension_id: str
-    version: str
-    sha256: str
-    #: Held for a super admin: it asks for more than the approved version,
-    #: which machines keep receiving until it is approved.
-    held: bool = False
-    #: Why it is held, in a line a service can log.
-    reason: str | None = None
-    #: What it asks for that the approved version did not.
-    added: list[AddedGrant] = []
-
-
-class DistributedExtension(BaseModel):
-    extension_id: str
-    version: str
-    name: str
-    description: str
-    #: The service it belongs to — and the audience of the tokens the
-    #: host fetches for it.
-    service_url: str
-    sha256: str
-    #: Verify with `publisher_jwks` before installing.
-    signature: str
-    publisher_jwks: dict[str, object]
-    published_at: datetime
-    #: Every group in the producer's organisation this extension is on
-    #: for. A person gets it because theirs is one of them.
-    groups: list[str]
-    #: Every app in the organisation this extension is on for. An app
-    #: gets it because it is one of them.
-    apps: list[str]
-
-
-class ListedProducer(BaseModel):
-    """Who the listing is for: a person, or an app (`docs/service-identity.md` §11)."""
-
-    kind: str
-    id: str
-
-
-class Distributed(BaseModel):
-    producer: ListedProducer
-    #: The person's one group in the organisation they are signed in to,
-    #: read now — fresher than the session token's `group` claim. Null
-    #: for an app, which is in no group, and for somebody in no
-    #: organisation, who gets nothing.
-    group: str | None
-    #: That group's name, for a client to show; null when `group` is.
-    group_name: str | None = None
-    extensions: list[DistributedExtension]
-    #: The super admin's priority order of extensions, highest first. A
-    #: machine gives every collision to the higher one, stacks prompt
-    #: edits and asks hooks in it.
-    priority: list[str]
-
-
 @router.put('/clients/{client_id}/extension', response_model=Published, tags=['Identity'])
 async def publish(
     client_id: str,
     request: Request,
     signature: str = Header(..., alias=SIGNATURE_HEADER),
+    extensions: ServiceExtensions = Depends(service_extensions),
 ) -> Published:
     archive = await request.body()
     if len(archive) > MAX_ARCHIVE_BYTES:
         raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail='The bundle is too large')
     try:
-        publication = await ServiceExtensions().publish(client_id, archive, signature)
+        publication = await extensions.publish(client_id, archive, signature)
     except ExtensionRefused as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ExtensionConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    stored = publication.extension
-    comparison = publication.comparison
-    return Published(
-        extension_id=stored.extension_id,
-        version=stored.version,
-        sha256=stored.sha256,
-        held=publication.held,
-        reason=f'held for a super admin: {comparison.reason}' if publication.held and comparison else None,
-        added=list(comparison.added) if publication.held and comparison else [],
-    )
+    return Published.of(publication)
 
 
 @router.get('/clients/{client_id}/extension', response_model=Published, tags=['Identity'])
-async def published(client_id: str) -> Published:
+async def published(client_id: str, extensions: ServiceExtensions = Depends(service_extensions)) -> Published:
     """What igni holds for this client, so a service starting up uploads
     only when its bundle has changed: its latest upload — the held one,
     if a version is waiting for a super admin, so a restart does not send
     it again. Public: an id, a version and a digest say nothing a signed
     bundle does not."""
-    store = ServiceExtensionDB()
-    held = await store.held_of(client_id)
-    found = held or await store.of(client_id)
-    if found is None:
+    latest = await extensions.latest(client_id)
+    if latest is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Nothing uploaded for this client')
-    return Published(
-        extension_id=found.extension_id,
-        version=found.version,
-        sha256=found.sha256,
-        held=held is not None,
-        reason='held for a super admin: it asks for more than the approved version' if held is not None else None,
-    )
+    return Published.of(latest)
 
 
 @router.get('/extensions', response_model=Distributed, tags=['Extensions'])
-async def distributed(caller: ProducerCaller = Depends(current_producer)) -> Distributed:
+async def distributed(
+    caller: ProducerCaller = Depends(current_producer),
+    distribution: ExtensionDistribution = Depends(extension_distribution),
+) -> Distributed:
     """What this producer gets: a person, through their one group; an app, through its own list."""
-    entitlement = await GroupExtensions().of_producer(caller)
-    return Distributed(
-        producer=ListedProducer(kind=caller.kind, id=caller.id),
-        group=entitlement.group,
-        group_name=entitlement.group_name,
-        extensions=[
-            DistributedExtension(
-                extension_id=extension.extension_id,
-                version=extension.version,
-                name=str(extension.manifest.get('name') or extension.extension_id),
-                description=str(extension.manifest.get('description') or ''),
-                service_url=client.base_url,
-                sha256=extension.sha256,
-                signature=extension.signature,
-                publisher_jwks=dict(client.jwks),
-                published_at=extension.published_at,
-                groups=entitlement.enabled[extension.extension_id],
-                apps=entitlement.apps.get(extension.extension_id, []),
-            )
-            for extension, client in await ServiceExtensionDB().distributed()
-            if entitlement.allows(extension.extension_id)
-        ],
-        priority=[
-            extension_id for extension_id in await ExtensionPriority().distributed() if entitlement.allows(extension_id)
-        ],
-    )
+    return await distribution.listing(caller)
 
 
 @router.get('/extensions/{extension_id}/bundle', tags=['Extensions'])
-async def bundle(extension_id: str, caller: ProducerCaller = Depends(current_producer)) -> Response:
-    entitlement = await GroupExtensions().of_producer(caller)
-    found = await ServiceExtensionDB().archive_of(extension_id) if entitlement.allows(extension_id) else None
-    if found is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No approved service ships this extension')
+async def bundle(
+    extension_id: str,
+    caller: ProducerCaller = Depends(current_producer),
+    distribution: ExtensionDistribution = Depends(extension_distribution),
+) -> Response:
+    try:
+        found = await distribution.bundle(extension_id=extension_id, caller=caller)
+    except ExtensionNotDistributed as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return Response(
         content=found.archive,
         media_type='application/gzip',
@@ -213,10 +120,10 @@ async def bundle(extension_id: str, caller: ProducerCaller = Depends(current_pro
 
 
 @router.head('/clients/{client_id}/extension/assets/{sha256}', tags=['Identity'])
-async def holds_asset(client_id: str, sha256: str) -> Response:
+async def holds_asset(client_id: str, sha256: str, assets: ExtensionAssets = Depends(extension_assets)) -> Response:
     """Whether igni holds this asset for this client. Public, like the
     bundle's digest: a digest says nothing the signed manifest does not."""
-    if not _SHA256.match(sha256) or not await ExtensionAssets().holds(client_id, sha256):
+    if not _SHA256.match(sha256) or not await assets.holds(client_id, sha256):
         return Response(status_code=status.HTTP_404_NOT_FOUND)
     return Response(status_code=status.HTTP_200_OK)
 
@@ -227,11 +134,12 @@ async def upload_asset(
     sha256: str,
     request: Request,
     signature: str = Header(..., alias=ASSET_SIGNATURE_HEADER),
+    assets: ExtensionAssets = Depends(extension_assets),
 ) -> HeldAsset:
     if not _SHA256.match(sha256):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='An asset is named by its SHA-256')
     try:
-        stored = await ExtensionAssets().upload(client_id, sha256, request.stream(), signature)
+        stored = await assets.upload(client_id, sha256, request.stream(), signature)
     except AssetRefused as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return HeldAsset(sha256=stored.sha256, size=stored.size)
@@ -243,31 +151,20 @@ async def asset(
     sha256: str,
     byte_range: str | None = Header(None, alias='Range'),
     caller: ProducerCaller = Depends(current_producer),
+    distribution: ExtensionDistribution = Depends(extension_distribution),
 ) -> Response:
     """One asset of a distributed extension — only one its live manifest declares — whole or one range of it."""
-    entitlement = await GroupExtensions().of_producer(caller)
-    found = await ServiceExtensionDB().archive_of(extension_id) if entitlement.allows(extension_id) else None
-    if found is None or not BundleAssets.of(found.manifest).declares(sha256):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail='No distributed extension declares this asset'
+    try:
+        download = await distribution.asset(
+            extension_id=extension_id, sha256=sha256, caller=caller, byte_range=byte_range
         )
-    assets = ExtensionAssets()
-    held = await assets.held(found.client_id, sha256)
-    if held is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='igni does not hold this asset')
-    headers = {'X-Igni-Asset-Sha256': held.sha256, 'ETag': f'"{held.sha256}"', 'Accept-Ranges': 'bytes'}
-    span = ByteRange.of(byte_range, held.size)
-    if span is None:
-        return Response(
-            status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
-            headers={**headers, 'Content-Range': f'bytes */{held.size}'},
-        )
-    headers['Content-Length'] = str(span.length)
-    if span.partial:
-        headers['Content-Range'] = f'bytes {span.start}-{span.end}/{held.size}'
+    except AssetNotDistributed as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if not download.satisfiable:
+        return Response(status_code=download.status_code, headers=download.headers())
     return StreamingResponse(
-        assets.stream(held, span),
-        status_code=status.HTTP_206_PARTIAL_CONTENT if span.partial else status.HTTP_200_OK,
+        distribution.stream(download),
+        status_code=download.status_code,
         media_type='application/octet-stream',
-        headers=headers,
+        headers=download.headers(),
     )

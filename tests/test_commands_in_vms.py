@@ -164,6 +164,18 @@ class TestJobs:
         [job] = (await client.get('/vm/jobs', headers=acme.admin)).json()['jobs']
         assert (job['handed_out'], job['finished']) == (1, 0)
 
+    async def test_a_group_job_needs_a_group_of_this_organisation(self, client, acme):
+        globex = await CloudOrg(client, slug='globex').create()
+        theirs = await globex.group('Legal')
+
+        answers = [
+            await client.post('/vm/jobs', json={'scope': scope, 'command': 'x'}, headers=acme.admin)
+            for scope in ({'kind': 'group'}, {'kind': 'group', 'id': 'no-such-group'}, {'kind': 'group', 'id': theirs})
+        ]
+
+        assert [(a.status_code, a.json()['detail']) for a in answers] == [(404, 'Group not found')] * 3
+        assert (await client.get('/vm/jobs', headers=acme.admin)).json()['jobs'] == []
+
     async def test_a_profile_job_and_an_org_job(self, client, acme):
         app = await acme.app()
         ada, _ = await acme.person('ada@acme.com')

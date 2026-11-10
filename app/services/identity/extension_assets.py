@@ -37,7 +37,7 @@ from app.db.sql.models.extension_asset import ExtensionAsset
 from app.db.sql.models.registered_client import APPROVED, RegisteredClient, SERVICE
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.security import jose
-from app.services.identity.jwk import JwkSet, PublicJwk
+from app.services.identity.jwk import JwkSet
 
 #: The largest single asset a service may upload.
 MAX_ASSET_BYTES = 1024 * 1024 * 1024
@@ -52,8 +52,6 @@ UNPACKABLE = ('.tar.gz', '.tgz', '.zip')
 
 #: One `Range` of bytes: `bytes=first-last`, either end left open.
 _RANGE = re.compile(r'^bytes=(\d*)-(\d*)$')
-
-_ALGORITHM_FOR = {'RSA': 'RS256', 'EC': 'ES256'}
 
 
 class AssetRefused(ValueError):
@@ -139,17 +137,11 @@ class AssetSignature:
     @staticmethod
     def verify(signature: str, client: RegisteredClient) -> AssetClaim:
         """The claim, if one of the client's registered keys signed it."""
-        keys = JwkSet.model_validate(client.jwks)
         try:
-            kid = str(jose.unverified_header(signature).get('kid') or '')
+            payload = JwkSet.model_validate(client.jwks).verified_payload(signature)
         except jose.TokenError as exc:
             raise AssetRefused('the signature is not a compact JWS') from exc
-        candidates: list[PublicJwk] = [k for k in keys.keys if k.kid == kid] if kid else list(keys.keys)
-        for key in candidates:
-            try:
-                payload = jose.verify_jws(signature, key.as_dict(), algorithms=[_ALGORITHM_FOR[key.kty]])
-            except jose.TokenError:
-                continue
+        if payload is not None:
             try:
                 return AssetClaim.model_validate_json(payload)
             except ValidationError as exc:
@@ -286,3 +278,8 @@ class ExtensionAssets:
                 raise AssetRefused(f'the asset ended at {offset} bytes, before the {asset.size} it holds')
             yield chunk
             offset += len(chunk)
+
+
+def extension_assets() -> ExtensionAssets:
+    """The FastAPI dependency; tests replace it through `app.dependency_overrides`."""
+    return ExtensionAssets()

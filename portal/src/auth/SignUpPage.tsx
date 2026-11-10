@@ -14,11 +14,22 @@ import {
 } from '@primer/react'
 import { useMutation } from '@tanstack/react-query'
 import client from '../api/client'
+import { formRefusalOf, refusalOf } from '../api/refusal'
 import { useAuth } from './useAuth'
 import { IgniLogo } from '../components/IgniLogo'
-import { OtherWaysIn, type OAuthProvider } from './OtherWaysIn'
+import { OtherWaysIn } from './OtherWaysIn'
+import { safeReturnTo } from './returnTo'
+import { SignUpDetailsForm, type SignUpDetails } from './SignUpDetailsForm'
 import { useAuthMethods } from './useAuthMethods'
 import './LoginPage.css'
+
+type Step = 'email' | 'code' | 'details'
+
+const HEADINGS: Record<Step, string> = {
+  email: 'Create your igni account',
+  code: 'Enter verification code',
+  details: 'Complete your profile',
+}
 
 export function SignUpPage() {
   useDocumentTitle('Sign Up', 'Create an account on this igni deployment.')
@@ -26,19 +37,16 @@ export function SignUpPage() {
   const [searchParams] = useSearchParams()
   const { login } = useAuth()
 
-  const [step, setStep] = useState<'email' | 'code' | 'details'>('email')
+  const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState(searchParams.get('email') || '')
   const [code, setCode] = useState('')
-  const [firstName, setFirstName] = useState('')
-  const [lastName, setLastName] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   // After signup we land users on /welcome (CLI install).
   // Callers that explicitly pass ?returnTo=... still win — e.g. igni
-  // bouncing the user back to /cli-auth after creating an account mid-flow.
-  const returnTo = searchParams.get('returnTo') || '/welcome'
+  // bouncing the user back to /cli-auth after creating an account mid-flow —
+  // but only a same-origin path does; see returnTo.ts.
+  const returnTo = safeReturnTo(searchParams.get('returnTo') || '/welcome')
 
   const sendCodeMutation = useMutation({
     mutationFn: () => client.post('/send-sign-up-code', { email }),
@@ -47,51 +55,27 @@ export function SignUpPage() {
       setStep('code')
     },
     onError: (err: unknown) => {
-      const message =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail || 'Failed to send code'
-      setError(message)
+      setError(refusalOf(err, 'Failed to send code'))
     },
   })
 
   const signUpMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (details: SignUpDetails) =>
       client.post<{ access_token: string }>('/sign-up', {
-        first_name: firstName,
-        last_name: lastName,
+        first_name: details.firstName,
+        last_name: details.lastName,
         email,
         code,
-        password,
+        password: details.password,
       }),
     onSuccess: (response) => {
       login(response.data.access_token)
       navigate(returnTo, { replace: true })
     },
     onError: (err: unknown) => {
-      const data = (err as { response?: { data?: { detail?: unknown } } })
-        ?.response?.data
-      const detail = data?.detail
-      let message = 'Failed to create account'
-      if (typeof detail === 'string') {
-        message = detail
-      } else if (Array.isArray(detail) && detail.length > 0) {
-        message = detail.map((e: { msg?: string }) => e.msg ?? '').filter(Boolean).join('. ')
-      }
-      setError(message)
+      setError(formRefusalOf(err, 'Failed to create account'))
     },
   })
-
-  const PASSWORD_RULES = [
-    { test: (p: string) => p.length >= 8, label: 'At least 8 characters' },
-    { test: (p: string) => /[A-Z]/.test(p), label: 'One uppercase letter' },
-    { test: (p: string) => /[a-z]/.test(p), label: 'One lowercase letter' },
-    { test: (p: string) => /\d/.test(p), label: 'One digit' },
-    { test: (p: string) => /[^A-Za-z0-9]/.test(p), label: 'One special character' },
-  ]
-
-  const passwordErrors = password
-    ? PASSWORD_RULES.filter((r) => !r.test(password)).map((r) => r.label)
-    : []
 
   const handleSendCode = (e: React.FormEvent) => {
     e.preventDefault()
@@ -106,20 +90,6 @@ export function SignUpPage() {
     setStep('details')
   }
 
-  const handleSignUp = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!firstName.trim() || !lastName.trim() || !password) return
-    if (passwordErrors.length > 0) {
-      setError('Password missing: ' + passwordErrors.join(', '))
-      return
-    }
-    if (password !== confirmPassword) {
-      setError('Passwords do not match')
-      return
-    }
-    signUpMutation.mutate()
-  }
-
   const isLoading = sendCodeMutation.isPending || signUpMutation.isPending
 
   // The buttons the server offers, as on the sign-in page. This page
@@ -127,33 +97,12 @@ export function SignUpPage() {
   // without Google (every air-gapped one) was a button to an error.
   const { data: methods } = useAuthMethods()
 
-  const handleOAuth = (provider: OAuthProvider) => {
-    const params = returnTo !== '/select-org'
-      ? `?returnTo=${encodeURIComponent(returnTo)}`
-      : ''
-    window.location.href = `/v1/auth/${provider}${params}`
-  }
-
-  const handleSso = () => {
-    const params = returnTo !== '/select-org'
-      ? `?returnTo=${encodeURIComponent(returnTo)}`
-      : ''
-    window.location.href = `${methods?.sso.start_url ?? '/v1/auth/oidc'}${params}`
-  }
-
-  const headingText =
-    step === 'email'
-      ? 'Create your igni account'
-      : step === 'code'
-        ? 'Enter verification code'
-        : 'Complete your profile'
-
   return (
     <Stack as="main" align="center" justify="center" className="login-page">
       <IgniLogo size={48} />
 
       <Heading as="h1" className="login-heading">
-        {headingText}
+        {HEADINGS[step]}
       </Heading>
 
       {/* Main card */}
@@ -195,7 +144,7 @@ export function SignUpPage() {
               </Stack>
             </form>
 
-            <OtherWaysIn methods={methods} onOAuth={handleOAuth} onSso={handleSso} />
+            <OtherWaysIn methods={methods} returnTo={returnTo} />
           </Stack>
         )}
 
@@ -236,73 +185,11 @@ export function SignUpPage() {
         )}
 
         {step === 'details' && (
-          <form onSubmit={handleSignUp}>
-            <Stack gap="normal">
-              <FormControl>
-                <FormControl.Label>First name</FormControl.Label>
-                <TextInput
-                  type="text"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  block
-                  autoFocus
-                  aria-label="First name"
-                  contrast
-                />
-              </FormControl>
-
-              <FormControl>
-                <FormControl.Label>Last name</FormControl.Label>
-                <TextInput
-                  type="text"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  block
-                  aria-label="Last name"
-                  contrast
-                />
-              </FormControl>
-
-              <FormControl>
-                <FormControl.Label>Password</FormControl.Label>
-                <TextInput
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  block
-                  aria-label="Password"
-                  contrast
-                  validationStatus={password && passwordErrors.length > 0 ? 'error' : undefined}
-                />
-                {password && passwordErrors.length > 0 && (
-                  <FormControl.Validation variant="error">
-                    Missing: {passwordErrors.join(', ')}
-                  </FormControl.Validation>
-                )}
-              </FormControl>
-
-              <FormControl>
-                <FormControl.Label>Confirm password</FormControl.Label>
-                <TextInput
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  block
-                  aria-label="Confirm password"
-                  contrast
-                />
-              </FormControl>
-
-              <Button
-                type="submit"
-                variant="primary"
-                block
-                disabled={isLoading || !firstName.trim() || !lastName.trim() || !password || !confirmPassword}
-              >
-                {isLoading ? <Spinner size="small" /> : 'Create account'}
-              </Button>
-            </Stack>
-          </form>
+          <SignUpDetailsForm
+            pending={signUpMutation.isPending}
+            onSubmit={(details) => signUpMutation.mutate(details)}
+            onInvalid={setError}
+          />
         )}
       </Stack>
 

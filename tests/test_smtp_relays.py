@@ -39,7 +39,9 @@ def sent(monkeypatch):
 
 
 async def _deliver(transport: SmtpTransport, **service_kwargs) -> None:
-    await EmailService(transport=transport, **service_kwargs).send_email('dev@acme.test', 'Subject', '<p>Body</p>')
+    await EmailService(transport=transport, **service_kwargs).send_email(
+        to_email='dev@acme.test', subject='Subject', html_body='<p>Body</p>'
+    )
 
 
 class TestAmazonSES:
@@ -131,7 +133,9 @@ class TestFromHeader:
 class TestDelivery:
     async def test_a_message_carries_both_parts(self, sent):
         service = EmailService(transport=SmtpTransport(host='relay.test'))
-        await service.send_email('dev@acme.test', 'Subject', '<p>HTML</p>', 'plain')
+        await service.send_email(
+            to_email='dev@acme.test', subject='Subject', html_body='<p>HTML</p>', text_body='plain'
+        )
         message = sent[0]['message']
         assert isinstance(message, EmailMessage)
         assert message.is_multipart()
@@ -145,4 +149,4 @@ class TestDelivery:
 
         monkeypatch.setattr('app.services.email.transports.smtp.aiosmtplib.send', _boom)
         service = EmailService(transport=SmtpTransport(host='relay.test'))
-        assert await service.send_email('a@b.test', 's', '<p>b</p>') is False
+        assert await service.send_email(to_email='a@b.test', subject='s', html_body='<p>b</p>') is False

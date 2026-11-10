@@ -135,6 +135,9 @@ ALLOWED_CONTENT_TYPE: dict[str, str] = {kind.id: kind.content_type for kind in E
 #: Only agents run against a model of their own.
 KINDS_WITH_MODEL: set[str] = {'agents'}
 
+#: The URL schemes a plugin can be installed from: what ``git clone`` takes.
+PLUGIN_SOURCE_SCHEMES: frozenset[str] = frozenset({'http', 'https', 'git', 'ssh'})
+
 #: Materialised with the executable bit set. A hook's command is run
 #: through ``bash -c``, so a script arriving mode 0644 fails with 127 —
 #: which the hook runner treats as non-blocking, making it a silent

@@ -378,27 +378,6 @@ class Settings(BaseSettings):
     oauth_frontend_base_url: str = Field(
         default='http://localhost:5173', description='Frontend base URL for post-login redirect'
     )
-    # Where a shared document opens. Its own application, not a
-    # section of the portal: the portal configures a deployment,
-    # this is what the deployment exists to carry, and a recipient
-    # arriving from a link wants a document, not an admin console.
-    #
-    # Empty falls back to the portal's base URL, so a deployment
-    # that has not been told about the documents app keeps handing
-    # out links that work.
-    documents_base_url: str = Field(default='', description='Base URL of the documents app; empty uses the portal URL')
-    # Where a shared link actually points.
-    #
-    # igni itself, when a deployment says where that is. Whoever
-    # follows one is a colleague who has igni, and they want the
-    # document where their own documents are — beside the tree they
-    # already know and the conversation they are about to join — not
-    # in a separate reader that can only show them the page.
-    #
-    # Empty falls back to the documents app, which is the right answer
-    # for a deployment without one: a reader that shows the document
-    # beats a link to an application the recipient may not be running.
-    app_base_url: str = Field(default='', description='Base URL of the igni app; empty uses the documents app')
     # ── OIDC (the customer's own identity provider) ──────────────────
     # The three providers above are specific companies, reachable only
     # with internet access. This is what an air-gapped deployment uses:

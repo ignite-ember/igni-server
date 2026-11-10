@@ -12,7 +12,7 @@ graded by the same bar. A file that would fail review in one fails in the
 other.
 
 Patterns are drawn from the layers that already got this right:
-`app/db/sql/commits.py`, `app/services/codeindex/`, `app/workflows/schemas.py`.
+`app/db/sql/inference_nodes.py`, `app/services/notifications/`, `app/api/base_v1/schema/`.
 
 ---
 
@@ -70,22 +70,22 @@ Never inside a function, method, class body, or conditional branch.
 
 ```python
 # WRONG
-async def process(self, sha: str) -> None:
-    from app.workflows.code_analysis_workflow import CodeAnalysisWorkflow
+async def wake(self, user_ids: set[str]) -> None:
+    from app.services.notifications.listeners import Listeners
 
 # RIGHT
-from app.workflows.code_analysis_workflow import CodeAnalysisWorkflow
+from app.services.notifications.listeners import Listeners
 
-class Processor:
-    async def process(self, sha: str) -> None: ...
+class Nudger:
+    async def wake(self, user_ids: set[str]) -> None: ...
 ```
 
 Two exceptions, each of which must carry a one-line comment saying which
 it is:
 
 - **Genuine circular-import break.** Prefer fixing the cycle — usually by
-  moving the shared type into a `schemas.py` both sides import, as
-  `PoolType` was moved into `app/services/ai/schemas.py`.
+  moving the shared type into a `schemas.py` both sides import, as the
+  inference types live in `app/services/ai/schemas.py`.
 - **Optional heavy dependency** that must not be imported when the
   feature is off (`google.cloud.secretmanager` in a code path that runs
   without GCP credentials).
@@ -97,26 +97,26 @@ exceptions.
 
 All SQL lives in a `*DB` class under `app/db/sql/`. These classes extend
 `SQLAlchemySessionManager` and are `SingletonMeta` singletons; each owns
-one domain (`CommitDB`, `RepositoryDB`, `DatasetDB`, `WebhookEventDB`).
+one domain (`InferenceNodeDB`, `NotificationsDB`, `VmProfilesDB`).
 A service may call several of them and apply business logic between the
 calls, but it must not emit `select(...)`, `insert(...)`, `update(...)`,
 `delete(...)` or `await session.execute(...)` itself.
 
 ```python
 # WRONG — SQL in a service
-class IndexingService:
-    async def start(self, repo_id: str) -> None:
-        stmt = select(Commit).where(Commit.repository_id == repo_id)
+class NotificationFeed:
+    async def page(self, user_id: str) -> list[Notification]:
+        stmt = select(Notification).where(Notification.user_id == user_id)
         rows = await session.execute(stmt)
 
 # RIGHT — the DB class owns the query
-class IndexingService:
-    async def start(self, repo_id: str) -> None:
-        commits = await self._commits.list_for_repository(repo_id)
+class NotificationFeed:
+    async def page(self, user_id: str) -> list[Notification]:
+        return await self._notifications.list_for(user_id)
 ```
 
-The same rule applies to Celery tasks, workflow phases and webhook
-processors — "it isn't technically a service" does not license inline SQL.
+The same rule applies to background runners, startup hooks and
+anything else — "it isn't technically a service" does not license inline SQL.
 
 ### Rule 4: OOP — classes own data and behaviour
 
@@ -222,17 +222,6 @@ management. Constructor-injected dependencies (see Pattern 2). No SQL.
 
 **Model** — SQLAlchemy table definition. No business logic.
 
-The pipeline adds one layer above services:
-
-```
-webhook / Celery task  →  workflow  →  phase  →  service  →  *DB class
-```
-
-A **workflow** (`app/workflows/code_analysis_workflow.py`) owns the
-sequence of phases and the run-level invariants (degraded-summary ratio,
-resumability). A **phase** owns one step and knows nothing about the
-others' ordering.
-
 ### Pattern 2: constructor injection, not module singletons
 
 Dependencies arrive through `__init__` and are stored on `self` with a
@@ -240,23 +229,23 @@ leading underscore. A class must be constructible in a test without
 patching a module global.
 
 ```python
-# app/services/codeindex/preflight.py — the reference
-class PreflightService:
+# app/services/notifications/stream.py — the reference
+class NotificationStream:
     def __init__(
         self,
         *,
-        repository_db: RepositoryDB,
-        access_checker: RepositoryAccessChecker,
-        publisher: ChangesetPublisher,
+        notifier: Listeners | None = None,
+        keepalive_seconds: int = listeners.KEEPALIVE_INTERVAL,
+        max_seconds: int = listeners.STREAM_MAX_SECONDS,
     ) -> None:
-        self._repository_db = repository_db
-        self._access_checker = access_checker
-        self._publisher = publisher
+        self._notifier = notifier or Listeners()
+        self._keepalive_seconds = keepalive_seconds
+        self._max_seconds = max_seconds
 ```
 
 The `*DB` classes are singletons, which is the one deliberate exception —
 they are stateless query façades over a per-loop engine. Even so, pass
-them in rather than reaching for `DatasetDB()` in the middle of a method,
+them in rather than reaching for `NotificationsDB()` in the middle of a method,
 so the caller can substitute a fake.
 
 ### Pattern 3: keyword-only arguments past the first
@@ -360,17 +349,15 @@ missed. (See `scripts/migrate_pool_tiers_to_pools.py`.)
 
 ## Reference implementations — copy these
 
-**New `*DB` class** — `app/db/sql/commits.py`. `CommitDB` extends
-`SQLAlchemySessionManager`, one method per query, returns models.
+**New `*DB` class** — `app/db/sql/inference_nodes.py`. `InferenceNodeDB`
+extends `SQLAlchemySessionManager`, one method per query, returns models.
 
-**New service** — `app/services/codeindex/preflight.py` and
-`app/services/codeindex/access.py`. Constructor injection, keyword-only
-arguments, small classes, one concern each.
+**New service** — `app/services/notifications/` (`feed.py`, `nudge.py`,
+`stream.py`). Constructor injection, keyword-only arguments, small
+classes, one concern each.
 
-**New schema** — `app/workflows/schemas.py`. Models with computed
-properties (`degraded_ratio`) rather than callers doing the arithmetic.
-
-**New workflow phase** — `app/workflows/phases/`.
+**New schema** — `app/services/ai/schemas.py`. Pydantic models and the
+exceptions beside them, separate from the classes that use them.
 
 ---
 

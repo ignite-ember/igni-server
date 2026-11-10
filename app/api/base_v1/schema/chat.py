@@ -2,7 +2,29 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ToolCallFunction(BaseModel):
+    """The function an assistant's tool call names. Extra fields are passed through."""
+
+    model_config = ConfigDict(extra='allow')
+
+    name: str | None = None
+    #: A JSON string on the wire; some clients send the object itself.
+    arguments: str | dict[str, Any] | None = None
+
+
+class ToolCall(BaseModel):
+    """One of an assistant message's `tool_calls`. Extra fields are passed through."""
+
+    model_config = ConfigDict(extra='allow')
+
+    id: str | None = None
+    type: str | None = None
+    function: ToolCallFunction | None = None
 
 
 class ChatMessage(BaseModel):
@@ -10,7 +32,7 @@ class ChatMessage(BaseModel):
     content: str | list | None = None
     reasoning_content: str | None = None
     name: str | None = None
-    tool_calls: list | None = None
+    tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
 
 

@@ -12,17 +12,16 @@ token anywhere.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 import logging
-from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 from app.security import jose
-from app.services.identity.key_ring import KeyRing, SigningKeys
+from app.services.auth.token_claims import CustomClaims, TokenClaims, VerifiedClaims
+from app.services.identity.key_ring import KeyRing, ProcessSigningKeys
 
 logger = logging.getLogger(__name__)
 
@@ -66,40 +65,10 @@ class TokenResponse(BaseModel):
     token_type: str = 'bearer'
 
 
-@dataclass(frozen=True, slots=True)
-class TokenClaims:
-    """What a portal or CLI session token carries.
-
-    `issued_at` is the `iat` in epoch seconds, and B5 compares it
-    against `users.tokens_valid_after` — so a token minted before an
-    operator withdrew somebody's sessions is refused. Kept as the
-    seconds the token actually holds rather than converted to a datetime
-    here, because converting in two places is how a comparison ends up
-    an hour out.
-
-    All-`None` means the token did not decode. Callers check `user_id`,
-    which is what they did when this was an empty dict.
-    """
-
-    user_id: str | None = None
-    org_id: str | None = None
-    org_name: str | None = None
-    issued_at: int | None = None
-    #: The person's one group in `org_id` when the token was issued. A
-    #: snapshot: what a person gets is decided from their group read at
-    #: the time (`GET /v1/extensions` answers with it), never from this
-    #: claim alone.
-    group: str | None = None
-    #: The personal API key this session was bought with, if it was
-    #: (`docs/service-identity.md` §22). Such a session may do what the
-    #: person may, except mint further credentials.
-    api_key_id: str | None = None
-
-
 class JWTService:
     """Mints and checks tokens with the process's key ring.
 
-    Holds no state of its own: the ring is `SigningKeys`' and the issuer
+    Holds no state of its own: the ring is `ProcessSigningKeys`' and the issuer
     is `settings.public_base_url`, both read at the moment of use, so a
     key reload or a test's setting is seen without rebuilding anything.
     """
@@ -107,10 +76,10 @@ class JWTService:
     #: Only what igni itself signs with. A token whose header names
     #: anything else — `none`, or `HS256` keyed with the public key — is
     #: refused before any key is looked up.
-    ALGORITHMS = ['RS256']
+    ALGORITHMS = ('RS256',)
 
-    def __init__(self, ring: Callable[[], KeyRing] = SigningKeys.ring) -> None:
-        self._ring = ring
+    def __init__(self, ring: Callable[[], KeyRing] | None = None) -> None:
+        self._ring = ring or ProcessSigningKeys().ring
 
     @property
     def issuer(self) -> str:
@@ -122,6 +91,7 @@ class JWTService:
     def create_token(
         self,
         user_id: str,
+        *,
         expires_delta: timedelta | None = None,
         org_id: str | None = None,
         org_name: str | None = None,
@@ -134,42 +104,28 @@ class JWTService:
         *incarnation* — the membership a VM's token is for (§11.3) — is
         carried as `inc`, so the gateway can match it to the feed.
         *api_key_id* — the personal API key the session was exchanged for
-        (§22) — is carried as `api_key`.
+        (§22) — is carried as `api_key`. Empty values are left out.
         """
-        extra: dict[str, object] = {'kind': PERSON}
-        if incarnation:
-            extra['inc'] = incarnation
-        if api_key_id:
-            extra['api_key'] = api_key_id
-        if org_id:
-            extra['org'] = org_id
-            if group:
-                extra['group'] = group
-        if org_name:
-            extra['org_name'] = org_name
+        claims = CustomClaims(
+            kind=PERSON,
+            org=org_id or None,
+            group=(group or None) if org_id else None,
+            org_name=org_name or None,
+            inc=incarnation or None,
+            api_key=api_key_id or None,
+        )
         return self.sign(
             subject=user_id,
             audience=self.issuer,
             use=TokenUse.SESSION,
             lifetime=expires_delta or SESSION_LIFETIME,
-            claims=extra,
+            claims=claims,
         )
 
     def decode_token(self, token: str) -> TokenClaims:
         """A session's claims, or an all-`None` `TokenClaims`."""
-        payload = self.verify(token, audience=self.issuer, use=TokenUse.SESSION)
-        if payload is None:
-            return TokenClaims()
-        sub = payload.get('sub')
-        issued_at = payload.get('iat')
-        return TokenClaims(
-            user_id=str(sub) if sub is not None else None,
-            org_id=str(payload['org']) if 'org' in payload else None,
-            org_name=str(payload['org_name']) if 'org_name' in payload else None,
-            issued_at=int(issued_at) if issued_at is not None else None,
-            group=str(payload['group']) if payload.get('group') else None,
-            api_key_id=str(payload['api_key']) if payload.get('api_key') else None,
-        )
+        claims = self.verify(token, audience=self.issuer, use=TokenUse.SESSION)
+        return TokenClaims() if claims is None else TokenClaims.of(claims)
 
     def decode_user_id(self, token: str) -> str | None:
         """Convenience: decode and return just the user_id, or None."""
@@ -184,12 +140,12 @@ class JWTService:
         audience: str,
         use: TokenUse,
         lifetime: timedelta,
-        claims: dict[str, object] | None = None,
+        claims: CustomClaims | None = None,
     ) -> str:
         """Sign a token. The registered claims are always set here."""
         ring = self._ring()
         now = datetime.now(timezone.utc)
-        payload: dict[str, object] = dict(claims or {})
+        payload = claims.payload() if claims else {}
         payload.update(
             {
                 'iss': self.issuer,
@@ -206,8 +162,8 @@ class JWTService:
         )
         return jose.encode(payload, ring.private_pem(), algorithm='RS256', headers={'kid': ring.kid})
 
-    def verify(self, token: str, *, audience: str, use: TokenUse) -> dict[str, Any] | None:
-        """The payload of a valid token of this kind for `audience`, or `None`."""
+    def verify(self, token: str, *, audience: str, use: TokenUse) -> VerifiedClaims | None:
+        """The claims of a valid token of this kind for `audience`, or `None`."""
         try:
             header = jose.unverified_header(token)
         except jose.TokenError:
@@ -216,7 +172,7 @@ class JWTService:
         if key is None:
             return None
         try:
-            payload: dict[str, Any] = jose.decode(
+            payload = jose.decode(
                 token,
                 key.as_dict(),
                 algorithms=self.ALGORITHMS,
@@ -228,12 +184,7 @@ class JWTService:
             return None
         if payload.get('token_use') != str(use):
             return None
-        return payload
-
-    # ``resolve_user_id`` used to live here: decode, 401 on a missing
-    # claim, return the id. Removed rather than kept, because its whole
-    # job was to produce a subject nobody had verified still exists — and
-    # it was the convenient way to do half of an authorisation check
-    # while reading like the whole of one. Both callers now use
-    # ``app.security.subject.resolve_existing_user_id``, which cannot be
-    # used to do half. F122.
+        try:
+            return VerifiedClaims.model_validate(payload)
+        except ValidationError:
+            return None

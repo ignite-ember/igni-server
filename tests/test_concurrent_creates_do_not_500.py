@@ -55,6 +55,7 @@ class TestOrganizationSlug:
         """The sequential case, which was the actual bug: this never
         needed concurrency to fail."""
         from app.db.sql.organizations import OrganizationDB
+        from app.db.sql.schemas.organization import SlugTaken
         from tests.conftest import create_user
 
         await create_user(db, user_id='slug-owner', email='slug-owner@example.com')
@@ -63,14 +64,47 @@ class TestOrganizationSlug:
         orgs = OrganizationDB()
         await orgs.create(display_name='First', slug='taken-slug', owner_user_id='slug-owner', domains=['first.io'])
 
-        with pytest.raises(HTTPException) as caught:
+        with pytest.raises(SlugTaken) as caught:
             await orgs.create(
                 display_name='Second', slug='taken-slug', owner_user_id='slug-owner', domains=['second.io']
             )
 
-        assert caught.value.status_code == 409
         # The message has to name the value, or the form cannot point at a field.
-        assert 'taken-slug' in str(caught.value.detail)
+        assert caught.value.slug == 'taken-slug'
+        assert 'taken-slug' in str(caught.value)
+
+    async def test_a_duplicate_slug_is_a_409_when_the_creator_is_on_the_domain(self, db):
+        """The usual portal create passes the creator's address on the
+        org's own domain, which seats them as admin. Seating queries
+        memberships; that query must not autoflush the org and let the
+        duplicate slug escape as a raw IntegrityError."""
+        from app.db.sql.organizations import OrganizationDB
+        from app.db.sql.schemas.organization import SlugTaken
+        from tests.conftest import create_user
+
+        await create_user(db, user_id='first-founder', email='ann@first.io')
+        await create_user(db, user_id='second-founder', email='bob@second.io')
+        await db.flush()
+
+        orgs = OrganizationDB()
+        await orgs.create(
+            display_name='First',
+            slug='dup',
+            owner_user_id='first-founder',
+            domains=['first.io'],
+            owner_email='ann@first.io',
+        )
+
+        with pytest.raises(SlugTaken) as caught:
+            await orgs.create(
+                display_name='Second',
+                slug='dup',
+                owner_user_id='second-founder',
+                domains=['second.io'],
+                owner_email='bob@second.io',
+            )
+
+        assert caught.value.slug == 'dup'
 
     async def test_a_non_slug_violation_still_surfaces(self, db):
         """The handler checks *which* constraint failed rather than
@@ -81,7 +115,7 @@ class TestOrganizationSlug:
 
         from app.db.sql.organizations import OrganizationDB
 
-        source = inspect.getsource(OrganizationDB.create)
+        source = inspect.getsource(OrganizationDB._flush_refusing_taken_slug)
 
         # Checked by index name, not by the word "slug". The substring
         # form this replaces also matched `null value in column "slug"`,
@@ -117,8 +151,8 @@ class TestInferenceNodeId:
         await nodes.create(node_id='dup-node', **kwargs)
 
         # A domain error, not an HTTPException. The status code is the
-        # router's to choose — see the 409 mapping in
-        # app/api/base_v1/endpoints/portal/inference.py — and a caller
+        # router's to choose — see app/services/ai/pinned_nodes.py, which
+        # turns it into a NodeIdTaken the portal router maps to 409 — and a caller
         # that is not an HTTP request can now catch this by name.
         with pytest.raises(NodeIdAlreadyRegistered) as caught:
             await nodes.create(node_id='dup-node', **kwargs)
@@ -203,6 +237,15 @@ class TestNoCreateFlushesWithoutAHandler:
             'producer_exports.py',
             # A service's file is keyed by a fresh uuid4 and has no other unique key.
             'service_attachments.py',
+            # An organisation's tenant row is inserted only after re-reading
+            # it, under the TENANT_LOCK advisory lock held for the whole
+            # provision, so no second writer can insert the same org_id,
+            # number or database meanwhile. F90: no dead handler.
+            'tenant_registry.py',
+            # A membership is inserted for the account being made in the
+            # same transaction, or moved under the super-admin advisory
+            # lock, so no second writer holds that (org_id, user_id).
+            'admission.py',
         }
 
         unguarded = []

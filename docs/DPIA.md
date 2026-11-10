@@ -168,7 +168,7 @@ has to paper.
 
 **The model endpoint is the one that matters.** `base_url` accepts any absolute
 URL: the product is built for the customer's own vLLM nodes, and the whole
-inference stack — pools, routing, drain — is about GPUs they run. Nothing stops a
+inference stack — routing, drain, health — is about GPUs they run. Nothing stops a
 customer pointing it at a third-party API instead, and if they do, that provider
 receives their developers' source code and becomes a processor they must assess,
 contract with under Article 28, and possibly list as a recipient. The software

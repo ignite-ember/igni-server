@@ -6,6 +6,7 @@ what is `VmCommandAuthority`'s, and `docs/service-identity.md` §13.
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 
+from app.api.base_v1.schema.audit_detail import VmCommandAudit, VmJobAudit
 from app.api.base_v1.schema.vm_commands import (
     QueuedJobs,
     QueueJobRequest,
@@ -15,7 +16,7 @@ from app.api.base_v1.schema.vm_commands import (
     VmJobList,
     VmJobRecord,
 )
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.producer import ProducerCaller, ProducerKind, ProducerRef, require_producer
 from app.services.cloud.vm_commands import VmCommands
 
@@ -28,8 +29,10 @@ async def run_command(
 ) -> VmCommandRecord:
     """Run a command as root in one producer's VM. Its VM is woken for it."""
     record = await VmCommands().run(caller, body)
-    set_audit_target(request, target_type='vm_command', target_id=record.command_id)
-    set_audit_detail(request, {'producer': f'{body.producer.kind}:{body.producer.id}', 'org': record.org_id})
+    RequestAudit.of(request).set_target(target_type='vm_command', target_id=record.command_id)
+    RequestAudit.of(request).add_detail(
+        VmCommandAudit(producer=f'{body.producer.kind}:{body.producer.id}', org=record.org_id)
+    )
     return record
 
 
@@ -63,8 +66,10 @@ async def queue_job(
     """One command for many VMs, each handed it at its next wake. Wakes nobody."""
     queued = await VmCommands().queue(caller, body)
     if queued.jobs:
-        set_audit_target(request, target_type='vm_job', target_id=queued.jobs[0].job_id)
-    set_audit_detail(request, {'scope': body.scope.kind, 'scope_id': body.scope.id, 'organisations': len(queued.jobs)})
+        RequestAudit.of(request).set_target(target_type='vm_job', target_id=queued.jobs[0].job_id)
+    RequestAudit.of(request).add_detail(
+        VmJobAudit(scope=body.scope.kind, scope_id=body.scope.id, organisations=len(queued.jobs))
+    )
     return queued
 
 

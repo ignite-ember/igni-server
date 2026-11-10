@@ -100,3 +100,54 @@ class TestPasswordReset:
             json={'email': 'flow@test.com', 'password': 'old-password'},
         )
         assert resp.status_code == 401
+
+
+class TestTheRealReset:
+    """Through the real `OTPService`, with a real code: nothing stubbed but the race."""
+
+    async def test_a_right_code_sets_the_new_password(self, client, db):
+        import uuid
+
+        email = f'real-reset-{uuid.uuid4().hex[:8]}@test.com'
+        await create_user_with_password(db, password='old-password', email=email)
+        await db.commit()
+        issued = await OTPService().generate_password_reset_code(email)
+
+        resp = await client.post(
+            '/reset-password', json={'email': email, 'code': issued.code, 'new_password': 'Brand@new1'}
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {
+            'message': 'Password has been reset successfully. Please sign in with your new password.'
+        }
+        signed_in = await client.post('/sign-in', json={'email': email, 'password': 'Brand@new1'})
+        assert signed_in.status_code == 200, signed_in.text
+
+    async def test_an_account_gone_before_the_update_is_a_404(self, client, db, monkeypatch):
+        # Found by address, then deleted before the new password is
+        # written: the store's refusal is the same 404 a missing account
+        # has always had, not a 500.
+        import uuid
+
+        from app.db.sql.user import UserDB
+
+        class VanishingUsers(UserDB):
+            async def get_by_email(self, email):
+                user = await super().get_by_email(email)
+                if user is not None:
+                    await UserDB().delete(str(user.user_id))
+                return user
+
+        email = f'vanishing-{uuid.uuid4().hex[:8]}@test.com'
+        await create_user_with_password(db, password='old-password', email=email)
+        await db.commit()
+        issued = await OTPService().generate_password_reset_code(email)
+        monkeypatch.setattr(OTPService(), '_users', VanishingUsers())
+
+        resp = await client.post(
+            '/reset-password', json={'email': email, 'code': issued.code, 'new_password': 'Brand@new1'}
+        )
+
+        assert resp.status_code == 404, resp.text
+        assert resp.json() == {'detail': 'User not found'}

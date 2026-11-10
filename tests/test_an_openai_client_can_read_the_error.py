@@ -29,20 +29,25 @@ made the first a safe change.
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 import httpx
 import pytest
 
-from app.api.base_v1.endpoints.client import chat as chat_module
+from app.api.base_v1.endpoints.client.openai_errors import openai_error
+from app.api.base_v1.schema.openai_error import OpenAIErrorBody
 from app.config import settings
+from app.services.ai.backend_provider import BackendConfigError
+from app.services.ai.chat.errors import UpstreamRefusal
+from app.services.ai.chat.services import chat_services, ChatServices
 from app.services.ai.schemas import (
     BackendLease,
     ModelNotAvailableError,
     NoBackendAvailableError,
-    NoBackendConfiguredError,
 )
+from app.services.ai.upstream import RetryPolicy, UpstreamError, UpstreamFailure, UpstreamStale, UpstreamUnreadable
+from tests.chat_proxy import completions, context, drain, NO_BACKOFF, on_transport, SpyPool, streamer
 from tests.conftest import auth_header, create_org, create_user, make_token
 
 _CHAT = '/chat/completions'
@@ -57,195 +62,21 @@ def _body() -> dict:
 _COMPLETION = {'id': 'done', 'object': 'chat.completion', 'choices': [], 'usage': {}}
 
 
-class _HttpxStub:
-    """Stands in for the `httpx` module, deferring whatever it does not
-    override to the real one.
+def _scripted(*replies: tuple[int, str]):
+    """A real client over nodes that reply a different way each time — a
+    retry must reach a *new* node — repeating the last reply."""
+    calls = {'n': 0}
 
-    The endpoint refers to httpx by module name, so a stub replaces the
-    whole module — and then has to keep up with every attribute the
-    endpoint happens to reference. It did not: adding one
-    `isinstance(exc, httpx.TimeoutException)` broke three tests that
-    had nothing to do with timeouts. Falling through means a stub only
-    declares what it is actually faking.
-    """
+    def node(_request: httpx.Request) -> httpx.Response:
+        status_code, text = replies[min(calls['n'], len(replies) - 1)]
+        calls['n'] += 1
+        return httpx.Response(status_code, text=text)
 
-    def __getattr__(self, name):
-        return getattr(httpx, name)
+    return on_transport(node)
 
 
-class _Reply:
-    """One scripted upstream reply to a non-streaming request."""
-
-    def __init__(self, status_code: int, text: str):
-        self.status_code = status_code
-        self.text = text
-
-    def json(self):
-        return json.loads(self.text)
-
-
-class _ScriptedNodes(_HttpxStub):
-    """``httpx``, as the endpoint sees it, answering a different way each
-    time — which is the point: a retry must reach a *new* node."""
-
-    def __init__(self, replies: list[_Reply]):
-        self._replies = list(replies)
-        self.calls = 0
-
-    def AsyncClient(self, *_args, **_kwargs):  # noqa: N802 — a class to the caller
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return False
-
-    async def post(self, *_args, **_kwargs):
-        reply = self._replies[min(self.calls, len(self._replies) - 1)]
-        self.calls += 1
-        return reply
-
-
-class _FailingStream:
-    """A node that answers a streaming request with a status and nothing
-    else, every time — so every attempt fails and the frame is reached."""
-
-    def __init__(self, status_code: int):
-        self.status_code = status_code
-
-    async def aread(self) -> bytes:
-        return b'upstream said no'
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return False
-
-    def aiter_lines(self):
-        raise AssertionError('not reached: the status check comes first')
-
-
-class _StreamingNodes(_HttpxStub):
-    def __init__(self, resp):
-        self._resp = resp
-
-    def Timeout(self, **_kwargs):  # noqa: N802 — a class to the caller
-        return None
-
-    def AsyncClient(self, *_args, **_kwargs):  # noqa: N802
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return False
-
-    def stream(self, *_args, **_kwargs):
-        return self._resp
-
-
-class _SpyPool:
-    """Hands out a new lease each time, and counts."""
-
-    def __init__(self):
-        self.acquired = ['lease-1']
-        self.released: list[str] = []
-
-    async def release(self, lease):
-        self.released.append(getattr(lease, 'lease_id', str(lease)))
-
-    async def acquire(self, *_args, **_kwargs):
-        nxt = f'lease-{len(self.acquired) + 1}'
-        self.acquired.append(nxt)
-        return BackendLease(
-            lease_id=nxt,
-            backend_id=f'node-{len(self.acquired)}',
-            api_key=None,
-            base_url='http://node.invalid/v1',
-            model='m',
-        )
-
-    report_usage = None
-
-
-def _spy_ctx(pool):
-    """A real ``_RequestContext`` over a spy pool.
-
-    Was a ``MagicMock``, which worked while releasing and logging were
-    module-level functions that took a context. They are methods on it
-    now, so mocking the context would mock the code under test.
-    """
-    return chat_module._RequestContext(
-        user_id='u',
-        org_id='o',
-        model='m',
-        lease=BackendLease(
-            lease_id='lease-1',
-            backend_id='node-1',
-            api_key=None,
-            base_url='http://node.invalid/v1',
-            model='m',
-        ),
-        pool=pool,
-    )
-
-
-@pytest.fixture
-def non_stream(monkeypatch):
-    """A pool, a context, and a way to script what the nodes reply."""
-    pool = _SpyPool()
-    ctx = _spy_ctx(pool)
-
-    def install(replies: list[_Reply]):
-        monkeypatch.setattr(chat_module, 'httpx', _ScriptedNodes(replies))
-
-    # Usage logging would reach the database; the lease release it also
-    # performs is asserted by `test_lease_is_always_released`.
-    # Both are methods of _RequestContext now — it owns the lease and
-    # the pool they drive.
-    monkeypatch.setattr(chat_module._RequestContext, 'log_usage', AsyncMock())
-    monkeypatch.setattr(chat_module._RequestContext, 'release', AsyncMock())
-    return pool, ctx, install
-
-
-@pytest.fixture
-def stream_ctx(monkeypatch):
-    """A context whose upstream always fails the same way."""
-
-    def _build(resp):
-        pool = _SpyPool()
-        ctx = _spy_ctx(pool)
-        monkeypatch.setattr(chat_module, 'httpx', _StreamingNodes(resp))
-        monkeypatch.setattr(chat_module._RequestContext, 'log_usage', AsyncMock())
-        monkeypatch.setattr(chat_module._RequestContext, 'release', AsyncMock())
-        return ctx
-
-    return _build
-
-
-class _DeadNode(_HttpxStub):
-    """`httpx`, as the endpoint sees it, with nothing listening.
-
-    Stands in for the module rather than for the class so the real
-    exception types the endpoint catches are still the real ones — a
-    stub that raised a lookalike would prove nothing about the
-    `except httpx.RequestError` it is meant to exercise.
-    """
-
-    def AsyncClient(self, *_args, **_kwargs):  # noqa: N802 — it is a class to the caller
-        return self
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return False
-
-    async def post(self, *_args, **_kwargs):
-        raise httpx.ConnectError('connection refused')
+def _dead_node(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError('connection refused')
 
 
 @pytest.fixture
@@ -253,6 +84,18 @@ async def authed(client, db):
     await create_user(db, user_id='envelope-user', email='envelope@test.com')
     org = await create_org(db, owner_user_id='envelope-user', slug='envelope-org', display_name='E')
     return client, auth_header(make_token('envelope-user', org_id=str(org.id)))
+
+
+@pytest.fixture
+def chat_proxy(app):
+    """Serve the chat routes from a fresh `ChatServices` over *upstream*."""
+
+    def install(upstream=None) -> None:
+        services = ChatServices(upstream=upstream, retry=NO_BACKOFF)
+        app.dependency_overrides[chat_services] = lambda: services
+
+    yield install
+    app.dependency_overrides.pop(chat_services, None)
 
 
 def _pool(acquire_side_effect):
@@ -263,7 +106,7 @@ def _pool(acquire_side_effect):
 
 def _with_pool(pool):
     return patch(
-        'app.services.ai.pool_manager.PoolManager.get_chat_pool',
+        'app.services.ai.pool_manager.PoolManager.get_pool',
         new=lambda _self: pool,
     )
 
@@ -280,8 +123,9 @@ def _read(response) -> tuple[str, str]:
 class TestTheReasonSurvivesToTheClient:
     """The case that was measured: the node is gone."""
 
-    async def test_a_dead_node_says_so_where_an_sdk_looks(self, authed):
+    async def test_a_dead_node_says_so_where_an_sdk_looks(self, authed, chat_proxy):
         client, headers = authed
+        chat_proxy(on_transport(_dead_node))
         lease = BackendLease(
             lease_id='l1',
             backend_id='gpu-01',
@@ -292,16 +136,13 @@ class TestTheReasonSurvivesToTheClient:
         pool = AsyncMock()
         pool.acquire = AsyncMock(return_value=lease)
 
-        # Only the endpoint's own httpx is replaced. Patching
-        # `httpx.AsyncClient.post` globally would unplug the test
-        # client, which reaches the app over httpx too.
-        with _with_pool(pool), patch.object(chat_module, 'httpx', _DeadNode()):
+        with _with_pool(pool):
             response = await client.post(_CHAT, json=_body(), headers=headers)
 
         assert response.status_code == 502, response.text
         message, kind = _read(response)
         # The whole point: not "Unknown model error".
-        assert 'inference node' in message, message
+        assert message == 'No inference node answered. Try again shortly.', message
         assert kind == 'server_error'
 
     async def test_the_old_shape_is_still_there(self, authed):
@@ -314,6 +155,7 @@ class TestTheReasonSurvivesToTheClient:
 
         assert response.status_code == 404
         assert response.json()['detail'] == response.json()['error']['message']
+        assert response.json()['detail'] == str(ModelNotAvailableError(model='nope', available=['m']))
 
 
 class TestEveryRefusalIsReadable:
@@ -328,8 +170,8 @@ class TestEveryRefusalIsReadable:
         ('failure', 'code', 'kind'),
         [
             (ModelNotAvailableError(model='nope', available=['m']), 404, 'invalid_request_error'),
-            (NoBackendConfiguredError('chat'), 503, 'server_error'),
-            (NoBackendAvailableError('chat'), 429, 'rate_limit_error'),
+            (BackendConfigError('No inference backends are available.'), 503, 'server_error'),
+            (NoBackendAvailableError(), 429, 'rate_limit_error'),
         ],
     )
     async def test_the_acquire_failures(self, authed, failure, code, kind, monkeypatch):
@@ -350,7 +192,7 @@ class TestEveryRefusalIsReadable:
         client, headers = authed
         monkeypatch.setattr(settings, 'chat_queue_max_wait_seconds', 1)
 
-        with _with_pool(_pool(NoBackendAvailableError('chat'))):
+        with _with_pool(_pool(NoBackendAvailableError())):
             response = await client.post(_CHAT, json=_body(), headers=headers)
 
         assert response.status_code == 429
@@ -385,172 +227,208 @@ class TestAStreamFailsInTheSameEnvelope:
     """A stream that dies mid-answer has already sent its 200, so its
     reason travels as an SSE frame rather than a status line.
 
-    Different transport, same API — and it was not: the frame carried
-    ``"type": "upstream_error"``, which is not a type any OpenAI SDK
-    knows, alongside one generic message standing in for three
-    different failures. These drive the real endpoint, not a copy of
-    its retry loop.
+    Different transport, same API. These drive the real stream and the
+    real upstream client, over a node that answers every attempt with
+    one status.
     """
 
-    async def _frames(self, ctx, body=None) -> list[str]:
-        response = await chat_module._stream_response(
-            'http://node.invalid/chat/completions', {}, body if body is not None else {}, ctx, MagicMock()
-        )
-        return [piece async for piece in response.body_iterator]
+    async def _frames(self, status_code: int) -> list[str]:
+        upstream = on_transport(lambda _request: httpx.Response(status_code, content=b'upstream said no'))
+        return await drain(streamer(upstream).open(context(SpyPool())).frames())
 
     def _error_frame(self, frames: list[str]) -> dict:
         for frame in frames:
             if frame.startswith('data: ') and '"error"' in frame:
-                return json.loads(frame[6:])['error']
+                return json.loads(frame[6:])
         raise AssertionError(f'no error frame in {frames}')
 
-    async def test_the_type_is_one_an_sdk_knows(self, stream_ctx):
-        ctx = stream_ctx(_FailingStream(503))
+    async def test_the_frame_is_the_envelope_an_sdk_reads(self):
+        frame = self._error_frame(await self._frames(503))
 
-        error = self._error_frame(await self._frames(ctx))
+        assert frame == {
+            'error': {
+                'message': 'The inference node returned 503.',
+                'type': 'server_error',
+                'code': None,
+                'param': None,
+            }
+        }
 
-        assert error['type'] == 'server_error', error
-        assert set(error) >= {'message', 'type', 'code', 'param'}, error
-
-    async def test_the_frame_says_which_failure_it_was(self, stream_ctx):
-        """Not "Upstream AI provider returned an error" for everything."""
-        ctx = stream_ctx(_FailingStream(503))
-
-        error = self._error_frame(await self._frames(ctx))
-
-        assert '503' in error['message'], error['message']
-
-    async def test_a_refused_request_is_not_a_server_error(self, stream_ctx):
+    async def test_a_refused_request_is_not_a_server_error(self):
         """A 400 is about the request, and is typed as such."""
-        ctx = stream_ctx(_FailingStream(400))
-
-        error = self._error_frame(await self._frames(ctx))
+        error = self._error_frame(await self._frames(400))['error']
 
         assert error['type'] == 'invalid_request_error', error
+        assert error['message'] == 'The inference node refused the request (400).'
 
-    async def test_a_4xx_is_not_tried_on_three_nodes(self, stream_ctx):
+    async def test_a_4xx_is_not_tried_on_three_nodes(self):
         """The retry comments are the visible cost of asking again."""
-        ctx = stream_ctx(_FailingStream(400))
-
-        frames = await self._frames(ctx)
+        frames = await self._frames(400)
 
         assert ': retry\n\n' not in frames, frames
 
+    async def test_a_node_that_refuses_the_connection_fails_over_and_then_says_so(self):
+        """Every transport failure is an `UpstreamFailure` now, so a refused
+        connection moves to another node — it used to escape the stream,
+        which caught only `ReadTimeout` — and ends in the same 502 frame
+        the non-streaming path answers with."""
+        pool = SpyPool()
+        nodes: list[str] = []
+
+        def refusing(request: httpx.Request) -> httpx.Response:
+            nodes.append(request.url.host)
+            raise httpx.ConnectError('connection refused')
+
+        frames = await drain(streamer(on_transport(refusing)).open(context(pool)).frames())
+
+        assert frames.count(': retry\n\n') == 2, frames
+        assert len(nodes) == 3
+        assert pool.acquired == ['lease-1', 'lease-2', 'lease-3']
+        assert self._error_frame(frames)['error']['message'] == 'No inference node answered. Try again shortly.'
+        assert sorted(pool.released) == sorted(pool.acquired)
+
 
 class TestTheSentenceNamesTheFailure:
-    """Three different things go wrong; three different sentences.
-
-    `_answer_for` is where that is decided for both paths, so it is
-    asserted directly rather than through either one.
-    """
+    """Each failure gets its own status and sentence, asserted on the
+    refusal both paths raise rather than through either one."""
 
     def test_a_node_that_errored(self):
-        answer = chat_module._answer_for(chat_module._UpstreamError(503, b''))
-        assert answer.status_code == 502
-        assert '503' in str(answer.detail)
+        answer = UpstreamRefusal(UpstreamError(503, b''))
+        assert (answer.status_code, answer.detail, answer.retry_after) == (
+            502,
+            'The inference node returned 503.',
+            None,
+        )
 
     def test_a_node_that_refused_the_request(self):
-        answer = chat_module._answer_for(chat_module._UpstreamError(400, b''))
-        assert answer.status_code == 400
-        assert 'refused the request' in str(answer.detail)
+        answer = UpstreamRefusal(UpstreamError(400, b''))
+        assert (answer.status_code, answer.detail) == (400, 'The inference node refused the request (400).')
 
     def test_a_node_at_capacity_keeps_its_retry_after(self):
-        answer = chat_module._answer_for(chat_module._UpstreamError(429, b''))
+        answer = UpstreamRefusal(UpstreamError(429, b''))
         assert answer.status_code == 429
-        assert answer.headers == {'Retry-After': '30'}
+        assert answer.retry_after == 30
 
     def test_a_node_that_answered_nonsense(self):
-        answer = chat_module._answer_for(chat_module._UpstreamUnreadable('<html>'))
-        assert 'unreadable' in str(answer.detail)
+        answer = UpstreamRefusal(UpstreamUnreadable('<html>'))
+        assert (answer.status_code, answer.detail) == (502, 'The inference node returned an unreadable response.')
 
     def test_a_node_that_stopped_partway_is_not_one_that_never_answered(self):
         """A half-written reply that stops is a 504, and says so — the
         reader waited, saw text, and needs to know it is not coming
         back."""
-        stalled = chat_module._answer_for(chat_module._UpstreamStale('silent'))
-        absent = chat_module._answer_for(httpx.ConnectError('refused'))
+        stalled = UpstreamRefusal(UpstreamStale('silent'))
+        absent = UpstreamRefusal(UpstreamFailure.from_transport(httpx.ConnectError('refused')))
 
         assert stalled.status_code == 504
         assert absent.status_code == 502
-        assert str(stalled.detail) != str(absent.detail)
+        assert stalled.detail != absent.detail
+
+    @pytest.mark.parametrize(
+        ('cause', 'label', 'status_code'),
+        [
+            (httpx.ReadTimeout('t'), 'read_timeout', 504),
+            (httpx.ConnectTimeout('t'), 'connect_timeout', 504),
+            (httpx.PoolTimeout('t'), 'pool_timeout', 504),
+            (httpx.ConnectError('c'), 'connect_error', 502),
+            (httpx.RemoteProtocolError('p'), 'remote_protocol_error', 502),
+        ],
+    )
+    def test_a_transport_failure_is_named_for_its_cause(self, cause, label, status_code):
+        failure = UpstreamFailure.from_transport(cause)
+
+        assert (failure.label, failure.answer_status, failure.worth_another_node) == (label, status_code, True)
+
+    def test_the_log_labels_are_unchanged(self):
+        assert UpstreamStale('x').label == 'stale'
+        assert UpstreamError(503, b'').label == '503'
 
 
 class TestRetryingWhatAnotherNodeCouldFix:
-    """Which failures are worth a second node, and which are not.
-
-    Asserted on the predicate both paths consult, so the streaming and
-    non-streaming loops cannot disagree about it again — they already
-    did, which is the gap this closes.
-    """
+    """Which failures are worth a second node, and which are not —
+    decided by the failure itself, which both paths consult."""
 
     @pytest.mark.parametrize('code', [500, 502, 503, 504, 408, 429])
     def test_a_node_problem_is_worth_another_node(self, code):
-        assert chat_module._worth_another_node(chat_module._UpstreamError(code, b''))
+        assert UpstreamError(code, b'').worth_another_node
 
     @pytest.mark.parametrize('code', [400, 401, 403, 404, 413, 422])
     def test_a_request_problem_is_not(self, code):
         """The request does not change between nodes, so neither does
         the refusal — retrying spends two more nodes to say it twice."""
-        assert not chat_module._worth_another_node(chat_module._UpstreamError(code, b''))
+        assert not UpstreamError(code, b'').worth_another_node
 
     def test_a_node_that_answers_nonsense_is(self):
-        assert chat_module._worth_another_node(chat_module._UpstreamUnreadable('<html>502</html>'))
+        assert UpstreamUnreadable('<html>502</html>').worth_another_node
 
     def test_a_node_that_does_not_answer_is(self):
-        assert chat_module._worth_another_node(httpx.ConnectError('refused'))
+        assert UpstreamFailure.from_transport(httpx.ConnectError('refused')).worth_another_node
 
 
 class TestTheNonStreamingPathRetriesABadAnswer:
-    """The gap: only a transport failure moved on to another node.
+    """A node that is up and unwell — a vLLM still loading its weights
+    answers 503 — is retried on another, as the streaming path does."""
 
-    A node that was up and unwell — a vLLM still loading its weights
-    answers 503 — failed the whole request on its first reply while
-    healthy nodes sat idle. The streaming path had retried that since
-    it was written.
-    """
-
-    async def test_a_503_moves_to_another_node_and_succeeds(self, non_stream):
+    async def test_a_503_moves_to_another_node_and_succeeds(self):
         """One bad node, then a good one, and the caller never sees it."""
-        pool, ctx, install = non_stream
-        install([_Reply(503, 'still loading'), _Reply(200, json.dumps(_COMPLETION))])
+        pool = SpyPool()
+        upstream = _scripted((503, 'still loading'), (200, json.dumps(_COMPLETION)))
 
-        answer = await chat_module._non_stream_response('http://node.invalid', {}, {}, ctx)
+        answer = await completions(upstream).complete(context(pool))
 
         assert answer.id == 'done'
         assert len(pool.acquired) == 2, pool.acquired
 
-    async def test_a_400_stops_on_the_first_node(self, non_stream):
-        pool, ctx, install = non_stream
-        install([_Reply(400, 'context too long')] * 3)
+    async def test_a_400_stops_on_the_first_node(self):
+        pool = SpyPool()
 
-        with pytest.raises(HTTPException) as caught:
-            await chat_module._non_stream_response('http://node.invalid', {}, {}, ctx)
+        with pytest.raises(UpstreamRefusal) as caught:
+            await completions(_scripted((400, 'context too long'))).complete(context(pool))
 
         # Passed through, not flattened to 502: the caller asked for
-        # something the model will not do, and a 502 would send them to
-        # look at our infrastructure for it.
+        # something the model will not do.
         assert caught.value.status_code == 400
         assert len(pool.acquired) == 1, pool.acquired
 
-    async def test_an_unreadable_200_moves_on(self, non_stream):
-        pool, ctx, install = non_stream
-        install([_Reply(200, 'data: not-a-completion\n\n'), _Reply(200, json.dumps(_COMPLETION))])
+    async def test_an_unreadable_200_moves_on(self):
+        pool = SpyPool()
+        upstream = _scripted((200, 'data: not-a-completion\n\n'), (200, json.dumps(_COMPLETION)))
 
-        answer = await chat_module._non_stream_response('http://node.invalid', {}, {}, ctx)
+        answer = await completions(upstream).complete(context(pool))
 
         assert answer.id == 'done'
         assert len(pool.acquired) == 2, pool.acquired
 
-    async def test_every_node_bad_reports_the_failure_not_the_search(self, non_stream):
-        """The last word is what went wrong, not that we stopped looking."""
-        _pool, ctx, install = non_stream
-        install([_Reply(503, 'still loading')] * 3)
+    async def test_a_200_whose_choice_has_no_message_moves_on_too(self):
+        """JSON, but not a completion: a choice with no `message`. It
+        used to escape as a `KeyError` and a bare 500 blaming this server;
+        it is an unreadable answer like any other, and another node is
+        asked."""
+        pool = SpyPool()
+        broken = json.dumps({'id': 'half', 'choices': [{'index': 0, 'finish_reason': 'stop'}]})
+        upstream = _scripted((200, broken), (200, json.dumps(_COMPLETION)))
 
-        with pytest.raises(HTTPException) as caught:
-            await chat_module._non_stream_response('http://node.invalid', {}, {}, ctx)
+        answer = await completions(upstream).complete(context(pool))
+
+        assert answer.id == 'done'
+        assert len(pool.acquired) == 2, pool.acquired
+
+    async def test_a_200_with_no_completion_anywhere_is_a_502_that_says_so(self):
+        broken = json.dumps({'id': 'half', 'choices': [{'index': 0}]})
+
+        with pytest.raises(UpstreamRefusal) as caught:
+            await completions(_scripted((200, broken))).complete(context(SpyPool()))
 
         assert caught.value.status_code == 502
-        assert '503' in str(caught.value.detail), caught.value.detail
+        assert caught.value.detail == 'The inference node returned an unreadable response.'
+
+    async def test_every_node_bad_reports_the_failure_not_the_search(self):
+        """The last word is what went wrong, not that we stopped looking."""
+        with pytest.raises(UpstreamRefusal) as caught:
+            await completions(_scripted((503, 'still loading'))).complete(context(SpyPool()))
+
+        assert caught.value.status_code == 502
+        assert caught.value.detail == 'The inference node returned 503.'
 
 
 class TestValidationIsLeftAlone:
@@ -569,3 +447,101 @@ class TestValidationIsLeftAlone:
 
         assert response.status_code == 422
         assert any(err['loc'][-1] == 'n' for err in response.json()['detail'])
+
+
+class TestHowManyNodesAndHowLong:
+    """The retry policy both paths consult: three attempts, a longer pause before each."""
+
+    def test_it_keeps_going_until_the_last_attempt(self):
+        policy = RetryPolicy()
+        failure = UpstreamError(503, b'')
+
+        assert [policy.gives_up(attempt=n, failure=failure) for n in (1, 2, 3)] == [False, False, True]
+
+    def test_it_stops_at_once_on_what_no_node_would_fix(self):
+        assert RetryPolicy().gives_up(attempt=1, failure=UpstreamError(400, b''))
+
+    def test_a_redirect_is_a_502_and_not_asked_again(self):
+        """Below 400 and not 200: neither the caller's fault nor one another node fixes."""
+        failure = UpstreamError(302, b'')
+
+        assert (failure.answer_status, failure.sentence, failure.worth_another_node) == (
+            502,
+            'The inference node returned 302.',
+            False,
+        )
+
+    async def test_each_pause_is_longer_than_the_last(self, monkeypatch):
+        pauses: list[float] = []
+
+        async def no_wait(seconds: float) -> None:
+            pauses.append(seconds)
+
+        monkeypatch.setattr('app.services.ai.upstream.asyncio.sleep', no_wait)
+
+        for attempt in (1, 2, 3):
+            await RetryPolicy(backoff=0.25).pause(attempt)
+
+        assert pauses == [0.25, 0.5, 0.75]
+
+
+class TestEachStatusGetsTheTypeAnSdkExpects:
+    """`openai_error` on its own: the type each status maps to, and the
+    message out of a detail that is not a sentence."""
+
+    @pytest.mark.parametrize(
+        ('code', 'kind'),
+        [
+            (400, 'invalid_request_error'),
+            (401, 'authentication_error'),
+            (403, 'permission_error'),
+            (404, 'invalid_request_error'),
+            (409, 'invalid_request_error'),
+            (413, 'invalid_request_error'),
+            (418, 'invalid_request_error'),
+            (429, 'rate_limit_error'),
+            (500, 'server_error'),
+            (502, 'server_error'),
+            (599, 'server_error'),
+        ],
+    )
+    def test_the_type(self, code, kind):
+        body = json.loads(openai_error(HTTPException(status_code=code, detail='why')).body)
+
+        assert body == {'error': {'message': 'why', 'type': kind, 'code': None, 'param': None}, 'detail': 'why'}
+
+    def test_a_structured_detail_is_rendered_and_kept(self):
+        detail = {'reason': 'quota', 'limit': 3}
+
+        body = json.loads(openai_error(HTTPException(status_code=409, detail=detail)).body)
+
+        assert body['error']['message'] == str(detail)
+        assert body['detail'] == detail
+
+    def test_a_list_detail_is_rendered_too(self):
+        body = json.loads(openai_error(HTTPException(status_code=400, detail=['a', 'b'])).body)
+
+        assert body['error']['message'] == "['a', 'b']"
+
+    def test_no_detail_is_an_empty_message(self):
+        exc = HTTPException(status_code=403)
+        exc.detail = None  # type: ignore[assignment]
+
+        body = json.loads(openai_error(exc).body)
+
+        assert body['error']['message'] == ''
+        assert body['detail'] is None
+
+    def test_the_headers_are_kept(self):
+        response = openai_error(HTTPException(status_code=429, detail='slow', headers={'Retry-After': '30'}))
+
+        assert response.status_code == 429
+        assert response.headers['Retry-After'] == '30'
+
+    def test_the_sse_frame_is_the_same_envelope(self):
+        frame = OpenAIErrorBody.sse_frame(message='gone', status_code=403)
+
+        assert frame.startswith('data: ') and frame.endswith('\n\n')
+        assert json.loads(frame[6:]) == {
+            'error': {'message': 'gone', 'type': 'permission_error', 'code': None, 'param': None}
+        }

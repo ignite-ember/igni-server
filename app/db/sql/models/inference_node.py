@@ -69,8 +69,7 @@ class InferenceNode(Base):
 
     base_url: Mapped[str] = Column(Text, nullable=False)
     # Every id this node answers to: the base model, plus one entry per
-    # LoRA adapter it was started with. JSONB rather than the
-    # comma-joined form used for ``pools`` because a model id is
+    # LoRA adapter it was started with. JSONB because a model id is
     # arbitrary text and an adapter can be named anything, commas
     # included.
     models: Mapped[Any] = Column(JSONB, nullable=False)
@@ -80,9 +79,6 @@ class InferenceNode(Base):
     #: `tools/rotate_secret_key.py`'s reach.
     api_key: Mapped[str | None] = Column(Text, nullable=True, info={'encrypted': True})
     max_concurrent: Mapped[int] = Column(Integer, nullable=False, server_default=text('64'))
-    # Stored as a comma-separated list rather than a JSON column: it is
-    # two possible values, always read whole, and never queried into.
-    pools: Mapped[str] = Column(Text, nullable=False, server_default=text("'chat'"))
     multimodal: Mapped[bool] = Column(Boolean, nullable=False, server_default=text('false'))
 
     enabled: Mapped[bool] = Column(Boolean, nullable=False, server_default=text('true'))

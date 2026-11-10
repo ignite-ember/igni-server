@@ -95,8 +95,8 @@ redis:
 # startup when appEnv is not `dev`.
 urls:
   # This server's external address: the issuer (`iss`) of every token it
-  # signs, and the URL a service such as CodeIndex or Artifacts is
-  # deployed with, beside its own public URL — it fetches the public keys from
+  # signs, and the URL a registered service is deployed with, beside its
+  # own public URL — it fetches the public keys from
   # `<publicBase>/.well-known/jwks.json` and finds every other endpoint
   # from there (docs/service-identity.md). Empty with the ingress enabled
   # means `https://<ingress.host>`. Outside appEnv dev it must be
@@ -237,55 +237,6 @@ socialSignIn:
   # `[]` turns Google off even with a client ID. `google` is the only
   # value accepted.
   # providers: []
-
-# ── Documents (igni__artifacts) ──────────────────────────────────────
-#
-# The premium document service. Not deployed by this chart — it has its
-# own image, database and release cycle — and **served on its own
-# hostname**, never as a path on igni's:
-#
-#   https://<ingress.host>/...     ->  the API and the portal
-#   https://<artifacts.host>/...   ->  the artifacts Service named below
-#
-# A service's URL is its identity (docs/service-identity.md). It is the
-# audience of every token a person gets for the service, and where igni
-# calls `{service URL}/v1/igni/subjects/...` to erase or export somebody's
-# data. A path on igni's host would make the audience ambiguous — a token
-# for `https://igni.example.com/v1/artifacts` and one for igni itself share
-# an origin — and every path the service serves would be a path igni can
-# never use. So the host is required when this is enabled, and must differ
-# from `ingress.host`.
-#
-# Disabled is the free tier, and a supported shape rather than a broken
-# one: nothing is rendered for it.
-#
-# Nothing here connects the API to the service, and there is no secret to
-# share with it. The service is deployed with two addresses — its own
-# public URL and this server's — registers itself on first start, and is
-# trusted only once a super admin approves it on the portal's Services
-# page. Both addresses are rendered into the ConfigMap
-# `<release>-artifacts-env`, for the service's Deployment to `envFrom`:
-#
-#   PUBLIC_BASE_URL       https://<artifacts.host>
-#   IGNI_SERVER_BASE_URL  this release's API Service, in-cluster
-#
-# Its secrets — GRAPH_CREDENTIALS_KEY, POSTGRES_URL, REDIS_URL — are its
-# own and are not this chart's to hold. Nor is its embedder: that is
-# igni__artifacts' own image, deployed beside the service, which sets
-# EMBEDDER_URL itself (igni__artifacts docs/running-the-embedder.md).
-artifacts:
-  enabled: false
-  # Its own public hostname, e.g. artifacts.example.com. Required when
-  # enabled. Not a URL: the chart adds https:// itself.
-  host: ""
-  # The artifacts Service, in this release's namespace (an Ingress can only
-  # route to Services beside it).
-  serviceName: ""
-  servicePort: 8100
-  tls:
-    # The certificate for `host`. Required when `ingress.tls.enabled`:
-    # igni's own certificate names igni's host, not this one.
-    secretName: ""
 
 # The paid modules' licence (docs/licence-file.md): one signed file, issued
 # by Ignite Ember, in a Secret with the key `licence.json`. Mounted read-only
@@ -564,12 +515,12 @@ networkPolicy:
     #   kubernetes.io/metadata.name: monitoring
     podSelector: {}
   # Further NetworkPolicy peers allowed to the API on 7777: services that
-  # call it in-cluster rather than through the ingress — Artifacts, which
-  # is given IGNI_SERVER_BASE_URL=http://<release>-api.<ns>.svc:<port>.
+  # call it in-cluster rather than through the ingress, at
+  # http://<release>-api.<ns>.svc:<port>.
   apiIngressFrom: []
   #   - namespaceSelector:
   #       matchLabels:
-  #         kubernetes.io/metadata.name: igni-artifacts
+  #         kubernetes.io/metadata.name: my-service
   # DNS egress (53/UDP and 53/TCP) is open to every destination unless
   # you name the resolver here. It is not pinned by default because
   # CoreDNS's labels differ between distributions and NodeLocal DNSCache
@@ -608,7 +559,7 @@ networkPolicy:
   #     cidrs: [10.0.40.0/24]
   #     ports: [{port: 8000}, {port: 443}]
   #     components: [api]
-  #   - name: services            # Artifacts, CodeIndex: erasure and export
+  #   - name: services            # registered services: erasure and export
   #     cidrs: [10.0.50.10/32]
   #     ports: [{port: 443}]
   #     components: [api]

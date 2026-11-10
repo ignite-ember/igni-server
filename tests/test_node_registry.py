@@ -71,7 +71,6 @@ def _backend(node_id='gpu-burst-01', **overrides) -> InferenceBackend:
         base_url=overrides.get('base_url', f'http://{node_id}.internal:8000/v1'),
         model=overrides.get('model', 'igni-1.0-27b'),
         max_concurrent=overrides.get('max_concurrent', 64),
-        pools=overrides.get('pools', ['chat']),
     )
 
 

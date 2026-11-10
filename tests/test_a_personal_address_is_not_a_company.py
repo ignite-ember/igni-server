@@ -22,6 +22,7 @@ import uuid
 import pytest
 
 from app.config import settings
+from app.db.sql.schemas.account_errors import PersonalAddress
 from app.db.sql.user import UserDB
 from app.security.account_domains import is_company_address, is_public_mail_domain
 from tests.conftest import create_user
@@ -61,19 +62,17 @@ class TestWhichDomainsAreAProvider:
 
 class TestEveryDoor:
     async def test_a_personal_address_is_turned_away(self, db):
-        with pytest.raises(Exception) as refused:
+        with pytest.raises(PersonalAddress):
             await UserDB().create(email='someone@gmail.com', hashed_password='x')
-
-        assert getattr(refused.value, 'status_code', None) == 422
 
     async def test_it_says_why(self, db):
         # "Invalid email" on a perfectly valid gmail address reads as a
         # bug in the form, and the person retypes it twice before
         # giving up.
-        with pytest.raises(Exception) as refused:
+        with pytest.raises(PersonalAddress) as refused:
             await UserDB().create(email='someone@gmail.com', hashed_password='x')
 
-        assert 'work address' in str(getattr(refused.value, 'detail', ''))
+        assert 'work address' in str(refused.value)
 
     async def test_a_work_address_is_let_in(self, db):
         user = await UserDB().create(email='ada@acme.test', hashed_password='x')
@@ -85,10 +84,8 @@ class TestEveryDoor:
         # address was chosen at Google and never touched our form. The
         # check has to be somewhere both paths go through, and this is
         # the test that says so.
-        with pytest.raises(Exception) as refused:
+        with pytest.raises(PersonalAddress):
             await UserDB().create(email='someone@gmail.com', hashed_password='x', auth_provider='google')
-
-        assert getattr(refused.value, 'status_code', None) == 422
 
     async def test_it_is_refused_before_the_duplicate_check(self, db):
         # Order matters for what the caller is told. An existing gmail
@@ -97,10 +94,8 @@ class TestEveryDoor:
         # which reads as somebody else having their account.
         await create_user(db, email='early@gmail.com')
 
-        with pytest.raises(Exception) as refused:
+        with pytest.raises(PersonalAddress):
             await UserDB().create(email='early@gmail.com', hashed_password='x')
-
-        assert getattr(refused.value, 'status_code', None) == 422
 
 
 class TestAnOperatorCanDisagree:
@@ -127,12 +122,21 @@ class TestNoCodeIsSentToAnAddressWeWillRefuse:
     """
 
     async def test_a_personal_address_is_refused_at_the_first_step(self, db):
+        from app.db.sql.schemas.account_errors import PersonalAddress
         from app.services.auth.auth_service import AuthService
 
-        with pytest.raises(Exception) as refused:
-            await AuthService.send_sign_up_code('someone@gmail.com')
+        with pytest.raises(PersonalAddress):
+            await AuthService().send_sign_up_code('someone@gmail.com')
 
-        assert getattr(refused.value, 'status_code', None) == 422
+    async def test_the_endpoint_answers_422_with_the_reason(self, client, email_relay):
+        # The store's refusal is a 422 with its words at the door, not
+        # a 500: the person is told to use their work address.
+        from app.db.sql.schemas.account_errors import PersonalAddress
+
+        response = await client.post('/send-sign-up-code', json={'email': 'someone@gmail.com'})
+
+        assert response.status_code == 422, response.text
+        assert response.json() == {'detail': str(PersonalAddress())}
 
     async def test_it_still_says_nothing_about_who_has_an_account(self, db):
         # The oracle F112 closed must stay closed. Whether an address
@@ -149,8 +153,8 @@ class TestNoCodeIsSentToAnAddressWeWillRefuse:
         stamp = uuid.uuid4().hex[:8]
         await create_user(db, email=f'taken-{stamp}@acme.test')
 
-        taken = await AuthService.send_sign_up_code(f'taken-{stamp}@acme.test')
-        free = await AuthService.send_sign_up_code(f'free-{stamp}@acme.test')
+        taken = await AuthService().send_sign_up_code(f'taken-{stamp}@acme.test')
+        free = await AuthService().send_sign_up_code(f'free-{stamp}@acme.test')
 
         assert taken.suppress_delivery is True
         assert free.suppress_delivery is False

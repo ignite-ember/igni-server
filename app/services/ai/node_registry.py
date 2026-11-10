@@ -131,11 +131,10 @@ class NodeRegistry:
         node = RegisteredNode(backend=backend, registered_at=time.time(), last_seen=time.time())
         await self._write(node)
         logger.info(
-            'Registered inference node %s at %s (models %s, pools %s)',
+            'Registered inference node %s at %s (models %s)',
             backend.id,
             backend.base_url,
             ','.join(backend.models),
-            ','.join(backend.pools),
         )
         return node
 

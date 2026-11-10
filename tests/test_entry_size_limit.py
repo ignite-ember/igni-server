@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.base_v1.schema.portal.groups import MAX_ENTRY_CONTENT_BYTES
+from app.api.base_v1.schema.portal.group_entries import MAX_ENTRY_CONTENT_BYTES
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -91,9 +91,9 @@ class TestTheCeilingItself:
         """Pinned against the seed rather than a number in a comment, so
         an entry that grows past the limit fails here rather than on
         somebody's deployment."""
-        from app.services.portal.default_group import seed_entries
+        from app.services.portal.default_group_seed import BUNDLED_SEED
 
-        largest = max(len(content) for _kind, _name, content in seed_entries())
+        largest = max(len(entry.content) for entry in BUNDLED_SEED.entries())
 
         assert largest < MAX_ENTRY_CONTENT_BYTES
         # And by a real margin, not by a byte.
@@ -110,13 +110,13 @@ class TestTheCeilingItself:
 
         * ``kind`` — ``VALID_KINDS``; ``'../../../.ssh'`` answers 422.
         * ``content_type`` — ``VALID_CONTENT_TYPES``.
-        * ``model`` — ``_refuse_unserved_model`` rejects a name no node in
+        * ``model`` — ``ServedModels.refuse_unserved`` rejects a name no node in
           the chat pool answers to.
 
         A new string field here has to pick one: a length, a pattern, or a
         line below saying which check covers it.
         """
-        from app.api.base_v1.schema.portal.groups import CreateEntryRequest
+        from app.api.base_v1.schema.portal.group_entries import CreateEntryRequest
 
         allowlisted = {'kind', 'content_type', 'model'}
 

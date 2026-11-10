@@ -18,7 +18,7 @@ import pytest
 
 from app.config import settings
 from app.services.ai.schemas import ModelNotAvailableError
-from app.services.cloud.vm_credentials import VM_CREDENTIAL, VM_SIGN_IN
+from app.services.cloud.vm_credential_grants import VM_CREDENTIAL, VM_SIGN_IN
 from tests.cloud_world import CloudOrg, platform, shipped, token_for
 from tests.conftest import auth_header, make_token
 
@@ -70,7 +70,7 @@ async def _every_path(client, world) -> dict[str, int | str]:
         response = await client.post('/oauth/token', data=data)
         return str(response.json().get('error') or response.status_code)
 
-    with patch('app.services.ai.pool_manager.PoolManager.get_chat_pool', new=lambda _self: _NO_MODEL):
+    with patch('app.services.ai.pool_manager.PoolManager.get_pool', new=lambda _self: _NO_MODEL):
         chats = (
             (await client.post('/chat/completions', headers=session, json=chat)).status_code,
             (await client.post('/chat/completions', headers=vm, json=chat)).status_code,
@@ -126,9 +126,9 @@ async def test_the_gateway_and_services_hear_of_it_within_a_second(client, world
     waited = await client.get('/platform/revocations', params={'since': start, 'wait': 10}, headers=world['gateway'])
     answered = time.monotonic()
     removed_at = await removing
-    seen_by_service = (
-        await client.get('/revocations', params={'since': start}, headers=world['service'])
-    ).json()['revocations']
+    seen_by_service = (await client.get('/revocations', params={'since': start}, headers=world['service'])).json()[
+        'revocations'
+    ]
 
     [entry] = waited.json()['revocations']
     assert (entry['kind'], entry['org_id'], entry['subject_id'], entry['reason']) == (
@@ -166,9 +166,9 @@ async def test_withdrawn_sessions_are_revoked_in_every_organisation(client, worl
     start = (await client.get('/platform/revocations', headers=world['gateway'])).json()['cursor']
 
     await client.post('/portal/me/revoke-sessions', headers=auth_header(world['session']))
-    [entry] = (
-        await client.get('/platform/revocations', params={'since': start}, headers=world['gateway'])
-    ).json()['revocations']
+    [entry] = (await client.get('/platform/revocations', params={'since': start}, headers=world['gateway'])).json()[
+        'revocations'
+    ]
 
     assert (entry['kind'], entry['org_id'], entry['subject_id'], entry['reason']) == (
         'person',
@@ -224,9 +224,9 @@ async def test_revocations_are_exact_to_the_millisecond(client, world):
     start = (await client.get('/platform/revocations', headers=world['gateway'])).json()['cursor']
 
     await client.delete(f'/portal/team/{ada}', headers=acme.admin)
-    [entry] = (
-        await client.get('/platform/revocations', params={'since': start}, headers=world['gateway'])
-    ).json()['revocations']
+    [entry] = (await client.get('/platform/revocations', params={'since': start}, headers=world['gateway'])).json()[
+        'revocations'
+    ]
     await asyncio.sleep(0.01)
     later = jwt.decode(make_token(ada, org_id=acme.org_id), options={'verify_signature': False})
 

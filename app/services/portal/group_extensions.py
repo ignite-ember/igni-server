@@ -50,13 +50,21 @@ class Entitlement(BaseModel):
 class GroupExtensions:
     """Per-group enablement, and the entitlement it gives a person."""
 
-    def __init__(self) -> None:
-        self._enabled = GroupExtensionsDB()
-        self._groups = GroupsDB()
-        self._extensions = ServiceExtensionDB()
+    def __init__(
+        self,
+        *,
+        enabled: GroupExtensionsDB | None = None,
+        groups: GroupsDB | None = None,
+        extensions: ServiceExtensionDB | None = None,
+        default_group: DefaultGroup | None = None,
+    ) -> None:
+        self._enabled = enabled or GroupExtensionsDB()
+        self._groups = groups or GroupsDB()
+        self._extensions = extensions or ServiceExtensionDB()
+        self._default_group = default_group or DefaultGroup(groups=self._groups)
 
     async def _group_in_org(self, org_id: str, group_id: str) -> None:
-        if await self._groups.get_group(org_id, group_id) is None:
+        if await self._groups.get_group(org_id, group_id=group_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Group not found')
 
     async def of_group(self, org_id: str, group_id: str) -> GroupExtensionList:
@@ -76,7 +84,7 @@ class GroupExtensions:
             ]
         )
 
-    async def set(self, org_id: str, group_id: str, extension_id: str, enabled: bool, by_user_id: str) -> None:
+    async def set(self, org_id: str, *, group_id: str, extension_id: str, enabled: bool, by_user_id: str) -> None:
         """Switch an approved extension on or off for a group.
 
         The Default group can have extensions too: it is read-only as the
@@ -142,7 +150,7 @@ class GroupExtensions:
     async def _group_summary_of(self, user_id: str, org_id: str | None) -> GroupSummary | None:
         if not org_id:
             return None
-        summary = await DefaultGroup.ensure_for_user(user_id, org_id)
+        summary = await self._default_group.ensure_for_user(user_id, org_id)
         if summary is None or str(summary.org_id) != str(org_id):
             return None
         return GroupSummary(id=str(summary.id), org_id=str(summary.org_id), name=summary.name)

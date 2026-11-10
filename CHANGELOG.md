@@ -66,6 +66,23 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ### Removed
 
+- **Inference pools.** igni server routes chat over the customer's nodes and
+  nothing else; CodeIndex runs its own nodes from its own configuration.
+  A node no longer has `pools`, in registration, on the portal's node page
+  or in storage (migration 0029 drops the column), and `GET
+  /v1/portal/inference` answers one flat list of nodes with one set of
+  totals. An interface change.
+- What was left of CodeIndex and Artifacts in igni server, which is not
+  theirs to host:
+  - the Helm chart's `artifacts:` block, its second Ingress and ConfigMap;
+  - `docker-compose.artifacts.yml`;
+  - the `documents_base_url` and `app_base_url` settings;
+  - the Redis-database formula for each product;
+  - the portal's link to Artifacts' document settings;
+  - the log fields `repo`, `event_id` and `commit`, written for indexing
+    and never set since.
+
+  They are registered services like any other and deploy themselves.
 - The `dev` and `stage` images of `igni-api` and `igni-portal` (`:dev-<sha>`,
   `:dev`, `:stage-<sha>`, `:stage`): nothing deployed them.
 

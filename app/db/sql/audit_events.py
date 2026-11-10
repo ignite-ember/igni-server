@@ -25,7 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.sql import SQLAlchemySessionManager
 from app.db.sql.models.audit_event import AuditColumns, AuditEvent, DeploymentAuditEvent
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenancy import TenantData, TenantSessions
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.monitoring import AUDIT_EVENTS_WRITTEN, AUDIT_WRITE_FAILURES
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,15 @@ class AuditRecord:
 
 class AuditEventDB(TenantData):
     """The audit trail: each organisation's, and the deployment's."""
+
+    def __init__(
+        self,
+        *,
+        sessions: TenantSessions | None = None,
+        tenants: TenantRegistryDB | None = None,
+    ) -> None:
+        super().__init__(sessions=sessions)
+        self._tenants = tenants or TenantRegistryDB()
 
     def _trail(self, org_id: str | None) -> AbstractAsyncContextManager[AsyncSession]:
         """The session for one trail: an organisation's database, or the shared plane."""
@@ -207,7 +217,7 @@ class AuditEventDB(TenantData):
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
         removed = 0
-        trails: list[str | None] = [None, *await self.each_tenant()]
+        trails: list[str | None] = [None, *await self._tenants.active_org_ids()]
         for org_id in trails:
             table = self._table(org_id)
             async with self._trail(org_id) as session:

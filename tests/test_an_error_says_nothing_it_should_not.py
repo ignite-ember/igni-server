@@ -284,7 +284,7 @@ class TestTheBehaviour:
 
         with caplog.at_level(logging.ERROR):
             with pytest.raises(HTTPException) as caught:
-                await AuthService.sign_up(body)
+                await AuthService().sign_up(body)
 
         detail = str(caught.value.detail)
 
@@ -310,24 +310,26 @@ class TestTheBehaviour:
     async def test_a_duplicate_address_is_still_the_callers_problem(self, monkeypatch):
         """The pass-through must survive.
 
-        `UserDB.create` raises its own 409 for an address already taken,
+        `UserDB.create` raises `AddressTaken` for an address already taken,
         and that one *is* the caller's to fix. Turning every failure into
         an opaque 500 would have been the easy over-correction.
         """
-        from fastapi import HTTPException, status
+        from fastapi import HTTPException
 
         from app.api.base_v1.schema.auth import SignUpRequest
+        from app.db.sql.schemas.account_errors import AddressTaken
         from app.db.sql.user import UserDB
         from app.services.auth.auth_service import AuthService
         from app.services.auth.otp_service import OTPService
+        from app.services.identity.account_refusals import AccountRefusals
 
         async def accept_any_code(_self, **kwargs):
             # Takes `self`: `validate_signup_code` is an instance method
             # now, matching `UserDB.create` faked two lines down.
             return None
 
-        async def already_taken(self, **kwargs):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='That address is already registered')
+        async def already_taken(self, email, **kwargs):
+            raise AddressTaken('That address is already registered')
 
         monkeypatch.setattr(OTPService, 'validate_signup_code', accept_any_code)
         monkeypatch.setattr(UserDB, 'create', already_taken)
@@ -340,8 +342,9 @@ class TestTheBehaviour:
             last_name='Doe',
         )
 
-        with pytest.raises(HTTPException) as caught:
-            await AuthService.sign_up(body)
+        # Composed as the `/sign-up` route composes it.
+        with pytest.raises(HTTPException) as caught, AccountRefusals():
+            await AuthService().sign_up(body)
 
         assert caught.value.status_code == 409
         assert 'already registered' in str(caught.value.detail)

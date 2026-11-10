@@ -13,7 +13,9 @@ from datetime import timedelta
 import pytest
 
 from app.db.sql.registered_clients import RegisteredClientDB
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import RegisteredService
 
@@ -60,6 +62,16 @@ class TestOneOrganisation:
         assert body['name'] == 'Acme'
         assert body['domains'] == ['acme.com']
         assert isinstance(body['tenant_number'], int)
+
+    async def test_the_number_is_the_one_the_registry_gave_it(self, client, two_orgs):
+        """Its own number, made on first use if it had none, not a count of anything."""
+        await TenantRegistryDB().database_of(two_orgs['acme'])
+        await TenantRegistryDB().database_of(two_orgs['globex'])
+        headers = await _service_token(client, two_orgs, two_orgs['acme'])
+
+        body = (await client.get('/directory/organisation', headers=headers)).json()
+
+        assert body['tenant_number'] == 1 == await TenantRegistryDB().number_of(two_orgs['acme'])
 
     async def test_its_members_and_nobody_elses(self, client, two_orgs):
         headers = await _service_token(client, two_orgs, two_orgs['acme'])
@@ -137,7 +149,7 @@ class TestOnlyAServiceToken:
             audience=two_orgs['service'].client_id,
             use=TokenUse.USER,
             lifetime=timedelta(minutes=5),
-            claims={'org': two_orgs['acme']},
+            claims=CustomClaims(org=two_orgs['acme']),
         )
 
         response = await client.get('/directory/members', headers=auth_header(user_token))

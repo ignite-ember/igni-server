@@ -14,7 +14,7 @@ delivers it:
   while a service still routes to the organisation's data.
 
 A round runs in every replica, every `INTERVAL_SECONDS`, and right away
-after a deletion in this replica (`nudge`). Replicas do not take the same
+after a deletion in this replica (`DeletionWake.nudge`). Replicas do not take the same
 notice twice: `take_due` leases rows with `SKIP LOCKED`, and a replica
 that dies holding one lets it go when the lease runs out. That is why
 this needs no advisory lock — unlike retention, the work divides by row.
@@ -32,6 +32,8 @@ from pydantic import BaseModel, Field
 
 from app.db.sql.organisation_deletion_notices import DueNotice, OrganisationDeletionNoticeDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
+from app.services.identity.organisation_deletion_wake import DeletionWake, ProcessDeletionWake
 
 logger = logging.getLogger(__name__)
 
@@ -47,21 +49,39 @@ LONGEST_RETRY = timedelta(hours=6)
 INTERVAL_SECONDS = 30.0
 
 
-class DeliveryRound(BaseModel):
-    """What one round did: `(org_id, service name)` pairs."""
+class DeliveredNotice(BaseModel):
+    """One notice a round called a service about."""
 
-    confirmed: list[tuple[str, str]] = Field(default_factory=list)
-    unconfirmed: list[tuple[str, str]] = Field(default_factory=list)
+    org_id: str
+    service_name: str
+
+    @classmethod
+    def of(cls, notice: DueNotice) -> DeliveredNotice:
+        return cls(org_id=notice.org_id, service_name=notice.service_name)
+
+
+class DeliveryRound(BaseModel):
+    """What one round did."""
+
+    confirmed: list[DeliveredNotice] = Field(default_factory=list)
+    unconfirmed: list[DeliveredNotice] = Field(default_factory=list)
 
 
 class OrganisationDeletions:
     """Delivers the outbox; also the background loop that keeps doing it."""
 
-    _wake: asyncio.Event | None = None
-
-    def __init__(self, *, http: httpx.AsyncClient | None = None, tokens: JWTService | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        http: httpx.AsyncClient | None = None,
+        tokens: JWTService | None = None,
+        notices: OrganisationDeletionNoticeDB | None = None,
+        wake: DeletionWake | None = None,
+    ) -> None:
         self._http = http
         self._tokens = tokens or JWTService()
+        self._notices = notices or OrganisationDeletionNoticeDB()
+        self._wake = wake or ProcessDeletionWake()
         self._task: asyncio.Task[None] | None = None
 
     @staticmethod
@@ -73,7 +93,7 @@ class OrganisationDeletions:
     async def deliver_due(self, *, now: datetime | None = None) -> DeliveryRound:
         """Call every service owed a notice now, once. Safe to run anywhere, any time."""
         now = now or datetime.now(timezone.utc)
-        due = await OrganisationDeletionNoticeDB().take_due(now=now, lease=LEASE, limit=BATCH)
+        due = await self._notices.take_due(now=now, lease=LEASE, limit=BATCH)
         delivered = DeliveryRound()
         if not due:
             return delivered
@@ -85,14 +105,12 @@ class OrganisationDeletions:
                 await client.aclose()
         for notice, error in zip(due, errors):
             if error is None:
-                await OrganisationDeletionNoticeDB().confirmed(notice.org_id, notice.client_id)
-                delivered.confirmed.append((notice.org_id, notice.service_name))
+                await self._notices.confirmed(notice.org_id, notice.client_id)
+                delivered.confirmed.append(DeliveredNotice.of(notice))
                 continue
             retry_at = now + self.retry_delay(notice.attempts)
-            await OrganisationDeletionNoticeDB().unconfirmed(
-                notice.org_id, notice.client_id, retry_at=retry_at, error=error
-            )
-            delivered.unconfirmed.append((notice.org_id, notice.service_name))
+            await self._notices.unconfirmed(notice.org_id, notice.client_id, retry_at=retry_at, error=error)
+            delivered.unconfirmed.append(DeliveredNotice.of(notice))
             logger.error(
                 'Organisation deletion not confirmed by %s (%s, attempt %d); trying again at %s',
                 notice.service_name,
@@ -109,7 +127,7 @@ class OrganisationDeletions:
             audience=notice.base_url,
             use=TokenUse.IGNI,
             lifetime=CALL_TOKEN_LIFETIME,
-            claims={'org': notice.org_id},
+            claims=CustomClaims(org=notice.org_id),
         )
         try:
             response = await client.delete(
@@ -124,27 +142,22 @@ class OrganisationDeletions:
 
     # ── The loop ────────────────────────────────────────────────────
 
-    @classmethod
-    def nudge(cls) -> None:
-        """Run a round now rather than at the next interval. A no-op without a loop."""
-        if cls._wake is not None:
-            cls._wake.set()
-
     def start(self) -> None:
-        OrganisationDeletions._wake = asyncio.Event()
-        self._task = asyncio.create_task(self._loop(OrganisationDeletions._wake), name='organisation-deletions')
+        self._task = asyncio.create_task(self._loop(self._wake.arm()), name='organisation-deletions')
 
     async def stop(self) -> None:
-        OrganisationDeletions._wake = None
+        """Cancel the loop on shutdown, and wait for it to unwind."""
+        self._wake.disarm()
         task, self._task = self._task, None
         if task is None:
             return
         task.cancel()
-        with suppress(asyncio.CancelledError):
-            try:
-                await task
-            except Exception:
-                logger.exception('Organisation deletion loop did not unwind cleanly')
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — shutdown is not a place to raise
+            logger.exception('Organisation deletion loop did not unwind cleanly')
 
     async def _loop(self, wake: asyncio.Event) -> None:
         while True:

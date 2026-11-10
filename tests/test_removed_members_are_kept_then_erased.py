@@ -16,7 +16,7 @@ from cryptography.fernet import Fernet
 import pytest
 
 from app.config import settings
-from app.services import retention
+from app.services.retention import Retention
 from tests.cloud_world import CloudOrg, make_super_admin, platform
 from tests.conftest import audit_rows
 
@@ -127,9 +127,9 @@ class TestTheRetention:
             )
 
         later(45)
-        kept = await retention.run_once()
+        kept = await Retention().run_once()
         later(61)
-        purged = await retention.run_once()
+        purged = await Retention().run_once()
 
         assert (kept.producer_feed, purged.producer_feed) == (0, 1)
         assert ada not in await feed.poll()
@@ -150,7 +150,7 @@ class TestLegalHolds:
 
         assert placed.status_code == 200, placed.text
         assert held['erase_at'] is None
-        assert (held['removed'], held['incarnation']) == (True, first['incarnation'])
+        assert (held['removed'], held['incarnation'], held['legal_hold']) == (True, first['incarnation'], False)
         [entry] = listed['holds']
         assert (entry['user_id'], entry['reason']) == (ada, 'Litigation 2026-17')
         assert entry['placed_by_user_id'] == acme.admin_id

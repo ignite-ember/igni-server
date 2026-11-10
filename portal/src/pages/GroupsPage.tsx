@@ -26,16 +26,12 @@ import {
   GitBranchIcon,
 } from '@primer/octicons-react'
 import client from '../api/client'
-import type { OrgGroup, OrgGroupList, UserMe } from '../types'
+import { refusalOf } from '../api/refusal'
+import type { OrgGroup, OrgGroupDetail, OrgGroupList, UserMe } from '../types'
 import './GroupsPage.css'
 import { countOf } from '../utils/plural'
 
 const PAGE_SIZE = 10
-
-interface GroupRow extends OrgGroup {
-  member_count?: number
-  entry_count?: number
-}
 
 function GroupRow({
   group,
@@ -43,7 +39,7 @@ function GroupRow({
   onDelete,
   onNavigate,
 }: {
-  group: GroupRow
+  group: OrgGroupDetail
   isAdmin: boolean
   onDelete: (group: OrgGroup) => void
   onNavigate: (id: string) => void
@@ -67,10 +63,10 @@ function GroupRow({
       </div>
       <div className="groups-col-members">
         <PeopleIcon size={14} />
-        <Text size="small">{group.member_count ?? 0}</Text>
+        <Text size="small">{group.member_count}</Text>
       </div>
       <div className="groups-col-entries">
-        <Text size="small">{group.entry_count ?? 0}</Text>
+        <Text size="small">{group.entry_count}</Text>
       </div>
       <div className="groups-col-created">
         <Text size="small" className="groups-muted">
@@ -131,21 +127,18 @@ export function GroupsPage() {
 
   const isAdmin = meQuery.data?.role === 'admin'
   const data = groupsQuery.data
-  const rows: GroupRow[] = data?.groups ?? []
+  const rows = data?.groups ?? []
   const total = data?.total ?? 0
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
   const [confirmDelete, setConfirmDelete] = useState<OrgGroup | null>(null)
+  const [deleteProblem, setDeleteProblem] = useState<string | null>(null)
 
   const deleteMutation = useMutation({
     mutationFn: (groupId: string) => client.delete(`/portal/groups/${groupId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['groups'] })
-      setConfirmDelete(null)
-    },
-    onError: (err: unknown) => {
-      console.error('Failed to delete group', err)
-    },
+    onMutate: () => setDeleteProblem(null),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['groups'] }),
+    onError: (err: unknown) => setDeleteProblem(refusalOf(err, 'The group was not deleted. Try again.')),
   })
 
   if (meQuery.isLoading) {
@@ -177,6 +170,10 @@ export function GroupsPage() {
           <Text size="medium">{countOf(total, 'group')}</Text>
         </PageHeader.Description>
       </PageHeader>
+
+      {deleteProblem && (
+        <Banner variant="critical" title="Group not deleted" description={deleteProblem} />
+      )}
 
       {groupsQuery.isError && (
         <Banner variant="critical" title="Failed to load groups" description="Please try refreshing the page." />
@@ -248,7 +245,7 @@ export function GroupsPage() {
           onClose={(gesture) => {
             const group = confirmDelete
             setConfirmDelete(null)
-            if (gesture === 'confirm' && group) {
+            if (gesture === 'confirm') {
               deleteMutation.mutate(group.id)
             }
           }}

@@ -8,10 +8,11 @@ the VM (`docs/service-identity.md` §16).
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.api.base_v1.schema.portal.user import PortalUser
-from app.middlewares.audit import set_audit_target
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import require_admin
 from app.security.producer import ProducerCaller, require_producer
-from app.services.cloud.vm_credentials import VmCredentialList, VmCredentialRecord, VmCredentials
+from app.services.cloud.vm_credential_records import VmCredentialList, VmCredentialRecord
+from app.services.cloud.vm_credentials import VmCredentials
 
 router = APIRouter()
 
@@ -28,7 +29,7 @@ async def revoke_credential(
 ) -> Response:
     """Revoke one: its VM can no longer get tokens, until it is signed in (a person) or re-issued (an app)."""
     await VmCredentials().revoke(caller, credential_id)
-    set_audit_target(request, target_type='vm_credential', target_id=credential_id)
+    RequestAudit.of(request).set_target(target_type='vm_credential', target_id=credential_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -42,5 +43,5 @@ async def enable_app_cloud(
     it creates the app's VM; the portal never shows it.
     """
     record = await VmCredentials().enable_app(current_user.org_id, app_id, by_user_id=current_user.user_id)
-    set_audit_target(request, target_type='vm_credential', target_id=record.credential_id)
+    RequestAudit.of(request).set_target(target_type='vm_credential', target_id=record.credential_id)
     return record

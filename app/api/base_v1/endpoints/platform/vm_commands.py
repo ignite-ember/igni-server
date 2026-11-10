@@ -14,6 +14,7 @@ from app.api.base_v1.schema.vm_commands import CommandResult, PulledCommands, Wa
 from app.security.platform_caller import PlatformCaller, require_platform
 from app.security.producer import ProducerKind, ProducerRef
 from app.services.cloud.vm_commands import VmCommands
+from app.services.cloud.vm_profile_refusals import VmProfileRefusals
 from app.services.cloud.wakes import WakeList
 
 router = APIRouter()
@@ -24,7 +25,8 @@ async def pull(
     org_id: str, kind: ProducerKind, producer_id: str, platform: PlatformCaller = Depends(require_platform)
 ) -> PulledCommands:
     """Everything waiting for this VM, oldest first, now handed out to the caller."""
-    return await VmCommands().pull(org_id, ProducerRef(kind=kind, id=producer_id), handed_to=platform.client_id)
+    with VmProfileRefusals():
+        return await VmCommands().pull(org_id, ProducerRef(kind=kind, id=producer_id), handed_to=platform.client_id)
 
 
 @router.post('/orgs/{org_id}/vm-commands/{command_id}/ack', status_code=status.HTTP_204_NO_CONTENT)

@@ -11,17 +11,20 @@ from app.db.sql.apps import AppExtensionsDB
 from app.db.sql.group_extensions import GroupExtensionsDB
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.service_extensions import ServiceExtensionDB
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenant_registry import TenantRegistryDB
 
 
 class Served:
+    def __init__(self, *, tenants: TenantRegistryDB | None = None) -> None:
+        self._tenants = tenants or TenantRegistryDB()
+
     async def org_ids(self, client_id: str) -> list[str]:
         """Each organisation with the service's extension on for a group or an app."""
         extension = await ServiceExtensionDB().of(client_id)
         if extension is None:
             return []
         served = []
-        for org_id in await TenantData().each_tenant():
+        for org_id in await self._tenants.active_org_ids():
             if extension.extension_id in await GroupExtensionsDB().groups_enabling(org_id) or (
                 extension.extension_id in await AppExtensionsDB().apps_enabling(org_id)
             ):

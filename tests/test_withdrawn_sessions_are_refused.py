@@ -207,7 +207,7 @@ class TestTheSweep:
             'these accepted a token minted before the holder withdrew their sessions:\n  '
             + '\n  '.join(allowed)
             + '\n\nEvery route that trusts a user token must resolve it through '
-            '`app.security.subject.require_existing_user`, which is where the '
+            '`app.security.subject.Subjects.require_existing_user`, which is where the '
             '`tokens_valid_after` watermark is compared (DEC-10).'
         )
 
@@ -426,9 +426,9 @@ class TestTheCombinedWindowIsBounded:
 
     def test_the_cost_is_written_where_somebody_would_change_it(self):
         """A number that lives only in a test is a number nobody reads."""
-        from app.db.sql.user import UserDB
+        from app.db.sql.account_sessions import AccountSessionsDB
 
-        doc = UserDB.withdraw_sessions.__doc__ or ''
+        doc = AccountSessionsDB.withdraw_sessions.__doc__ or ''
         assert 'second' in doc
         assert 'refused' in doc, (
             'the docstring no longer says a token minted in the second after the click is '

@@ -4,7 +4,7 @@
 group is seeded with. The ones that already exist keep the old entries
 until a migration rewrites them, and the suite fails until there is one
 (`test_an_existing_default_group_is_brought_to_what_igni_ships`). This
-writes that migration: it freezes today's `seed_entries()` as `_SEED`,
+writes that migration: it freezes today's `BUNDLED_SEED.entries()` as `_SEED`,
 and, for the downgrade, the entries of the previous frozen seed (the
 latest migration that has a `_SEED`) that differ from it.
 
@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VERSIONS = ROOT / 'alembic_tenant' / 'versions'
 sys.path.insert(0, str(ROOT))
 
-from app.services.portal.default_group import seed_entries  # noqa: E402
+from app.services.portal.default_group_seed import BUNDLED_SEED  # noqa: E402
 from app.services.portal.entry_kinds import ALLOWED_CONTENT_TYPE  # noqa: E402
 
 Seed = list[tuple[str, str, str]]
@@ -97,7 +97,7 @@ def main() -> int:
     revisions = _revisions()
     head = _head(revisions)
     since, before = _previous_frozen_seed(revisions, head)
-    after = seed_entries()
+    after = [(entry.kind, entry.entry_name, entry.content) for entry in BUNDLED_SEED.entries()]
 
     after_map = {(kind, name): content for kind, name, content in after}
     before_map = {(kind, name): content for kind, name, content in before}
@@ -141,7 +141,7 @@ def main() -> int:
     assert list(namespace['_BEFORE']) == changed
     assert sorted(namespace['_previous_seed']()) == sorted(before)
 
-    print(f'Wrote {target.relative_to(ROOT)} (revises {head}; downgrade restores {since}\'s seed)')
+    print(f"Wrote {target.relative_to(ROOT)} (revises {head}; downgrade restores {since}'s seed)")
     print(f'  rewritten: {_names(rewritten)}')
     print(f'  added:     {_names(added)}')
     print(f'  removed:   {_names(removed)}')

@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import userEvent from '@testing-library/user-event'
-import { screen, cleanup, waitFor } from '@testing-library/react'
+import { screen, cleanup, waitFor, within } from '@testing-library/react'
 import { Routes, Route } from 'react-router-dom'
 import { renderWithProviders } from '../../test/render'
 import { server } from '../../test/server'
@@ -186,6 +186,95 @@ describe('EditEntryPage', () => {
     await screen.findByRole('heading', { name: /code-reviewer/i })
     await user.click(screen.getByRole('button', { name: /save entry/i }))
     expect(await screen.findByTestId('landed')).toBeInTheDocument()
+  })
+})
+
+describe('saving and deleting', () => {
+  function renderEditor(handlers: Parameters<typeof server.use>) {
+    server.use(
+      http.get('/v1/portal/groups/g-1/entries', () =>
+        HttpResponse.json({ entries: [ENTRY_RESPONSE], total: 1 }),
+      ),
+      ...handlers,
+    )
+    renderWithProviders(
+      <Routes>
+        <Route path="/groups/:id/entries/:entryId/edit" element={<EditEntryPage />} />
+        <Route path="/groups/:id" element={<div data-testid="landed">landed</div>} />
+      </Routes>,
+      { route: '/groups/g-1/entries/or-1/edit' },
+    )
+  }
+
+  test('the name cannot be edited, since the API cannot rename an entry', async () => {
+    renderEditor([])
+
+    const name = (await screen.findByLabelText(/entry name/i)) as HTMLInputElement
+    expect(name.readOnly).toBe(true)
+    expect(screen.getByText(/name cannot be changed/i)).toBeInTheDocument()
+  })
+
+  test('warnings from the server keep the page open', async () => {
+    renderEditor([
+      http.patch('/v1/portal/groups/g-1/entries/:entryId', () =>
+        HttpResponse.json({ entries: [ENTRY_RESPONSE], total: 1, warnings: ['Unknown tool: Raed'] }),
+      ),
+    ])
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /save entry/i }))
+
+    expect(await screen.findByText('Unknown tool: Raed')).toBeInTheDocument()
+    expect(screen.queryByTestId('landed')).not.toBeInTheDocument()
+  })
+
+  test('a refused save shows the server\'s reason', async () => {
+    renderEditor([
+      http.patch('/v1/portal/groups/g-1/entries/:entryId', () =>
+        HttpResponse.json({ detail: 'That model is not served here.' }, { status: 400 }),
+      ),
+    ])
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /save entry/i }))
+
+    expect(await screen.findByText('That model is not served here.')).toBeInTheDocument()
+  })
+
+  test('delete asks first, then deletes and goes back', async () => {
+    let deleted = false
+    renderEditor([
+      http.delete('/v1/portal/groups/g-1/entries/or-1', () => {
+        deleted = true
+        return new HttpResponse(null, { status: 204 })
+      }),
+    ])
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
+    expect(deleted).toBe(false)
+
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }))
+
+    expect(await screen.findByTestId('landed')).toBeInTheDocument()
+    expect(deleted).toBe(true)
+  })
+
+  test('a refused delete shows the server\'s reason and stays', async () => {
+    renderEditor([
+      http.delete('/v1/portal/groups/g-1/entries/or-1', () =>
+        HttpResponse.json({ detail: 'This group holds what igni ships.' }, { status: 409 }),
+      ),
+    ])
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: /^delete$/i }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: /^delete$/i }))
+
+    expect(await screen.findByText('This group holds what igni ships.')).toBeInTheDocument()
+    expect(screen.queryByTestId('landed')).not.toBeInTheDocument()
   })
 })
 

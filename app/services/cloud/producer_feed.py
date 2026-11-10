@@ -43,19 +43,20 @@ from fastapi import HTTPException, status
 from app.api.base_v1.schema.effective_vm_profile import EffectiveVmProfile
 from app.api.base_v1.schema.producer_feed import ProducerFeedItem, ProducerFeedPage
 from app.config import settings
+from app.db.sql.feed_numbering import FeedNumbering
 from app.db.sql.models.app_space import SPACE
-from app.db.sql.models.producer_feed import ProducerFeedEntry
+from app.db.sql.models.producer_feed import PERSON, ProducerFeedEntry
 from app.db.sql.models.registered_client import APP
-from app.db.sql.producer_feed import FeedNumbering, PERSON, ProducerFeedDB
+from app.db.sql.producer_feed import ProducerFeedDB
 from app.db.sql.producer_feed_tenant import ProducerFeedTenantDB
-from app.db.sql.revocations import FeedSignals, RevocationsDB
-from app.db.sql.schemas.producer_feed import FeedMark
-from app.db.sql.tenancy import TenantData
+from app.db.sql.revocations import FeedSignals
+from app.db.sql.schemas.producer_feed import FeedChanges, FeedMark
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.producer import ProducerRef
 from app.services.cloud.erasure_audit import ErasureAudit
 from app.services.cloud.long_poll import LongPoll
 from app.services.cloud.producer_states import ProducerStates
-from app.services.cloud.vm_profiles import VmCaps
+from app.services.cloud.vm_caps import VmCaps
 
 logger = logging.getLogger(__name__)
 
@@ -111,16 +112,17 @@ class Targets:
 
 
 class ProducerFeed:
-    def __init__(self) -> None:
+    def __init__(self, *, tenants: TenantRegistryDB | None = None) -> None:
         self._db = ProducerFeedDB()
         self._tenant = ProducerFeedTenantDB()
+        self._tenants = tenants or TenantRegistryDB()
 
     async def drain(self) -> int:
         """Number the producers the marks name whose state changed. Returns how many."""
         tenant_marks: dict[str, list[FeedMark]] = {}
         async with self._db.numbering() as numbering:
             marks = await numbering.marks()
-            for org_id in await TenantData().each_tenant():
+            for org_id in await self._tenants.active_org_ids():
                 found = await self._tenant.marks(org_id)
                 if found:
                     tenant_marks[org_id] = found
@@ -130,15 +132,14 @@ class ProducerFeed:
             if targets.platform:
                 for org_id in await self._db.orgs_with_producers():
                     targets.everybody_in(org_id)
-            changed = await self._number(numbering, targets)
+            changes = await self._number(numbering, targets)
             await numbering.forget(marks)
-            await RevocationsDB.add_in(numbering.session, numbering.revoked)
         for org_id, found in tenant_marks.items():
             await self._tenant.forget(org_id, found)
-        await ErasureAudit().record(numbering.scheduled)
-        if changed:
+        await ErasureAudit().record(changes.scheduled)
+        if changes.numbered:
             await FeedSignals().notify()
-        return changed
+        return changes.numbered
 
     @asynccontextmanager
     async def removal(self) -> AsyncIterator[None]:
@@ -147,11 +148,11 @@ class ProducerFeed:
         yield
         await self.drain()
 
-    async def _number(self, numbering: FeedNumbering, targets: Targets) -> int:
+    async def _number(self, numbering: FeedNumbering, targets: Targets) -> FeedChanges:
         caps = await VmCaps().get()
-        changed = 0
+        changes = FeedChanges()
         for org_id in targets.orgs():
-            states = ProducerStates(org_id, caps)
+            states = ProducerStates(org_id, caps=caps)
             for kind in KINDS:
                 ids = set(targets.ids[org_id][kind]) if org_id in targets.ids else set()
                 if kind in targets.every.get(org_id, set()):
@@ -162,8 +163,8 @@ class ProducerFeed:
                         ids.update(await states.spaces_of(app_id))
                 if ids:
                     listed = sorted(ids)
-                    changed += await numbering.record(org_id, kind, listed, await states.of(kind, listed))
-        return changed
+                    changes = changes.plus(await numbering.record(org_id, kind, listed, await states.of(kind, listed)))
+        return changes
 
     async def started(self) -> int:
         """At start: a redeploy may have changed the deployment's caps (`settings.cloud_vm`).
@@ -234,48 +235,47 @@ class ProducerFeed:
     async def erase_person(self, user_id: str) -> None:
         """A person erased on request: every incarnation removed and erased now, overriding retention."""
         await self.drain()
-        async with self._db.numbering() as numbering:
-            scheduled = await numbering.erase_person(user_id)
-            await RevocationsDB.add_in(numbering.session, numbering.revoked)
+        async with self._db.erasures() as erasures:
+            scheduled = await erasures.erase_person(user_id)
         await ErasureAudit().record(scheduled)
         await FeedSignals().notify()
 
     async def reschedule_app(self, org_id: str, app_id: str, *, held: bool) -> None:
         """A legal hold placed on an app or released: the app's rows and its spaces'."""
         await self.drain()
-        async with self._db.numbering() as numbering:
-            scheduled = await numbering.reschedule_app(org_id, app_id, held=held)
+        async with self._db.erasures() as erasures:
+            scheduled = await erasures.reschedule_app(org_id, app_id, held=held)
         await ErasureAudit().record(scheduled)
         await FeedSignals().notify()
 
     async def discard_person(self, org_id: str, user_id: str, incarnation: str | None, *, by_user_id: str) -> None:
         """A removed member's VM erased now: its `erase_at` is moved to now, and the gateway hears at once."""
-        async with self._db.numbering() as numbering:
-            await numbering.discard_person(org_id, user_id, incarnation, by_user_id=by_user_id)
-        await ErasureAudit().record(numbering.scheduled)
+        async with self._db.erasures() as erasures:
+            scheduled = await erasures.discard_person(org_id, user_id, incarnation, by_user_id=by_user_id)
+        await ErasureAudit().record(scheduled)
         await FeedSignals().notify()
 
     async def discarded_app(self, org_id: str, app_id: str, *, name: str, by_user_id: str) -> None:
         """An app just removed by its discard: listed removed at once, keeping its name for the portal."""
         await self.drain()
-        async with self._db.numbering() as numbering:
-            await numbering.label_discarded(org_id, APP, app_id, label=name, by_user_id=by_user_id)
+        async with self._db.erasures() as erasures:
+            await erasures.label_discarded(org_id, APP, app_id, label=name, by_user_id=by_user_id)
         await FeedSignals().notify()
 
     async def erasure_done(
         self, org_id: str, kind: str, producer_id: str, incarnation: str
     ) -> tuple[ProducerFeedEntry | None, bool]:
         """The gateway erased a removed incarnation's VM. Whether this report is the first."""
-        async with self._db.numbering() as numbering:
-            before = await numbering.erasure_state(org_id, kind, producer_id, incarnation)
-            row = await numbering.erasure_done(org_id, kind, producer_id, incarnation)
+        async with self._db.erasures() as erasures:
+            before = await erasures.erasure_state(org_id, kind, producer_id, incarnation)
+            row = await erasures.erasure_done(org_id, kind, producer_id, incarnation)
         return row, row is not None and before is None
 
     async def reschedule(self, org_id: str, user_id: str, *, held: bool) -> None:
         """A legal hold placed or released on a person in one organisation."""
         await self.drain()
-        async with self._db.numbering() as numbering:
-            scheduled = await numbering.reschedule(org_id, user_id, held=held)
+        async with self._db.erasures() as erasures:
+            scheduled = await erasures.reschedule(org_id, user_id, held=held)
         await ErasureAudit().record(scheduled)
         # The person's live row carries the hold too (§12.3): the gateway hears of it now.
         await FeedSignals().notify()

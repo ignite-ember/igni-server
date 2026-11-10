@@ -18,12 +18,15 @@ import uuid
 import jwt
 import pytest
 
+from app.db.sql.account_sessions import AccountSessionsDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
+from app.security.api_key_sessions import REFUSED as API_KEY_SESSION_REFUSED
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 from app.services.identity.assertions import ASSERTION_TYPE
-from app.services.identity.grants import ACCESS_TOKEN_TYPE, TOKEN_EXCHANGE
 from app.services.identity.jwk import RsaKeyPair
+from app.services.identity.token_requests import ACCESS_TOKEN_TYPE, TOKEN_EXCHANGE
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import REDIRECT_URI, RegisteredService
 
@@ -346,7 +349,7 @@ class TestTheCliTradesItsSession:
 
     async def test_a_withdrawn_session_gets_nothing(self, client, world):
         session = make_token(world['member'], org_id=world['org'])
-        await UserDB().withdraw_sessions(world['member'])
+        await AccountSessionsDB().withdraw_sessions(world['member'])
 
         response = await _token(client, self._exchange(world, session))
 
@@ -368,7 +371,7 @@ class TestTheCliTradesItsSession:
             audience=world['service'].client_id,
             use=TokenUse.USER,
             lifetime=timedelta(minutes=5),
-            claims={'org': world['org']},
+            claims=CustomClaims(org=world['org']),
         )
 
         response = await _token(client, self._exchange(world, for_service))
@@ -425,7 +428,34 @@ class TestSigningInToAServicesPortal:
             headers=auth_header(make_token(world['member'])),
         )
 
-        assert response.status_code == 400
+        assert (response.status_code, response.json()['detail']) == (
+            400,
+            'This redirect address was not registered by the application',
+        )
+
+    async def test_a_client_not_yet_approved_is_not_described(self, client, world):
+        pending = RegisteredService(name='Waiting')
+        await pending.approve(state='pending')
+
+        response = await client.get(
+            '/portal/oauth/request',
+            params={'client_id': pending.client_id, 'redirect_uri': REDIRECT_URI},
+            headers=auth_header(make_token(world['member'])),
+        )
+
+        assert (response.status_code, response.json()['detail']) == (404, 'This application is not approved here')
+
+    async def test_a_session_an_api_key_bought_may_still_see_who_is_asking(self, client, world):
+        session = JWTService().create_token(world['member'], api_key_id='key-1')
+
+        response = await client.get(
+            '/portal/oauth/request',
+            params={'client_id': world['service'].client_id, 'redirect_uri': REDIRECT_URI},
+            headers=auth_header(session),
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['client_name'] == 'CodeIndex'
 
     async def test_a_person_gets_tokens_for_the_service(self, client, world):
         code = await self._code(client, world)
@@ -482,7 +512,68 @@ class TestSigningInToAServicesPortal:
             },
         )
 
-        assert response.status_code == 403
+        assert (response.status_code, response.json()['detail']) == (403, 'Not a member of this organisation')
+
+    async def _authorize(self, client, world, *, token: str | None = None, **overrides: str):
+        body = {
+            'client_id': world['service'].client_id,
+            'redirect_uri': REDIRECT_URI,
+            'organisation': world['org'],
+            'code_challenge': CHALLENGE,
+            **overrides,
+        }
+        return await client.post(
+            '/portal/oauth/authorize',
+            headers=auth_header(token or make_token(world['member'])),
+            json=body,
+        )
+
+    async def test_no_code_for_a_client_not_yet_approved(self, client, world):
+        pending = RegisteredService(name='Waiting')
+        await pending.approve(state='pending')
+
+        response = await self._authorize(client, world, client_id=pending.client_id)
+
+        assert (response.status_code, response.json()['detail']) == (404, 'This application is not approved here')
+
+    async def test_no_code_for_an_unregistered_redirect(self, client, world):
+        response = await self._authorize(client, world, redirect_uri='https://evil.example.com/cb')
+
+        assert (response.status_code, response.json()['detail']) == (
+            400,
+            'This redirect address was not registered by the application',
+        )
+
+    async def test_no_code_for_a_plain_challenge(self, client, world):
+        response = await self._authorize(client, world, code_challenge=VERIFIER, code_challenge_method='plain')
+
+        assert (response.status_code, response.json()['detail']) == (400, 'Only S256 code challenges are accepted')
+
+    async def test_no_code_for_a_session_an_api_key_bought(self, client, world):
+        session = JWTService().create_token(world['member'], api_key_id='key-1')
+
+        response = await self._authorize(client, world, token=session)
+
+        assert (response.status_code, response.json()['detail']) == (403, API_KEY_SESSION_REFUSED)
+
+    @pytest.mark.parametrize(
+        'overrides',
+        [
+            {'code_challenge': 'c' * 42},
+            {'code_challenge': 'c' * 129},
+            {'state': 's' * 1001},
+        ],
+        ids=['challenge-too-short', 'challenge-too-long', 'state-too-long'],
+    )
+    async def test_a_challenge_or_state_out_of_bounds_is_not_accepted(self, client, world, overrides):
+        response = await self._authorize(client, world, **overrides)
+
+        assert response.status_code == 422
+
+    async def test_the_longest_challenge_and_state_are_accepted(self, client, world):
+        response = await self._authorize(client, world, code_challenge='c' * 128, state='s' * 1000)
+
+        assert response.status_code == 200, response.text
 
 
 class TestRenewalIsWhereRevocationArrives:
@@ -513,7 +604,7 @@ class TestRenewalIsWhereRevocationArrives:
 
     async def test_not_once_deactivated(self, client, world):
         refresh = await self._refresh_token(client, world)
-        await UserDB().set_deactivated(world['member'], deactivated=True)
+        await AccountSessionsDB().set_deactivated(world['member'], deactivated=True)
 
         response = await _token(client, self._renew(world, refresh))
 
@@ -521,7 +612,7 @@ class TestRenewalIsWhereRevocationArrives:
 
     async def test_not_once_removed_from_the_organisation(self, client, world):
         refresh = await self._refresh_token(client, world)
-        await TeamDB().update_status(world['org'], world['member'], 'deactivated')
+        await TeamDB().update_status(world['org'], user_id=world['member'], status='deactivated')
 
         response = await _token(client, self._renew(world, refresh))
 
@@ -529,7 +620,7 @@ class TestRenewalIsWhereRevocationArrives:
 
     async def test_not_once_their_sessions_are_withdrawn(self, client, world):
         refresh = await self._refresh_token(client, world)
-        await UserDB().withdraw_sessions(world['member'])
+        await AccountSessionsDB().withdraw_sessions(world['member'])
 
         response = await _token(client, self._renew(world, refresh))
 
@@ -673,7 +764,7 @@ class TestAServiceSigningSomebodyOutRevokesTheSignIn:
             audience=JWTService().issuer,
             use=TokenUse.REFRESH,
             lifetime=timedelta(days=1),
-            claims={'org': world['org'], 'azp': world['service'].client_id},
+            claims=CustomClaims(org=world['org'], azp=world['service'].client_id),
         )
 
         response = await _token(client, self._renew(world, unnamed))

@@ -4,15 +4,12 @@ A GPU node announcing itself is not a user and has no session. It
 presents a shared secret in ``X-Igni-Node-Token``, handed to it by the
 same automation that started it.
 
-Deliberately **not** ``service_token``. That one authenticates the
-igni server ↔ code-index boundary, and both ends of it are our own
-software running in a controlled place. This token goes into cluster
-start-up scripts, Terraform, cloud-init, and whatever else the customer
-uses to bring hardware up — a much wider blast radius, and one that
-should be rotatable without taking indexing down with it.
+Deliberately its own secret. This token goes into cluster start-up
+scripts, Terraform, cloud-init, and whatever else the customer uses to
+bring hardware up — a wide blast radius, and one that should be
+rotatable without touching anything else.
 
-Two behaviours mirror ``service_token`` because the reasoning is the
-same:
+Two behaviours:
 
 * A missing or mismatched token is **401**, never 403.
 * An **unset** token disables the API, and here that means **404** rather

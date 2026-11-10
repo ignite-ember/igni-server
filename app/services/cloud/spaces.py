@@ -37,7 +37,8 @@ from app.db.sql.revocations import FeedSignals
 from app.db.sql.spaces import SpaceLimitReached, SpaceLimitsDB, SpacesDB
 from app.db.sql.vm_credentials import VmCredentialsDB
 from app.security.producer import ProducerCaller, ProducerRef
-from app.services.cloud.vm_credentials import VmCredentialRecord, VmCredentials
+from app.services.cloud.vm_credential_records import VmCredentialRecord
+from app.services.cloud.vm_credentials import VmCredentials
 
 
 def _smaller(cap: int | None, own: int | None) -> int | None:
@@ -118,7 +119,7 @@ class Spaces:
     def _own(caller: ProducerCaller, app_id: str) -> str:
         """The app's organisation, when the caller is that app; a 403 otherwise."""
         if caller.kind != APP or caller.id != app_id or not caller.org_id:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the app itself manages its spaces")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Only the app itself manages its spaces')
         return caller.org_id
 
     async def _found(self, org_id: str, app_id: str, external_id: str) -> AppSpace:
@@ -162,10 +163,10 @@ class Spaces:
         """A new VM credential for the space, waiting for pickup; the old one stops."""
         org_id = self._own(caller, app_id)
         space = await self._found(org_id, app_id, external_id)
-        row, _ = await VmCredentials().issue(
+        issued = await VmCredentials().issue(
             org_id, ProducerRef(kind=SPACE, id=space.id), by_kind=APP, by_id=app_id, for_pickup=True
         )
-        return VmCredentials.record(org_id, row)
+        return issued.record
 
     async def remove(self, caller: ProducerCaller, app_id: str, external_id: str) -> None:
         org_id = self._own(caller, app_id)

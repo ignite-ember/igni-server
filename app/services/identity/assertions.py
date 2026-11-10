@@ -24,10 +24,6 @@ ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
 #: token request, so anything longer is only a longer replay window.
 MAX_ASSERTION_SECONDS = 300
 
-#: The algorithm each key type may sign with — chosen by the key, never
-#: by the token header.
-_ALGORITHM_FOR = {'RSA': 'RS256', 'EC': 'ES256'}
-
 
 class ClientAssertions:
     def __init__(self, *, clients: RegisteredClientDB | None = None, spent: SpentAssertionDB | None = None) -> None:
@@ -100,7 +96,7 @@ class ClientAssertions:
             claims: dict[str, Any] = jose.decode(
                 assertion,
                 key.as_dict(),
-                algorithms=[_ALGORITHM_FOR[key.kty]],
+                algorithms=[key.algorithm],
                 issuer=client_id,
                 require=('exp', 'jti'),
                 verify_aud=False,

@@ -223,7 +223,31 @@ class TestAMachineDownloadsThem:
 
         response = await client.get(f'/extensions/igni.codeindex/assets/{stray.sha256}', headers=await _person(db))
 
-        assert response.status_code == 404
+        assert (response.status_code, response.json()) == (
+            404,
+            {'detail': 'No distributed extension declares this asset'},
+        )
+
+    async def test_not_one_of_an_extension_the_producer_does_not_get(self, client, db):
+        await _shipped(client)
+
+        response = await client.get(
+            f'/extensions/igni.codeindex/assets/{MODEL.sha256}', headers=await EntitledPerson(db).headers()
+        )
+
+        assert (response.status_code, response.json()) == (
+            404,
+            {'detail': 'No distributed extension declares this asset'},
+        )
+
+    async def test_not_one_igni_no_longer_holds(self, client, db):
+        await _shipped(client)
+        async with RegisteredClientDB().session_scope() as session:
+            await session.execute(text('DELETE FROM extension_assets WHERE sha256 = :sha'), {'sha': MODEL.sha256})
+
+        response = await client.get(f'/extensions/igni.codeindex/assets/{MODEL.sha256}', headers=await _person(db))
+
+        assert (response.status_code, response.json()) == (404, {'detail': 'igni does not hold this asset'})
 
     async def test_not_from_a_pending_service(self, client, db):
         service = RegisteredService()
@@ -361,6 +385,19 @@ class TestADownloadResumes:
 
         assert response.status_code == 416
         assert response.headers['content-range'] == f'bytes */{len(LARGE.content)}'
+        assert response.headers['x-igni-asset-sha256'] == LARGE.sha256
+        assert response.headers['etag'] == f'"{LARGE.sha256}"'
+        assert response.headers['accept-ranges'] == 'bytes'
+        assert response.content == b''
+
+    async def test_a_range_it_does_not_read_sends_the_whole_asset(self, client, db):
+        await _shipped_large(client)
+
+        response = await self._get(client, db, 'items=0-5')
+
+        assert response.status_code == 200
+        assert response.content == LARGE.content
+        assert 'content-range' not in response.headers
 
 
 class TestTheRangeHeader:

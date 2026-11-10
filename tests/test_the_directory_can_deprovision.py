@@ -7,7 +7,7 @@ human repeats the action in a second place, which is the step that
 gets forgotten on the day it matters.
 
 `active: false` is the event this exists to receive. Everything under
-it already existed: `UserDB.set_deactivated` records the fact and
+it already existed: `AccountSessionsDB.set_deactivated` records the fact and
 withdraws the person's sessions in the same statement, and the door
 refuses them from the next request. SCIM is the vocabulary, not the
 mechanism.
@@ -57,16 +57,13 @@ def _scim_configured(monkeypatch):
         with engine.begin() as conn:
             conn.execute(
                 text(
-                    "INSERT INTO organizations (id, slug, display_name, owner_user_id, created_at, updated_at) "
+                    'INSERT INTO organizations (id, slug, display_name, owner_user_id, created_at, updated_at) '
                     "VALUES (:id, 'directory', 'Directory', 'directory-owner', now(), now())"
                 ),
                 {'id': org_id},
             )
             conn.execute(
-                text(
-                    'INSERT INTO org_domains (id, org_id, domain, created_at) '
-                    "VALUES (:id, :org, 'acme.test', now())"
-                ),
+                text("INSERT INTO org_domains (id, org_id, domain, created_at) VALUES (:id, :org, 'acme.test', now())"),
                 {'id': str(uuid.uuid4()), 'org': org_id},
             )
     finally:

@@ -16,16 +16,17 @@ from app.db.sql.chat_usage import ChatUsageDB
 from app.db.sql.models.user import User
 from app.db.sql.models.user_role import Role
 from app.db.sql.org_domains import OrgDomainDB
+from app.db.sql.organizations import OrganizationDB
 from app.db.sql.schemas.chat_usage import PersonUsage
 from app.db.sql.team import TeamDB
-from app.db.sql.tenancy import TenantData
 from app.db.sql.user import UserDB
 from app.security.account_domains import email_domain
 from app.services.cloud.producer_feed import ProducerFeed
-from app.services.cloud.revocations import Revocations
 from app.services.cloud.vm_credentials import VmCredentials
 from app.services.identity.api_keys import ApiKeys
 from app.services.portal.member_status import MemberStatus
+from app.services.portal.session_withdrawal import SessionWithdrawal
+from app.services.portal.team_refusals import TeamRefusals
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +43,19 @@ class TeamService:
     """
 
     def __init__(
-        self, *, team: TeamDB | None = None, users: UserDB | None = None, usage: ChatUsageDB | None = None
+        self,
+        *,
+        team: TeamDB | None = None,
+        users: UserDB | None = None,
+        usage: ChatUsageDB | None = None,
+        organizations: OrganizationDB | None = None,
+        sessions: SessionWithdrawal | None = None,
     ) -> None:
         self._db = team or TeamDB()
         self._user_db = users or UserDB()
         self._usage = usage or ChatUsageDB()
+        self._organizations = organizations or OrganizationDB()
+        self._sessions = sessions or SessionWithdrawal()
 
     async def list_members(self, org_id: str) -> TeamMemberList:
         rows, total = await self._db.list_members(org_id)
@@ -120,12 +129,10 @@ class TeamService:
                 detail=f'A member with email {email} already exists in this organization',
             )
 
-        member = await self._db.create_invited_member(
-            org_id=current_user.org_id,
-            email=email,
-            role=role,
-            invited_by=current_user.user_id,
-        )
+        with TeamRefusals():
+            member = await self._db.create_invited_member(
+                current_user.org_id, email=email, role=role, invited_by=current_user.user_id
+            )
 
         return TeamMemberResponse(
             id=member.user_id,
@@ -161,12 +168,15 @@ class TeamService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f'The account of {account.email} is deactivated; reactivate it first',
             )
-        if await TenantData.orgs_of(user_id, active_only=True):
+        if await self._organizations.member_org_ids(user_id, active_only=True):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f'{account.email} is a member of another organization',
             )
-        member = await self._db.add_existing(current_user.org_id, user_id, role=role, added_by=current_user.user_id)
+        with TeamRefusals():
+            member = await self._db.add_existing(
+                current_user.org_id, user_id=user_id, role=role, added_by=current_user.user_id
+            )
         return TeamMemberResponse(
             id=user_id,
             user_id=user_id,
@@ -200,7 +210,8 @@ class TeamService:
                 detail=f'Invalid role. Must be one of: {", ".join(valid_roles)}',
             )
 
-        old_role = await self._db.update_role(current_user.org_id, user_id, new_role, assigned_by=current_user.user_id)
+        with TeamRefusals():
+            old_role = await self._db.update_role(current_user.org_id, user_id=user_id, role=new_role)
 
         return RoleChangeResponse(user_id=user_id, old_role=old_role, new_role=new_role)
 
@@ -237,9 +248,10 @@ class TeamService:
 
         # The membership and the account together, as SCIM's `active` does:
         # `MemberStatus` says why the account is the half that deprovisions.
-        old_status = await MemberStatus(team=self._db, users=self._user_db).set_in_org(
-            current_user.org_id, user_id, active=new_status == 'active'
-        )
+        with TeamRefusals():
+            old_status = await MemberStatus(team=self._db).set_in_org(
+                current_user.org_id, user_id, active=new_status == 'active'
+            )
 
         return StatusChangeResponse(user_id=user_id, old_status=old_status, new_status=new_status)
 
@@ -269,10 +281,7 @@ class TeamService:
         if not member:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Member not found')
 
-        watermark = await self._user_db.withdraw_sessions(user_id)
-        await VmCredentials().revoke_person(user_id)
-        await ApiKeys().revoke_person(user_id)
-        await Revocations().sessions_withdrawn(user_id, watermark)
+        watermark = await self._sessions.withdraw(user_id)
         logger.info(
             'Sessions withdrawn for %s in org %s by %s, valid after %s',
             user_id,
@@ -289,7 +298,8 @@ class TeamService:
                 detail='Cannot remove yourself',
             )
 
-        async with ProducerFeed().removal():
-            await self._db.delete(current_user.org_id, user_id)
+        with TeamRefusals():
+            async with ProducerFeed().removal():
+                await self._db.delete(current_user.org_id, user_id)
         await VmCredentials().revoke_person(user_id, org_ids=[current_user.org_id])
         await ApiKeys().revoke_person(user_id, org_ids=[current_user.org_id])

@@ -21,15 +21,11 @@ admin part-way through editing should be told, not blocked.
 
 from __future__ import annotations
 
-import re
-
-import yaml
+from app.utils.frontmatter import Frontmatter
 
 #: What the portal's "new agent" template puts on the ``name:`` line.
 #: Kept in sync with ``portal/src/lib/entryKinds.ts``.
 PLACEHOLDER_NAME = '<entry-name>'
-
-_FRONTMATTER = re.compile(r'^\s*---\s*\n(.*?)\n---', re.S)
 
 
 def frontmatter_name(content: str) -> str | None:
@@ -40,17 +36,7 @@ def frontmatter_name(content: str) -> str | None:
     caller — nothing to compare — and telling them apart would not
     change the advice.
     """
-    match = _FRONTMATTER.search(content or '')
-    if not match:
-        return None
-    try:
-        block = yaml.safe_load(match.group(1))
-    except yaml.YAMLError:
-        return None
-    if not isinstance(block, dict):
-        return None
-    name = block.get('name')
-    return str(name) if name is not None and str(name).strip() else None
+    return Frontmatter.of(content).name
 
 
 def warning_for(content: str, *, other_names: set[str] | None = None) -> str | None:
