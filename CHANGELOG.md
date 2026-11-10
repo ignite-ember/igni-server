@@ -15,6 +15,13 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-10
+
+The first release of igni server that has ever shipped. It changes an
+interface: the inference pools are gone, so the API answers one flat list
+of nodes where it used to answer a list of pools. While the major version
+is 0, a minor version may carry that — this one does, and says so.
+
 ### Added
 
 - **A refused client is told its registration's state.** When the token or
@@ -119,10 +126,13 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [0.6.0] - 2026-11-03
 
-The first tagged release. Versions before it were not tagged, so this entry
-covers the project's history up to now (development began in November 2025)
-by area rather than by version. The release notes are in
-[docs/releases/v0.6.0.md](docs/releases/v0.6.0.md).
+Prepared, and never tagged or built: the release was called off before it
+shipped, so no version of igni server had ever been published when this
+entry was written, and none had been published when it was called off.
+The entry covers the project's history up to then (development began in
+November 2025) by area rather than by version, and what the release held
+is in [docs/releases/v0.6.0.md](docs/releases/v0.6.0.md). The first
+version that has ever shipped is 0.7.0.
 
 ### Added
 
@@ -214,5 +224,8 @@ by area rather than by version. The release notes are in
 - Every GitHub Action is pinned by commit SHA, and an OpenSSF Scorecard
   runs on the public repository.
 
-[Unreleased]: https://github.com/ignite-ember/igni-server/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/ignite-ember/igni-server/releases/tag/v0.6.0
+[Unreleased]: https://github.com/ignite-ember/igni-server/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ignite-ember/igni-server/releases/tag/v0.7.0
+# 0.6.0 was prepared and never tagged, so there is no release page to
+# point at: its entry names the commit that carried it.
+[0.6.0]: https://github.com/ignite-ember/igni-server/tree/9ecb879

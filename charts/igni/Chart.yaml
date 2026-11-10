@@ -6,7 +6,7 @@ type: application
 # The chart's own version. Bumped when the chart changes, independently of
 # the application: a customer upgrading the chart to get a fixed template
 # should not be forced onto a new application image, and vice versa.
-version: 0.1.0
+version: 0.2.0
 
 # The default application version, and the default image tag. Deliberately
 # not `latest`: `latest` cannot be rolled back to, and a Deployment whose
@@ -14,7 +14,7 @@ version: 0.1.0
 #
 # `helm template` refuses to render when this resolves to `latest` — see
 # templates/_helpers.tpl.
-appVersion: "0.6.0"
+appVersion: "0.7.0"
 
 home: https://github.com/ignite-ember/igni-server
 sources:

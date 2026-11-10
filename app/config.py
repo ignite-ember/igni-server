@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     # and the chart's `appVersion` said 0.1.0 — and the chart's default
     # `image.tag` is its `appVersion`, so the default install asked for
     # a tag nothing had ever published.
-    app_version: str = '0.6.0'
+    app_version: str = '0.7.0'
     app_configure_logging_level: str = 'INFO'
     app_root_path: str = ROOT_PATH
     log_level: str = 'INFO'
