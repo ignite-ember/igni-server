@@ -72,7 +72,9 @@ async def test_the_dev_path_does_not_add_somebody_already_in_one(client):
         await create_user(db, user_id='dev', email='dev@acme.com')
         await create_org(db, owner_user_id='dev', slug='acme')
 
-    await OrganizationDB().ensure_exists(str(uuid.uuid4()), 'dev-org', 'Dev', 'dev')
+    await OrganizationDB().ensure_exists(
+        org_id=str(uuid.uuid4()), slug='dev-org', display_name='Dev', owner_user_id='dev'
+    )
 
     async with shared_plane() as db:
         rows = await db.execute(select(OrgMembership.org_id).where(OrgMembership.user_id == 'dev'))

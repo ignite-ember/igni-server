@@ -15,9 +15,15 @@ What matters, in order of how much damage getting it wrong would do:
   runs when a CLI starts up.
 """
 
+from fastapi import HTTPException
 import pytest
 
-from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup, seed_entries
+from app.db.sql.group_entries import GroupEntriesDB
+from app.db.sql.group_members import GroupMembersDB
+from app.db.sql.groups import GroupsDB
+from app.db.sql.schemas.group import GroupPage
+from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup
+from app.services.portal.default_group_seed import BUNDLED_SEED, SeedEntry
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -34,68 +40,68 @@ class TestTheSeed:
         """Read from the repo, not from an installed igni: the
         server has no reason to depend on the CLI package and a
         deployment may not have it at all."""
-        assert len(seed_entries()) > 0
+        assert len(BUNDLED_SEED.entries()) > 0
 
     def test_it_is_not_only_agents(self):
         """A Default group holding agents alone told people that agents
         are all igni comes with. It ships skills, hooks, and the scripts
         those hooks run — igni itself ships nothing, so a hook without
         its script would reference a file nobody sent."""
-        kinds = {kind for kind, _name, _content in seed_entries()}
+        kinds = {entry.kind for entry in BUNDLED_SEED.entries()}
         assert kinds == {'agents', 'skills', 'hooks', 'scripts'}
 
     def test_the_entry_name_is_the_file_stem(self):
         """igni writes ``<entry_name>.md``, so a group carrying its own
         ``<agent>.<variant>.md`` still reaches the loader as a variant."""
-        names = {name for kind, name, _ in seed_entries() if kind == 'agents'}
+        names = {entry.entry_name for entry in BUNDLED_SEED.entries() if entry.kind == 'agents'}
         assert 'architect' in names
 
     def test_no_extensions_agents_are_seeded(self):
         """An extension's versions of igni's agents ship with the extension
         and apply while it runs. Seeding them here would hand every
         organisation an extension's prompts whether or not it has it."""
-        names = {name for kind, name, _ in seed_entries() if kind == 'agents'}
+        names = {entry.entry_name for entry in BUNDLED_SEED.entries() if entry.kind == 'agents'}
         assert not [name for name in names if '.' in name], names
 
     def test_the_skills_behind_the_slash_commands_are_there(self):
-        names = {name for kind, name, _ in seed_entries() if kind == 'skills'}
+        names = {entry.entry_name for entry in BUNDLED_SEED.entries() if entry.kind == 'skills'}
         assert {'commit', 'pr', 'test-plan'} <= names
 
     def test_agents_and_skills_are_markdown_with_frontmatter(self):
-        for kind, name, content in seed_entries():
-            if kind in ('agents', 'skills'):
-                assert content.startswith('---'), f'{name} has no frontmatter and will not load'
+        for entry in BUNDLED_SEED.entries():
+            if entry.kind in ('agents', 'skills'):
+                assert entry.content.startswith('---'), f'{entry.entry_name} has no frontmatter and will not load'
 
     def test_each_hook_names_the_event_it_fires_on(self):
         """A declaration without one is dropped by the client's cache."""
         import json
 
-        for kind, name, content in seed_entries():
-            if kind == 'hooks':
-                assert json.loads(content)['event'], name
+        for entry in BUNDLED_SEED.entries():
+            if entry.kind == 'hooks':
+                assert json.loads(entry.content)['event'], entry.entry_name
 
 
 class TestJoiningIt:
     async def test_a_user_with_no_group_gets_one(self, client, member):
-        summary = await DefaultGroup.ensure_for_user('dev-1')
+        summary = await DefaultGroup().ensure_for_user('dev-1')
 
         assert summary is not None
         assert summary.name == DEFAULT_GROUP_NAME
 
     async def test_it_arrives_holding_the_shipped_agents(self, client, member):
         headers, _ = member
-        await DefaultGroup.ensure_for_user('dev-1')
+        await DefaultGroup().ensure_for_user('dev-1')
 
         pack = (await client.get('/portal/me/group/pack', headers=headers)).json()
         got = {(o['kind'], o['entry_name']) for o in pack['entries']}
-        assert got == {(kind, name) for kind, name, _ in seed_entries()}
+        assert got == {(entry.kind, entry.entry_name) for entry in BUNDLED_SEED.entries()}
 
     async def test_it_is_created_once(self, client, member):
         """A second one beside the group an admin has been editing would
         be worse than none."""
         headers, _ = member
-        await DefaultGroup.ensure_for_user('dev-1')
-        await DefaultGroup.ensure_for_user('dev-1')
+        await DefaultGroup().ensure_for_user('dev-1')
+        await DefaultGroup().ensure_for_user('dev-1')
 
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
         assert [g['name'] for g in groups].count(DEFAULT_GROUP_NAME) == 1
@@ -105,8 +111,8 @@ class TestJoiningIt:
         await create_user(db, user_id='dev-2', email='dev2@test.com')
         await add_member(db, org_id=org_id, user_id='dev-2', role='member')
 
-        first = await DefaultGroup.ensure_for_user('dev-1')
-        second = await DefaultGroup.ensure_for_user('dev-2')
+        first = await DefaultGroup().ensure_for_user('dev-1')
+        second = await DefaultGroup().ensure_for_user('dev-2')
 
         assert first.id == second.id
 
@@ -116,27 +122,51 @@ class TestJoiningIt:
         legal = (await client.post('/portal/groups', json={'name': 'Legal'}, headers=headers)).json()
         await client.post(f'/portal/groups/{legal["id"]}/members', json={'user_id': 'dev-1'}, headers=headers)
 
-        summary = await DefaultGroup.ensure_for_user('dev-1')
+        summary = await DefaultGroup().ensure_for_user('dev-1')
 
         assert summary.name == 'Legal'
 
     async def test_someone_in_no_org_gets_nothing(self, client, db):
         await create_user(db, user_id='nomad-1', email='nomad@test.com')
 
-        assert await DefaultGroup.ensure_for_user('nomad-1') is None
+        assert await DefaultGroup().ensure_for_user('nomad-1') is None
+
+    async def test_an_organisation_they_are_not_in_gives_them_nothing_there(self, client, member, db):
+        """The session's organisation decides; their own is not a fallback."""
+        await create_user(db, user_id='boss-1', email='boss@test.com')
+        other = await create_org(db, owner_user_id='boss-1', slug='other', display_name='Other')
+
+        assert await DefaultGroup().ensure_for_user('dev-1', str(other.id)) is None
+        assert (await GroupsDB().list_groups(str(other.id))).total == 0
 
     async def test_a_failure_costs_the_group_not_the_session(self, monkeypatch, client, member):
         """This runs while a CLI is starting up."""
 
-        async def _boom(self, user_id):
+        async def _boom(self, *args, **kwargs):
             raise ConnectionError('database is down')
 
         # The *active* variant, which is what `ensure_for_user` calls
         # since B8 — patching the old one left this test proving that a
         # method no longer on the path can fail safely.
-        monkeypatch.setattr('app.db.sql.groups.GroupsDB.get_active_user_group_summary', _boom)
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
 
-        assert await DefaultGroup.ensure_for_user('dev-1') is None
+        assert await DefaultGroup().ensure_for_user('dev-1') is None
+
+
+class TestPlacingEveryone:
+    async def test_only_active_members_are_placed(self, client, member, db):
+        """Somebody whose membership no longer holds is not put in a group."""
+        _, org_id = member
+        await create_user(db, user_id='dev-2', email='dev2@test.com')
+        await add_member(db, org_id=org_id, user_id='dev-2', role='member')
+        await create_user(db, user_id='leaver-1', email='leaver@test.com')
+        await add_member(db, org_id=org_id, user_id='leaver-1', role='member', status='deactivated')
+
+        group = await DefaultGroup().place_everyone(org_id, by_user_id='dev-1')
+
+        assert group.is_default
+        placed = await GroupMembersDB().memberships(org_id)
+        assert [(m.user_id, m.group_id) for m in placed] == [('dev-1', group.id), ('dev-2', group.id)]
 
 
 class TestThroughThePack:
@@ -149,7 +179,7 @@ class TestThroughThePack:
 
         assert pack is not None
         assert pack['group_name'] == DEFAULT_GROUP_NAME
-        assert len(pack['entries']) == len(seed_entries())
+        assert len(pack['entries']) == len(BUNDLED_SEED.entries())
 
     async def test_an_admin_edits_a_copy_of_it(self, client, member):
         """The point of the whole thing: what a team's assistant can do
@@ -313,7 +343,7 @@ class TestWhereAnAdminLooksForIt:
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
         default = next(g for g in groups if g['name'] == DEFAULT_GROUP_NAME)
 
-        assert default['entry_count'] == len(seed_entries())
+        assert default['entry_count'] == len(BUNDLED_SEED.entries())
 
     async def test_an_org_that_already_has_groups_gets_it_too(self, client, member):
         """The case that was broken: nobody here is ungrouped, so the
@@ -333,3 +363,55 @@ class TestWhereAnAdminLooksForIt:
         groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
 
         assert [g['name'] for g in groups].count(DEFAULT_GROUP_NAME) == 1
+
+
+class _SeesNoGroups(GroupsDB):
+    """The read before the create, as it was before a concurrent request made the Default group."""
+
+    async def list_groups(self, org_id: str, *, offset: int = 0, limit: int | None = None) -> GroupPage:
+        return GroupPage(items=[], total=0)
+
+
+class _Seed:
+    def __init__(self, *entries: SeedEntry) -> None:
+        self._entries = list(entries)
+
+    def entries(self) -> list[SeedEntry]:
+        return self._entries
+
+
+class TestMakingIt:
+    async def test_losing_the_race_to_make_it_is_the_portals_409(self, member):
+        _, org_id = member
+        await DefaultGroup().ensure_for_org(org_id, created_by_user_id='dev-1')
+
+        with pytest.raises(HTTPException) as raised:
+            await DefaultGroup(groups=_SeesNoGroups()).ensure_for_org(org_id, created_by_user_id='dev-1')
+
+        assert (raised.value.status_code, raised.value.detail) == (
+            409,
+            "A group named 'Default' already exists in this organization.",
+        )
+
+    async def test_a_seed_entry_that_fails_is_skipped_and_the_rest_are_seeded(self, member):
+        _, org_id = member
+        seed = _Seed(
+            SeedEntry('agents', 'first', '---\nname: first\n---\nBody.'),
+            SeedEntry('no-such-kind', 'broken', 'x'),
+            SeedEntry('agents', 'first', 'the same name again'),
+            SeedEntry('skills', 'last', '---\nname: last\n---\nBody.'),
+        )
+
+        group = await DefaultGroup(seed=seed).ensure_for_org(org_id, created_by_user_id='dev-1')  # type: ignore[arg-type]
+
+        entries = await GroupEntriesDB().list_entries(org_id, str(group.id))
+        assert [(e.kind, e.entry_name, e.created_by_user_id) for e in entries] == [
+            ('agents', 'first', 'dev-1'),
+            ('skills', 'last', 'dev-1'),
+        ]
+        assert (group.name, group.is_default, group.default_model, group.theme) == (
+            DEFAULT_GROUP_NAME,
+            True,
+            None,
+            None,
+        )

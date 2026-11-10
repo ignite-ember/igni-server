@@ -45,12 +45,13 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from fastapi import HTTPException
 import pytest
 from sqlalchemy import select
 
 from app.db.sql.models.org_membership import OrgMembership
-from app.db.sql.team import newest_invite_per_org, TeamDB
+from app.db.sql.schemas.membership_errors import InvitationPending
+from app.db.sql.schemas.pending_invites import PendingInvites
+from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 
 #: Any bcrypt hash; nobody signs in with these accounts.
@@ -88,11 +89,10 @@ class TestTheConstraintStopsDuplicates:
         team = TeamDB()
         await team.create_invited_member(org_id=org, email='dup@example.com', role='member', invited_by='inviter')
 
-        with pytest.raises(HTTPException) as caught:
+        with pytest.raises(InvitationPending) as caught:
             await team.create_invited_member(org_id=org, email='dup@example.com', role='admin', invited_by='inviter')
 
-        assert caught.value.status_code == 409
-        assert 'dup@example.com' in str(caught.value.detail)
+        assert caught.value.email == 'dup@example.com'
 
     async def test_concurrent_invites_produce_one_row(self, db, org):
         """The shape that produced five rows."""
@@ -106,8 +106,8 @@ class TestTheConstraintStopsDuplicates:
         )
 
         created = [r for r in results if isinstance(r, OrgMembership)]
-        conflicts = [r for r in results if isinstance(r, HTTPException) and r.status_code == 409]
-        other = [r for r in results if not isinstance(r, (OrgMembership, HTTPException))]
+        conflicts = [r for r in results if isinstance(r, InvitationPending)]
+        other = [r for r in results if not isinstance(r, (OrgMembership, InvitationPending))]
 
         assert not other, f'unexpected failures: {other}'
         assert len(created) == 1, f'{len(created)} rows created'
@@ -144,7 +144,7 @@ class TestTheConstraintStopsDuplicates:
 
 
 class TestTheDeduplicationRule:
-    """`newest_invite_per_org`, directly.
+    """`PendingInvites.newest_per_org`, directly.
 
     The state it guards — two pending rows for one address in one org — can
     no longer be created: the index refuses it. Reproducing it in a test by
@@ -174,7 +174,7 @@ class TestTheDeduplicationRule:
         older = self._row('org-a', 'admin', age_seconds=600)
         newer = self._row('org-a', 'member', age_seconds=10)
 
-        keep, superseded = newest_invite_per_org([older, newer])
+        keep, superseded = PendingInvites([older, newer]).newest_per_org()
 
         assert list(keep) == ['org-a']
         # The corrective demotion holds, not the earlier admin grant — the
@@ -187,7 +187,7 @@ class TestTheDeduplicationRule:
         newer = self._row('org-a', 'member', age_seconds=10)
 
         for rows in ([older, newer], [newer, older]):
-            keep, _ = newest_invite_per_org(rows)
+            keep, _ = PendingInvites(rows).newest_per_org()
             assert keep['org-a'].role == 'member', rows
 
     def test_orgs_are_independent(self):
@@ -199,7 +199,7 @@ class TestTheDeduplicationRule:
             self._row('org-b', 'member', age_seconds=5),
         ]
 
-        keep, superseded = newest_invite_per_org(rows)
+        keep, superseded = PendingInvites(rows).newest_per_org()
 
         assert set(keep) == {'org-a', 'org-b'}
         assert len(superseded) == 1
@@ -211,21 +211,21 @@ class TestTheDeduplicationRule:
         a = self._row('org-a', 'admin', age_seconds=60, ident='aaa')
         b = self._row('org-a', 'member', age_seconds=60, ident='bbb')
 
-        first, _ = newest_invite_per_org([a, b])
-        second, _ = newest_invite_per_org([b, a])
+        first, _ = PendingInvites([a, b]).newest_per_org()
+        second, _ = PendingInvites([b, a]).newest_per_org()
 
         assert first['org-a'].id == second['org-a'].id == 'bbb'
 
     def test_a_single_row_is_kept_and_nothing_is_superseded(self):
         only = self._row('org-a', 'member', age_seconds=1)
 
-        keep, superseded = newest_invite_per_org([only])
+        keep, superseded = PendingInvites([only]).newest_per_org()
 
         assert keep == {'org-a': only}
         assert superseded == []
 
     def test_no_rows_is_not_an_error(self):
-        assert newest_invite_per_org([]) == ({}, [])
+        assert PendingInvites([]).newest_per_org() == ({}, [])
 
 
 class TestClaimingRealState:

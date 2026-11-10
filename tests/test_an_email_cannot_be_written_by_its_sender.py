@@ -5,27 +5,33 @@ recipient's name into markup. Both are chosen by people, and the email
 goes to somebody else — so a name is the one field most likely to be
 hostile and the one with the widest audience.
 
-Escaping cannot live in the `_p` / `_info_box` / `_error_box` helpers:
-their callers pass `<strong>` deliberately and the whole file would
-render as literal angle brackets. It has to happen where caller data
-enters, which is what `_esc` at the top of each template does.
+Escaping cannot live in `EmailMarkup.paragraph` or the callouts: their
+callers pass `<strong>` deliberately and the whole email would render as
+literal angle brackets. Blocks that take text (the greeting, the footer
+address, the button) escape it; text interpolated into markup is escaped
+by the template where it enters.
 
-`quote=True`, because several values land inside attribute positions
-in `_wrap`.
+`quote=True`, because some values land inside attribute positions.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from app.services.email.templates import EmailContent, get_team_invite_email_template
+from app.services.email.templates import EmailContent, EmailTemplates
 
 _HOSTILE = '<script>alert(1)</script>'
 
 
 def _invite(**overrides) -> EmailContent:
-    fields = {'email': 'new@example.com', 'role': 'member', 'invited_by': 'Ada Lovelace', 'name': 'Grace'}
-    return get_team_invite_email_template(**{**fields, **overrides})
+    fields = {
+        'email': 'new@example.com',
+        'role': 'member',
+        'invite_url': 'https://portal.example.com/signup?email=new%40example.com',
+        'invited_by': 'Ada Lovelace',
+        'name': 'Grace',
+    }
+    return EmailTemplates().team_invite(**{**fields, **overrides})
 
 
 class TestNoCallerTextBecomesMarkup:
@@ -66,6 +72,20 @@ class TestTheTemplatesStillRender:
 
         assert '<strong>' in body
         assert '&lt;strong&gt;' not in body
+
+    def test_the_invite_link_is_the_one_it_was_given(self):
+        """The template used to build its own link from the HTML-escaped
+        address, unencoded — `a+b@x` arrived at sign-up as `a b@x`."""
+        url = 'https://portal.example.com/signup?email=a%2Bb%40example.com'
+        body = _invite(email='a+b@example.com', invite_url=url).html_body
+
+        assert f'href="{url}"' in body
+
+    @pytest.mark.parametrize('field', ['email', 'role'])
+    def test_other_caller_text_is_escaped_too(self, field):
+        body = _invite(**{field: _HOSTILE}).html_body
+
+        assert _HOSTILE not in body
 
     def test_it_returns_a_named_pair(self):
         content = _invite()

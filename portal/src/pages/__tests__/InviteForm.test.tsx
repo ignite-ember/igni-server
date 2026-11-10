@@ -17,7 +17,7 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/render'
 import { server } from '../../test/server'
-import { InviteForm } from '../TeamPage'
+import { InviteForm } from '../../components/team/InviteForm'
 
 const INVITE_URL = 'https://igni.acme.internal/signup?email=new%40acme.test'
 

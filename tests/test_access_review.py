@@ -266,14 +266,14 @@ class TestSignInsAreRecorded:
         """Through the real endpoint, because the point is that the
         recording happens where a token is minted rather than where a test
         calls a helper."""
-        from app.services.auth.auth_service import AuthService
+        from app.services.auth.passwords import Passwords
 
         email = f'signer-{uuid.uuid4().hex[:6]}@example.com'
         password = 'a-real-password-123'
         user = await create_user(db, email=email)
         _execute(
             'UPDATE users SET hashed_password = :h, last_sign_in_at = NULL WHERE user_id = :u',
-            {'h': AuthService.hash_password(password), 'u': str(user.user_id)},
+            {'h': Passwords().hash(password), 'u': str(user.user_id)},
         )
 
         response = await client.post('/sign-in', json={'email': email, 'password': password})
@@ -311,6 +311,33 @@ class TestSignInsAreRecorded:
             engine.dispose()
 
         assert recorded is None
+
+    async def test_a_cli_token_counts_as_a_sign_in(self, client, db):
+        """A person who lives in the CLI must not look dormant. Recorded
+        since the mint moved into `CLITokens` (2b8434e2); `/cli/token` did
+        not write it before."""
+        user = await create_user(db, email=f'cli-{uuid.uuid4().hex[:6]}@example.com')
+        org = await create_org(db, owner_user_id=str(user.user_id), slug=f'cli-{uuid.uuid4().hex[:6]}')
+        await add_member(db, str(org.id), str(user.user_id), role='member')
+        await db.commit()
+        _execute('UPDATE users SET last_sign_in_at = NULL WHERE user_id = :u', {'u': str(user.user_id)})
+
+        response = await client.post(
+            '/cli/token', json={'org_id': str(org.id)}, headers=auth_header(make_token(str(user.user_id)))
+        )
+
+        assert response.status_code == 200, response.text
+        engine = create_engine(TEST_DB_URL_SYNC)
+        try:
+            with engine.connect() as conn:
+                recorded = conn.execute(
+                    text('SELECT last_sign_in_at FROM users WHERE user_id = :u'),
+                    {'u': str(user.user_id)},
+                ).scalar_one()
+        finally:
+            engine.dispose()
+
+        assert recorded is not None, 'minting a CLI token did not record a sign-in'
 
     def test_every_token_mint_records_a_sign_in(self):
         """A rule over the call sites, not four places somebody remembers.

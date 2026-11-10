@@ -8,6 +8,9 @@ from sqlalchemy.orm import Mapped
 
 from app.db.sql.models import Base
 
+#: A current member: counts toward the organisation and reaches its data.
+ACTIVE = 'active'
+
 
 class OrgMembership(Base):
     __tablename__ = 'org_memberships'

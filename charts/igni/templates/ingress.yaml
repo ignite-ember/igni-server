@@ -22,8 +22,8 @@ from publishing them on the internet.
 than `/`, and the Ingress spec says the longest matching path wins
 regardless of the order they appear in.
 
-Nothing on this host belongs to another service. Artifacts (and every
-later service) is served on its own hostname by the second Ingress below:
+Nothing on this host belongs to another service. A service is served on
+its own hostname, by its own deployment — this chart publishes none:
 its URL is its identity — the audience of the tokens people get for it,
 and where igni calls `{service URL}/v1/igni/subjects/...` — and a path
 here would share igni's origin and take a path igni may one day need.
@@ -73,45 +73,4 @@ spec:
                 name: {{ include "igni.fullname" . }}-portal
                 port:
                   number: {{ .Values.service.portalPort }}
-{{- if .Values.artifacts.enabled }}
----
-{{/*
-igni__artifacts, on its own host. One rule, `/` to the artifacts Service:
-the whole origin is the service's, so it decides what it serves there.
-
-TLS follows igni's: on when `ingress.tls.enabled`, with a certificate of
-its own — igni's names igni's host and would not be valid here.
-*/}}
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: {{ include "igni.fullname" . }}-artifacts
-  labels:
-    {{- include "igni.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
-  annotations:
-    {{- toYaml . | nindent 4 }}
-  {{- end }}
-spec:
-  {{- with .Values.ingress.className }}
-  ingressClassName: {{ . }}
-  {{- end }}
-  {{- if .Values.ingress.tls.enabled }}
-  tls:
-    - hosts:
-        - {{ .Values.artifacts.host | quote }}
-      secretName: {{ required "artifacts.tls.secretName is required when ingress.tls.enabled is true: Artifacts is served on its own host, so it needs its own certificate" .Values.artifacts.tls.secretName }}
-  {{- end }}
-  rules:
-    - host: {{ .Values.artifacts.host | quote }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ .Values.artifacts.serviceName }}
-                port:
-                  number: {{ .Values.artifacts.servicePort }}
-{{- end }}
 {{- end }}

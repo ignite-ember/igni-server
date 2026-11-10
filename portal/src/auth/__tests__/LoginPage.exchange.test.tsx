@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { StrictMode } from 'react'
@@ -83,6 +83,44 @@ describe('the sign-in code exchange', () => {
     expect(login).not.toHaveBeenCalled()
   })
 
+  it('drops the failed-exchange message when the user switches method', async () => {
+    // The message is about the link, not the form, so it should not ride
+    // along onto another way of signing in.
+    vi.spyOn(client, 'get').mockResolvedValue({ data: { password: true, oauth_providers: [], sso: { enabled: false, label: 'SSO', start_url: '/v1/auth/oidc' } } } as never)
+    vi.spyOn(client, 'post').mockRejectedValue(new Error('400'))
+
+    renderLogin({ search: '?code=already-used' })
+
+    await waitFor(() => expect(screen.getByText(/already been used or has expired/i)).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /sign in with email code instead/i }))
+    expect(screen.queryByText(/already been used or has expired/i)).toBeNull()
+  })
+
+  it('drops the failed-exchange message once a code has been sent', async () => {
+    // The exchange is held back until the user is already on the code form,
+    // so the banner is there for the send itself to clear.
+    vi.spyOn(client, 'get').mockResolvedValue({ data: { password: true, oauth_providers: [], sso: { enabled: false, label: 'SSO', start_url: '/v1/auth/oidc' } } } as never)
+    let refuseExchange: (reason: Error) => void = () => {}
+    vi.spyOn(client, 'post').mockImplementation(((url: string) =>
+      url === '/auth/exchange'
+        ? new Promise((_, reject) => {
+            refuseExchange = reject
+          })
+        : Promise.resolve({ data: {} })) as never)
+
+    renderLogin({ search: '?code=already-used' })
+
+    fireEvent.click(screen.getByRole('button', { name: /sign in with email code instead/i }))
+    fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'a@b.co' } })
+    refuseExchange(new Error('400'))
+    await waitFor(() => expect(screen.getByText(/already been used or has expired/i)).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /send sign-in code/i }))
+
+    await waitFor(() => expect(screen.getByText(/enter verification code/i)).toBeTruthy())
+    expect(screen.queryByText(/already been used or has expired/i)).toBeNull()
+  })
+
   it('does nothing without a code', async () => {
     login.mockClear()
     vi.spyOn(client, 'get').mockResolvedValue({ data: { password: true, oauth_providers: [], sso: { enabled: false, label: 'SSO', start_url: '/v1/auth/oidc' } } } as never)
@@ -103,5 +141,17 @@ describe('the sign-in code exchange', () => {
     renderLogin({ search: '?error=OAuth%20sign-in%20failed' })
 
     await waitFor(() => expect(screen.getByText(/OAuth sign-in failed/i)).toBeTruthy())
+  })
+
+  it('lets the provider error be dismissed', async () => {
+    // The dismiss button used to clear only form errors, so one that
+    // arrived in the URL stayed on screen however often it was pressed.
+    vi.spyOn(client, 'get').mockResolvedValue({ data: { password: true, oauth_providers: [], sso: { enabled: false, label: 'SSO', start_url: '/v1/auth/oidc' } } } as never)
+
+    renderLogin({ search: '?error=OAuth%20sign-in%20failed' })
+
+    await waitFor(() => expect(screen.getByText(/OAuth sign-in failed/i)).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }))
+    expect(screen.queryByText(/OAuth sign-in failed/i)).toBeNull()
   })
 })

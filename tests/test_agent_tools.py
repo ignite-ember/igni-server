@@ -18,7 +18,7 @@ import subprocess
 import pytest
 
 from app.services.portal.agent_tools import declared_tools, KNOWN_TOOLS, unknown_tools, warning_for
-from app.services.portal.default_group import seed_entries
+from app.services.portal.default_group_seed import BUNDLED_SEED
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 AGENT = """---
@@ -264,6 +264,10 @@ class TestTheListIsIgnis:
     def test_no_agent_the_default_group_ships_is_warned_about(self):
         """A new member must not be told about an agent nobody in their
         organisation has touched."""
-        warned = [(name, unknown_tools(content)) for kind, name, content in seed_entries() if kind == 'agents']
+        warned = [
+            (entry.entry_name, unknown_tools(entry.content))
+            for entry in BUNDLED_SEED.entries()
+            if entry.kind == 'agents'
+        ]
 
         assert [(name, unknown) for name, unknown in warned if unknown] == []

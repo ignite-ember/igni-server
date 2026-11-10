@@ -5,9 +5,9 @@ not what customers use — and it takes the org context from a caller
 supplied header, ``X-Org-Id``. So the question is whether that header is
 believed.
 
-It is not, and that is right: ``resolve_user_org`` asserts active
+It is not, and that is right: ``OrgContexts.resolve`` asserts active
 membership of whatever org is named, header or token claim. Verified by
-handing it another org's id and getting 403.
+handing it another org's id and getting `NotAMember`, which is a 403.
 
 What this file also pins is the *timing* of that assertion, which turned
 out to be the interesting part.
@@ -15,11 +15,11 @@ out to be the interesting part.
 
 from __future__ import annotations
 
-from fastapi import HTTPException
 import pytest
 
 from app.db.sql.team import TeamDB
-from app.services.auth.auth_service import AuthService
+from app.services.auth.auth_errors import NotAMember
+from app.services.auth.org_context import OrgContexts
 from tests.conftest import add_member, create_org, create_user, make_token
 
 
@@ -36,19 +36,17 @@ async def two_orgs(db):
 
 class TestTheOrgHeaderIsNotBelieved:
     async def test_her_own_org_resolves(self, two_orgs):
-        user_id, org_id = await AuthService.resolve_user_org(two_orgs['alice'], org_id=two_orgs['a'])
+        context = await OrgContexts().resolve(two_orgs['alice'], org_id=two_orgs['a'])
 
-        assert user_id == 'alice'
-        assert org_id == two_orgs['a']
+        assert context.user_id == 'alice'
+        assert context.org_id == two_orgs['a']
 
-    async def test_another_org_is_403(self, two_orgs):
+    async def test_another_org_is_refused(self, two_orgs):
         """``X-Org-Id`` reaches this straight from the request, and it
         flows on into usage accounting — so a believed header would mean
         billing somebody else's org for your inference."""
-        with pytest.raises(HTTPException) as caught:
-            await AuthService.resolve_user_org(two_orgs['alice'], org_id=two_orgs['b'])
-
-        assert caught.value.status_code == 403
+        with pytest.raises(NotAMember):
+            await OrgContexts().resolve(two_orgs['alice'], org_id=two_orgs['b'])
 
 
 class TestRevocationTakesEffectAtOnce:
@@ -69,21 +67,18 @@ class TestRevocationTakesEffectAtOnce:
         token = make_token('temp', org_id=two_orgs['a'])
 
         # In.
-        assert (await AuthService.resolve_user_org(token, org_id=two_orgs['a']))[1] == two_orgs['a']
+        assert (await OrgContexts().resolve(token, org_id=two_orgs['a'])).org_id == two_orgs['a']
 
         await TeamDB().delete(org_id=two_orgs['a'], user_id='temp')
 
         # Out, with no window.
-        with pytest.raises(HTTPException) as caught:
-            await AuthService.resolve_user_org(token, org_id=two_orgs['a'])
-        assert caught.value.status_code == 403
+        with pytest.raises(NotAMember):
+            await OrgContexts().resolve(token, org_id=two_orgs['a'])
 
     async def test_the_guard_is_not_wrapped_in_a_cache(self):
         """Asserted on the object, because "immediately" is only true for
         as long as nobody re-adds the decorator for the throughput."""
-        from app.services.auth import auth_service
-
-        assert not hasattr(auth_service._assert_active_member, 'cache')
+        assert not hasattr(OrgContexts._active_membership, 'cache')
 
     async def test_a_denial_is_never_sticky(self, db, two_orgs):
         """The other direction: being granted membership has to work at
@@ -93,8 +88,8 @@ class TestRevocationTakesEffectAtOnce:
         await create_user(db, user_id='joiner', email='j@a.com')
         token = make_token('joiner', org_id=two_orgs['a'])
 
-        with pytest.raises(HTTPException):
-            await AuthService.resolve_user_org(token, org_id=two_orgs['a'])
+        with pytest.raises(NotAMember):
+            await OrgContexts().resolve(token, org_id=two_orgs['a'])
 
         await add_member(db, org_id=two_orgs['a'], user_id='joiner', role='member')
 
@@ -103,7 +98,7 @@ class TestRevocationTakesEffectAtOnce:
         # both landed in the same second. The joiner signs in again, as they
         # would; what must not be sticky is the denial for this person here.
         token = make_token('joiner', org_id=two_orgs['a'])
-        assert (await AuthService.resolve_user_org(token, org_id=two_orgs['a']))[1] == two_orgs['a']
+        assert (await OrgContexts().resolve(token, org_id=two_orgs['a'])).org_id == two_orgs['a']
 
 
 class TestTheCacheDecoratorItself:
@@ -170,7 +165,7 @@ class TestTheCacheDecoratorItself:
 
         first, second = Opaque(), Opaque()
         assert await lookup(first) == 1
-        assert await lookup(second) == 2, 'a second distinct object read the first one\'s entry'
+        assert await lookup(second) == 2, "a second distinct object read the first one's entry"
         assert await lookup(first) == 1, 'the first object stopped hitting its own entry'
 
     async def test_an_unhashable_argument_is_refused_rather_than_mis_keyed(self):

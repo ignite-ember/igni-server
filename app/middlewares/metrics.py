@@ -24,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
-from app.middlewares.audit import full_route_template
+from app.middlewares.route_template import full_route_template
 from app.monitoring import HTTP_DURATION, HTTP_REQUESTS, SERVER_ERRORS
 
 

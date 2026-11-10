@@ -45,6 +45,10 @@ from .endpoints.portal import (
     deployment as portal_deployment,
     erasure,
     extension_priority,
+    group_entries,
+    group_extensions,
+    group_members,
+    group_pack,
     groups,
     inference,
     licence,
@@ -101,6 +105,10 @@ portal_router.include_router(audit.router, tags=['Portal - Audit'])
 portal_router.include_router(erasure.router, tags=['Portal - Erasure'])
 portal_router.include_router(subject_access.router, tags=['Portal - Subject Access'])
 portal_router.include_router(groups.router, tags=['Portal - Groups'])
+portal_router.include_router(group_members.router, tags=['Portal - Groups'])
+portal_router.include_router(group_entries.router, tags=['Portal - Groups'])
+portal_router.include_router(group_extensions.router, tags=['Portal - Groups'])
+portal_router.include_router(group_pack.router, tags=['Portal - Groups'])
 portal_router.include_router(portal_apps.router, tags=['Portal - Apps'])
 portal_router.include_router(portal_vm_profiles.router, tags=['Portal - VM profiles'])
 portal_router.include_router(portal_vm_credentials.router, tags=['Portal - VM credentials'])

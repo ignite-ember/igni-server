@@ -14,6 +14,7 @@ import { useState } from 'react'
 import { SkeletonText } from '@primer/react/experimental'
 import client from '../api/client'
 import { AreaChart } from '../components/charts/AreaChart'
+import { formatTokens } from '../utils/formatTokens'
 import type { UserMe, UsageDataPoint, TeamMemberList } from '../types'
 import './DashboardPage.css'
 
@@ -40,12 +41,6 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
       )}
     </Stack>
   )
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return n.toLocaleString()
 }
 
 export function DashboardPage() {

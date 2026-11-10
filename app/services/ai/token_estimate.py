@@ -4,21 +4,19 @@ A fallback, and only that: when an upstream returns a `usage` block it
 is used verbatim, because the provider is the one billing. This is what
 fills the gap so a request still lands in `chat_usage` with something
 other than zero.
-
-The encoder used to be a module-level `_tiktoken_encoder` mutated
-through `global`, with `False` overloaded into the same slot to mean
-"tried and unusable" — so the cache could not tell that apart from "not
-tried yet" without an `or None` on the way out. It is a class now and
-the two states are two fields.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
-from typing import Any
 
-from app.utils.singleton import SingletonMeta
+import tiktoken
+
+from app.api.base_v1.schema.chat import ChatMessage, CompletionUsage
+
+logger = logging.getLogger(__name__)
 
 #: tiktoken's cache directory, shipped with the server. `get_encoding`
 #: otherwise downloads `cl100k_base` from openaipublic.blob.core.windows.net
@@ -29,59 +27,50 @@ from app.utils.singleton import SingletonMeta
 TIKTOKEN_CACHE = Path(__file__).with_name('tiktoken_cache')
 
 
-class TokenEstimator(metaclass=SingletonMeta):
+class TokenEstimator:
     """A lazily-loaded `cl100k_base` encoder, or none at all.
 
-    `tiktoken` is imported on first use rather than at module scope
-    because loading its tables is the expensive part and a deployment
-    whose providers all report usage never needs it.
+    One instance per app, injected into whatever estimates. The tables
+    are loaded on first use, so a deployment whose providers all report
+    usage never reads them.
     """
 
     def __init__(self) -> None:
-        self._encoder: Any = None
+        self._encoder: tiktoken.Encoding | None = None
         self._tried = False
 
     @property
-    def encoder(self) -> Any:
+    def encoder(self) -> tiktoken.Encoding | None:
         """The encoder, or None if it could not be loaded.
 
-        Tried exactly once. A failure is remembered, so a missing or
-        broken `tiktoken` costs one import attempt per process rather
+        Tried exactly once. A failure is logged and remembered, so a
+        missing or corrupt table costs one attempt per instance rather
         than one per request.
         """
         if not self._tried:
             self._tried = True
+            # Only when the deployment has not chosen a cache of its own.
+            os.environ.setdefault('TIKTOKEN_CACHE_DIR', str(TIKTOKEN_CACHE))
             try:
-                # Only when the deployment has not chosen a cache of its own.
-                os.environ.setdefault('TIKTOKEN_CACHE_DIR', str(TIKTOKEN_CACHE))
-                import tiktoken
-
                 self._encoder = tiktoken.get_encoding('cl100k_base')
-            except Exception:  # noqa: BLE001 — an estimate is not worth a 500
-                self._encoder = None
+            except (OSError, ValueError):
+                logger.warning('cl100k_base could not be loaded; estimated usage will read zero', exc_info=True)
         return self._encoder
 
-    def estimate(self, *, body: dict, output_pieces: list[str]) -> tuple[int, int, int]:
-        """`(input, output, total)`, or zeros if nothing can be counted.
+    def estimate(self, *, messages: list[ChatMessage], output_pieces: list[str]) -> CompletionUsage:
+        """The prompt's and the output's token counts, or zeros if there is no encoder.
 
         Zeros rather than an exception: this runs after the response has
-        been delivered, and a usage row that reads zero is a worse
-        outcome than no row only in a report nobody has written yet.
+        been delivered. Only text content is counted, and a special-token
+        string in it (`<|endoftext|>`) counts as plain text rather than
+        being refused.
         """
         encoder = self.encoder
         if encoder is None:
-            return 0, 0, 0
-        try:
-            input_text = ' '.join(
-                message.get('content', '') for message in body.get('messages', []) if message.get('content')
-            )
-            inputs = len(encoder.encode(input_text))
-            outputs = len(encoder.encode(''.join(output_pieces)))
-        except Exception:  # noqa: BLE001 — same reason
-            return 0, 0, 0
-        return inputs, outputs, inputs + outputs
-
-    def forget_for_tests(self) -> None:
-        """Drop the cached encoder so the next call loads it again."""
-        self._encoder = None
-        self._tried = False
+            return CompletionUsage()
+        prompt = ' '.join(
+            message.content for message in messages if isinstance(message.content, str) and message.content
+        )
+        inputs = len(encoder.encode(prompt, disallowed_special=()))
+        outputs = len(encoder.encode(''.join(output_pieces), disallowed_special=()))
+        return CompletionUsage(prompt_tokens=inputs, completion_tokens=outputs, total_tokens=inputs + outputs)

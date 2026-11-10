@@ -186,3 +186,51 @@ class TestSignUp:
         assert membership is not None
         assert membership.status == 'active'
         assert not str(membership.user_id).startswith('invited-')
+
+
+class TestTheWelcome:
+    """`/sign-up` welcomes a person once the account exists, and only then."""
+
+    _JANE = {
+        'first_name': 'Jane',
+        'last_name': 'Doe',
+        'email': 'jane@test.com',
+        'code': '123456',
+        'password': 'Secure@pass1',
+    }
+
+    async def test_a_new_account_is_welcomed_by_name(self, client, monkeypatch, email_relay):
+        async def fake_validate(email, code):
+            return None
+
+        monkeypatch.setattr(OTPService, 'validate_signup_code', staticmethod(fake_validate))
+
+        resp = await client.post('/sign-up', json=self._JANE)
+
+        assert resp.status_code == 201
+        assert email_relay == [{'method': 'send_welcome', 'to_email': 'jane@test.com', 'name': 'Jane'}]
+
+    async def test_a_refused_sign_up_welcomes_nobody(self, client, db, monkeypatch, email_relay):
+        await create_user(db, email='jane@test.com')
+
+        async def fake_validate(email, code):
+            return None
+
+        monkeypatch.setattr(OTPService, 'validate_signup_code', staticmethod(fake_validate))
+
+        resp = await client.post('/sign-up', json=self._JANE)
+
+        assert resp.status_code == 409
+        assert email_relay == []
+
+    async def test_with_no_relay_the_welcome_is_only_noted(self, client, monkeypatch, caplog):
+        async def fake_validate(email, code):
+            return None
+
+        monkeypatch.setattr(OTPService, 'validate_signup_code', staticmethod(fake_validate))
+
+        with caplog.at_level('INFO', logger='app.services.email.delivery'):
+            resp = await client.post('/sign-up', json=self._JANE)
+
+        assert resp.status_code == 201
+        assert 'skipped the welcome message to jane@test.com' in caplog.text

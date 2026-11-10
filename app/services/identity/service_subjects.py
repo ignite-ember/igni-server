@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 from app.db.sql.models.registered_client import RegisteredClient
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.services.auth.jwt_service import JWTService, TokenUse
+from app.services.auth.token_claims import CustomClaims
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,13 @@ class ServiceExport(BaseModel):
     sections: list[ServiceSection] = Field(default_factory=list)
 
 
+#: `{service name: {section name: rows}}` — what every registered
+#: service answered an export with, keyed by runtime names, so a map.
+ServiceSections = dict[str, dict[str, list[dict[str, object]]]]
+
+
 class ExportAnswers(BaseModel):
-    #: `{service name: {section name: rows}}`.
-    sections: dict[str, dict[str, list[dict[str, object]]]] = Field(default_factory=dict)
+    sections: ServiceSections = Field(default_factory=dict)
     #: Services that did not answer, by name.
     missing: list[str] = Field(default_factory=list)
 
@@ -95,7 +100,7 @@ class ServiceSubjects:
             audience=service.base_url,
             use=TokenUse.IGNI,
             lifetime=CALL_TOKEN_LIFETIME,
-            claims={'org': org_id},
+            claims=CustomClaims(org=org_id),
         )
         return {'Authorization': f'Bearer {token}'}
 

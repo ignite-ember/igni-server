@@ -9,7 +9,7 @@ Against a throwaway database of this module's own, built from
 `alembic_tenant/` alone, so it never touches the suite's and cannot
 depend on test ordering. Skipped when a database cannot be created.
 
-The head assertion compares with the live `seed_entries()` on purpose:
+The head assertion compares with the live `BUNDLED_SEED` on purpose:
 a later `make refresh-default-seed` without a migration to carry it
 fails here, which is the gap this migration closes.
 """
@@ -29,7 +29,7 @@ from sqlalchemy import create_engine, Engine, text
 from alembic import command
 
 from app.services.portal.agent_tools import unknown_tools
-from app.services.portal.default_group import seed_entries
+from app.services.portal.default_group_seed import BUNDLED_SEED
 from tests.conftest import TEST_DB_URL_SYNC
 
 _SCRATCH = f'igni_seed_{uuid.uuid4().hex[:8]}'
@@ -136,6 +136,11 @@ def _updated_at(engine: Engine, group_id: str) -> datetime:
         return conn.execute(text('SELECT updated_at FROM org_groups WHERE id = :g'), {'g': group_id}).scalar_one()
 
 
+def _live_seed() -> list[tuple[str, str, str]]:
+    """The live seed in the frozen snapshots' row shape."""
+    return [(entry.kind, entry.entry_name, entry.content) for entry in BUNDLED_SEED.entries()]
+
+
 def _as_entries(seed: list[tuple[str, str, str]]) -> Entries:
     return {(kind, name): (content, T0025._CONTENT_TYPES[kind], True) for kind, name, content in seed}
 
@@ -175,7 +180,7 @@ def migrated(tenant):
 
 class TestTheUpgrade:
     def test_the_default_group_is_exactly_the_seed_a_new_organisation_gets(self, migrated):
-        assert _entries(migrated, 'default') == _as_entries(seed_entries())
+        assert _entries(migrated, 'default') == _as_entries(_live_seed())
 
     def test_plan_researcher_no_longer_names_tools_igni_does_not_have(self, migrated):
         content, _, _ = _entries(migrated, 'default')[('agents', 'plan_researcher')]
@@ -224,7 +229,7 @@ class TestTheWayBack:
         assert _entries(engine, 'legal') == _as_entries(OTHER_GROUP)
 
         command.upgrade(cfg, 'head')
-        assert _entries(engine, 'default') == _as_entries(seed_entries())
+        assert _entries(engine, 'default') == _as_entries(_live_seed())
 
     def test_a_group_already_at_the_seed_is_not_touched(self, tenant, migrated):
         """The pack's ETag is a hash of the entries; an unchanged group keeps it."""
@@ -249,5 +254,5 @@ class TestTheWayBack:
 
         # What the previous seed already had right comes through both ways untouched.
         previous = {(kind, name) for kind, name, _ in T0025._BEFORE}
-        unchanged = sorted(name for kind, name, _ in seed_entries() if (kind, name) not in previous)
+        unchanged = sorted(name for kind, name, _ in _live_seed() if (kind, name) not in previous)
         assert sorted(untouched) == unchanged

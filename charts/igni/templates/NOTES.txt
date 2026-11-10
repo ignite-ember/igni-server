@@ -44,8 +44,8 @@ Two things worth checking before you hand this to anyone.
    The retention runner is active and prunes daily.
 {{- end }}
 
-Services (CodeIndex, Artifacts) each have their own hostname, never a
-path on this one: a service's URL is its identity — the audience of the
+Registered services each have their own hostname, never a path on
+this one: a service's URL is its identity — the audience of the
 tokens people get for it, and where this server calls it to erase or
 export somebody's data. Each is deployed with two addresses: its own
 public URL, and this server's: {{ include "igni.publicBaseUrl" . | default "(urls.publicBase is unset)" }}
@@ -53,28 +53,4 @@ Its public signing keys are at /.well-known/jwks.json there. Nothing
 secret is shared: a service registers itself, uploads the extension it
 ships, and serves nobody until a super admin approves it on the portal's
 Services page; see docs/service-identity.md.
-{{- if .Values.artifacts.enabled }}
 
-Artifacts is published at {{ include "igni.artifactsPublicUrl" . }}
-{{- if .Values.ingress.enabled }} by the Ingress
-{{ include "igni.fullname" . }}-artifacts. Point that hostname's DNS at your ingress controller.
-{{- else }}. No Ingress is enabled, so
-publishing that host is yours to do.
-{{- end }}
-Deploy the service with its addresses from this release:
-
-  envFrom:
-    - configMapRef:
-        name: {{ include "igni.fullname" . }}-artifacts-env
-
-which sets PUBLIC_BASE_URL={{ include "igni.artifactsPublicUrl" . }} and
-IGNI_SERVER_BASE_URL={{ include "igni.apiInClusterUrl" . }}.
-GRAPH_CREDENTIALS_KEY, POSTGRES_URL and REDIS_URL are its own secrets.
-{{- if .Values.networkPolicy.enabled }}
-networkPolicy is on: igni's API calls {{ include "igni.artifactsPublicUrl" . }} for
-erasure and export, so add the address that hostname resolves to as a
-networkPolicy.egress entry (port 443, components: [api]). Artifacts calls
-the API in-cluster at {{ include "igni.apiInClusterUrl" . }}, so allow its
-namespace or pods in networkPolicy.apiIngressFrom.
-{{- end }}
-{{- end }}

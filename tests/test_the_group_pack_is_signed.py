@@ -29,7 +29,10 @@ import pytest
 
 from app.config import settings
 from app.services.auth.jwt_service import JWTService
-from app.services.portal.group_pack_signature import PACK_TYPE, PACK_USE
+from app.services.portal.default_group import DefaultGroup
+from app.services.portal.group_pack_claims import PACK_USE
+from app.services.portal.group_pack_service import GroupPackService
+from app.services.portal.group_pack_signature import PACK_TYPE
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 pytestmark = pytest.mark.anyio
@@ -202,13 +205,11 @@ class TestThePackIsTheSessionsOrganisations:
         assert _segment(body['signed_pack'], 1)['org'] == two_members_in_a_group['org_id']
 
     async def test_another_organisation_yields_no_group(self, two_members_in_a_group):
-        from app.services.portal.default_group import DefaultGroup
-        from app.services.portal.groups_service import GroupsService
 
         alice = two_members_in_a_group['alice']
         elsewhere = str(uuid.uuid4())
 
-        assert await DefaultGroup.ensure_for_user(alice, elsewhere) is None
-        assert await GroupsService.get_my_group_pack(alice, elsewhere) is None
-        mine = await GroupsService.get_my_group_pack(alice, two_members_in_a_group['org_id'])
+        assert await DefaultGroup().ensure_for_user(alice, elsewhere) is None
+        assert await GroupPackService().get_my_group_pack(user_id=alice, org_id=elsewhere) is None
+        mine = await GroupPackService().get_my_group_pack(user_id=alice, org_id=two_members_in_a_group['org_id'])
         assert mine is not None and mine.group_id == two_members_in_a_group['group_id']

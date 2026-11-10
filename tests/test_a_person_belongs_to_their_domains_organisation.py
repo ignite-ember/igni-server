@@ -24,6 +24,7 @@ are not accounts here.
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from fastapi import HTTPException, status
 import pytest
@@ -32,8 +33,10 @@ from sqlalchemy import func, select
 from app.config import settings
 from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.user import User
-from app.db.sql.org_domains import NOT_A_COMPANY_ADDRESS, NOT_SET_UP_YET
-from app.db.sql.user import LastSuperAdmin, UserDB
+from app.db.sql.schemas.account_errors import LastSuperAdmin
+from app.db.sql.schemas.org_domain import NotACompanyAddress, NotSetUpYet
+from app.db.sql.super_admins import SuperAdminDB
+from app.db.sql.user import UserDB
 from app.security.portal_auth import NO_ORGANISATION
 from app.services.auth.otp_service import OTPResult, OTPService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
@@ -59,6 +62,16 @@ def codes_accepted(monkeypatch):
     monkeypatch.setattr(OTPService, 'validate_signup_code', staticmethod(_accept))
     monkeypatch.setattr(OTPService, 'generate_address_code', staticmethod(_issue))
     monkeypatch.setattr(OTPService, 'validate_address_code', staticmethod(_check_address))
+
+
+@pytest.fixture
+def sign_up_codes_accepted(monkeypatch):
+    """Sign-up codes that check out, with address codes left to the real OTPService."""
+
+    async def _accept(email, code):
+        del email, code
+
+    monkeypatch.setattr(OTPService, 'validate_signup_code', staticmethod(_accept))
 
 
 async def _sign_up(client, email: str):
@@ -102,7 +115,7 @@ class TestAFreshInstall:
         response = await _sign_up(client, 'second@acmecorp.io')
 
         assert response.status_code == 403
-        assert response.json()['detail'] == NOT_SET_UP_YET
+        assert response.json()['detail'] == str(NotSetUpYet())
 
     async def test_two_first_sign_ups_at_once_make_one_account(self, db):
         outcomes = await asyncio.gather(
@@ -112,7 +125,7 @@ class TestAFreshInstall:
 
         made = [o for o in outcomes if isinstance(o, User)]
         assert len(made) == 1 and made[0].is_super_admin is True
-        assert all(isinstance(o, HTTPException) and o.status_code == 403 for o in outcomes if o not in made)
+        assert all(isinstance(o, NotSetUpYet) for o in outcomes if o not in made)
 
     async def test_its_pages_say_why_until_it_has_an_organisation(self, client, codes_accepted):
         user_id = await _signed_up(client, 'founder@acmecorp.io')
@@ -157,7 +170,7 @@ class TestTheDomainDecides:
         response = await _sign_up(client, 'outsider@elsewhere.io')
 
         assert response.status_code == 403
-        assert response.json()['detail'] == NOT_A_COMPANY_ADDRESS
+        assert response.json()['detail'] == str(NotACompanyAddress())
 
     async def test_an_invitation_sets_the_role_they_join_with(self, client, db, codes_accepted):
         owner = await create_user(db, email='owner@acmecorp.io')
@@ -356,8 +369,8 @@ class TestSuperAdmins:
         second = await _super_admin(db, 'two@acmecorp.io')
 
         outcomes = await asyncio.gather(
-            UserDB().set_super_admin(str(first.user_id), super_admin=False),
-            UserDB().set_super_admin(str(second.user_id), super_admin=False),
+            SuperAdminDB().set_super_admin(str(first.user_id), super_admin=False),
+            SuperAdminDB().set_super_admin(str(second.user_id), super_admin=False),
             return_exceptions=True,
         )
 
@@ -400,6 +413,47 @@ class TestTheBootstrapAccountsWayOut:
         assert await UserDB().get_by_email('installer@vendor-it.io') is None
         assert (await UserDB().get_by_user_id(founder)).email == 'it@acmecorp.io'
         assert await _memberships(db, founder) == [(org_id, 'admin')]
+
+    async def test_a_second_code_within_the_cooldown_is_refused_in_plain_words(
+        self, client, db, sign_up_codes_accepted, email_relay
+    ):
+        """The caller is signed in and asking about an address of their own,
+        so unlike the anonymous code doors it is told to use the code it has."""
+        founder, _ = await self._bootstrapped(client, db)
+        headers = auth_header(make_token(founder))
+        address = f'it-{uuid.uuid4().hex[:6]}@acmecorp.io'  # the throttle outlives a test
+
+        first = await client.post('/portal/me/company-address/code', json={'email': address}, headers=headers)
+        again = await client.post('/portal/me/company-address/code', json={'email': address}, headers=headers)
+
+        assert first.status_code == 200, first.text
+        assert first.json()['message'] == f'Verification code has been sent to {address}'
+        assert again.status_code == 200, again.text
+        assert again.json()['message'] == f'A code was sent to {address} recently. Use that one.'
+        assert [(m['method'], m['to_email']) for m in email_relay if m['method'] != 'send_welcome'] == [
+            ('send_sign_up_code', address)
+        ]
+
+    @pytest.mark.parametrize(
+        ('logs_codes', 'told'),
+        [
+            (True, 'No mail relay here: ask the operator for the code sent to {address}.'),
+            (False, 'No mail relay here, so no code can be sent. Ask the operator to configure one.'),
+        ],
+    )
+    async def test_with_no_relay_it_is_told_whether_the_operator_has_the_code(
+        self, client, db, sign_up_codes_accepted, monkeypatch, logs_codes, told
+    ):
+        monkeypatch.setattr(settings, 'log_sign_in_codes', logs_codes)
+        founder, _ = await self._bootstrapped(client, db)
+        address = f'it-{uuid.uuid4().hex[:6]}@acmecorp.io'
+
+        response = await client.post(
+            '/portal/me/company-address/code', json={'email': address}, headers=auth_header(make_token(founder))
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()['message'] == told.format(address=address)
 
     async def test_a_wrong_code_moves_nothing(self, client, db, codes_accepted):
         founder, _ = await self._bootstrapped(client, db)

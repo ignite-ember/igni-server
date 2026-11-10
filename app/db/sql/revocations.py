@@ -11,8 +11,8 @@ from sqlalchemy import delete, func, insert, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.sql import SQLAlchemySessionManager
+from app.db.sql.feed_lock import FeedLock
 from app.db.sql.models.revocation import Revocation
-from app.db.sql.producer_feed import FEED_LOCK
 from app.db.sql.schemas.producer_feed import RevocationEntry
 from app.utils.singleton import SingletonMeta
 
@@ -43,7 +43,7 @@ class RevocationsDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
     async def add(self, entries: list[RevocationEntry]) -> None:
         """Store *entries* in their own transaction, taking the feed's lock so numbers stay in commit order."""
         async with self.session_scope() as session:
-            await session.execute(text('SELECT pg_advisory_xact_lock(:k)'), {'k': FEED_LOCK})
+            await FeedLock.take(session)
             await self.add_in(session, entries)
         await FeedSignals().notify()
 

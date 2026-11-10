@@ -4,7 +4,7 @@
  * Flow:
  * 1. CLI starts a local HTTP server and opens the browser to:
  *    /cli-auth?port=XXXX
- * 2. If not logged in, ProtectedRoute redirects to /login, which redirects
+ * 2. If not logged in, AuthRoute redirects to /login, which redirects
  *    back here after auth (via returnTo query param).
  * 3. This page fetches the user's orgs from /portal/me.
  * 4. Single org → auto-select.  Multiple → user picks.
@@ -18,7 +18,7 @@
  *    login. F124.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import {
@@ -29,7 +29,8 @@ import {
 import { ChevronRightIcon, CheckCircleIcon, ShieldLockIcon, TerminalIcon } from '@primer/octicons-react'
 import client from '../api/client'
 import { IgniLogo } from '../components/IgniLogo'
-import type { UserMe, OrgSummary } from '../types'
+import type { CLITokenResponse, UserMe, OrgSummary } from '../types'
+import { Fireworks } from './Fireworks'
 import './CLIAuthPage.css'
 
 export function CLIAuthPage() {
@@ -49,7 +50,7 @@ export function CLIAuthPage() {
   const tokenMutation = useMutation({
     mutationFn: (orgId: string) =>
       client
-        .post<{ access_token: string; handoff_code: string }>('/cli/token', { org_id: orgId })
+        .post<CLITokenResponse>('/cli/token', { org_id: orgId })
         .then((r) => r.data),
     onSuccess: (data) => {
       if (!port) {
@@ -73,97 +74,18 @@ export function CLIAuthPage() {
     tokenMutation.mutate(orgId)
   }
 
-  // Auto-select if single org
+  // Auto-select if single org. Only from idle: once the mutation has run,
+  // succeeded or failed, a refetch of /portal/me must not fire it again.
+  const onlyOrgId = orgs.length === 1 ? orgs[0].id : null
+  const { mutate, isIdle } = tokenMutation
   useEffect(() => {
-    if (meQuery.data && orgs.length === 1 && !tokenMutation.isPending && !done) {
-      tokenMutation.mutate(orgs[0].id)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meQuery.data])
-
-  // ── Fireworks canvas ──
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  const startFireworks = useCallback((canvas: HTMLCanvasElement) => {
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    canvas.width = window.innerWidth
-    canvas.height = window.innerHeight
-    const W = canvas.width
-    const H = canvas.height
-    const colors = ['#F97316', '#DC2626', '#FBBF24', '#f85149', '#f0883e', '#FF6B35']
-
-    const bg = getComputedStyle(document.body).backgroundColor || 'rgb(255,255,255)'
-    const m = bg.match(/\d+/g)
-    const trailColor = m ? `rgba(${m[0]},${m[1]},${m[2]},0.25)` : 'rgba(255,255,255,0.25)'
-
-    type Spark = { x: number; y: number; vx: number; vy: number; r: number; color: string; life: number; maxLife: number }
-    const sparks: Spark[] = []
-
-    function burst(x: number, y: number) {
-      for (let i = 0; i < 80; i++) {
-        const a = Math.random() * Math.PI * 2
-        const s = 2 + Math.random() * 5
-        sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 80 + Math.random() * 40, maxLife: 80 + Math.random() * 40, age: 0, r: 1.5 + Math.random() * 2, color: colors[Math.floor(Math.random() * 6)] } as Spark & { age: number })
-      }
-    }
-
-    type Rocket = { x: number; y: number; targetY: number; vy: number; delay: number; done: boolean }
-    const launches: Rocket[] = Array.from({ length: 6 }, (_, i) => ({
-      x: W * 0.15 + Math.random() * W * 0.7,
-      y: H,
-      targetY: H * 0.1 + Math.random() * H * 0.3,
-      vy: -12 - Math.random() * 4,
-      delay: i * 25,
-      done: false,
-    }))
-
-    let frame = 0
-    const animate = () => {
-      ctx.fillStyle = trailColor
-      ctx.fillRect(0, 0, W, H)
-
-      for (const l of launches) {
-        if (frame < l.delay || l.done) continue
-        l.y += l.vy
-        l.vy += 0.15
-        ctx.fillStyle = '#FBBF24'
-        ctx.globalAlpha = 1
-        ctx.beginPath(); ctx.arc(l.x, l.y, 3, 0, Math.PI * 2); ctx.fill()
-        if (l.y <= l.targetY || l.vy >= 0) {
-          burst(l.x, l.y)
-          l.done = true
-        }
-      }
-
-      for (const s of sparks) {
-        if (s.life <= 0) continue
-        s.life--
-        s.x += s.vx; s.y += s.vy
-        s.vy += 0.1; s.vx *= 0.98
-        const t = 1 - s.life / s.maxLife
-        ctx.globalAlpha = 1 - t
-        ctx.fillStyle = t < 0.15 ? '#FBBF24' : s.color
-        ctx.beginPath(); ctx.arc(s.x, s.y, s.r * (1 - t * 0.5), 0, Math.PI * 2); ctx.fill()
-      }
-
-      ctx.globalAlpha = 1
-      frame++
-      requestAnimationFrame(animate)
-    }
-    requestAnimationFrame(animate)
-  }, [])
-
-  useEffect(() => {
-    if (done && canvasRef.current) {
-      startFireworks(canvasRef.current)
-    }
-  }, [done, startFireworks])
+    if (onlyOrgId && isIdle) mutate(onlyOrgId)
+  }, [onlyOrgId, isIdle, mutate])
 
   // ── Error: missing port ──
   //
   // Below every hook, not above them. This return used to sit before
-  // `useRef` and `useCallback`, so the number of hooks React saw
+  // the page's later hooks, so the number of hooks React saw
   // depended on whether `?port=` was present — and that is not a
   // hypothetical: `port` comes from the search params, so navigating
   // from `/cli-auth?port=51234` to `/cli-auth` re-renders this same
@@ -187,7 +109,7 @@ export function CLIAuthPage() {
   if (done) {
     return (
       <div className="cli-auth-page">
-        <canvas ref={canvasRef} className="cli-auth-fireworks-canvas" />
+        <Fireworks className="cli-auth-fireworks-canvas" />
         <div className="cli-auth-container">
           <div className="cli-auth-success-icon">
             <CheckCircleIcon size={32} fill="#F97316" />
@@ -263,7 +185,7 @@ export function CLIAuthPage() {
         </div>
 
         <Text as="p" className="cli-auth-security">
-          <ShieldLockIcon size={12} /> <strong>Secure connection</strong> — your token is sent directly to the CLI on localhost.
+          <ShieldLockIcon size={12} /> <strong>Secure connection</strong> — a one-time code is handed to the CLI on localhost.
         </Text>
       </div>
     </div>

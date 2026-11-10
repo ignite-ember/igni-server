@@ -36,7 +36,7 @@ from __future__ import annotations
 import bcrypt
 import pytest
 
-from app.services.auth.auth_service import AuthService
+from app.services.auth.passwords import Passwords, TIMING_HASH
 
 
 async def _create_passwordless(db, *, user_id: str, email: str):
@@ -88,14 +88,14 @@ class TestVerifyPasswordNeverRaises:
         ],
     )
     def test_an_unusable_hash_is_a_failed_check_not_an_error(self, stored: str):
-        assert AuthService.verify_password('anything', stored) is False
+        assert Passwords().verify('anything', stored) is False
 
     def test_a_real_hash_still_verifies_both_ways(self):
         """The guard must not turn into "always False"."""
-        hashed = AuthService.hash_password('correcthorse')
+        hashed = Passwords().hash('correcthorse')
 
-        assert AuthService.verify_password('correcthorse', hashed) is True
-        assert AuthService.verify_password('wrong', hashed) is False
+        assert Passwords().verify('correcthorse', hashed) is True
+        assert Passwords().verify('wrong', hashed) is False
 
 
 class TestTheEndpointStopsDistinguishing:
@@ -138,14 +138,14 @@ class TestTheTimingIsAbsorbed:
 
         monkeypatch.setattr(bcrypt, 'checkpw', counting)
 
-        AuthService._absorb_timing('some-password')
+        Passwords().absorb_timing('some-password')
 
         assert len(calls) == 1, 'no comparison happened — the timing gap is back'
         assert calls[0].startswith(b'$2b$'), calls[0]
 
     @pytest.mark.parametrize('email', ['no-such-address@example.com', 'nopw@example.com'])
     async def test_sign_in_itself_pays_the_cost_on_every_failing_path(self, client, monkeypatch, email):
-        """Calls `_absorb_timing` through the endpoint, not directly.
+        """Calls `absorb_timing` through the endpoint, not directly.
 
         Testing the helper alone passes even if `sign_in` stops calling it
         — which is exactly what a later refactor would do. This asserts
@@ -184,29 +184,27 @@ class TestTheTimingIsAbsorbed:
         held on the instance so the signature stays readable."""
         self._db = db
 
-    def test_the_dummy_hash_is_built_once(self, monkeypatch):
-        """It is deliberately lazy: bcrypt is slow by design and startup
-        should not pay for it. But it must not be regenerated per request
-        either, which would double the cost of every failed sign-in."""
-        AuthService._dummy_hash = None
-        try:
-            generated = 0
-            real_hashpw = bcrypt.hashpw
+    def test_the_dummy_hash_is_never_built(self, monkeypatch):
+        """A constant: bcrypt is slow by design, and building a hash per
+        request would double the cost of every failed sign-in."""
+        generated = 0
+        real_hashpw = bcrypt.hashpw
 
-            def counting_hashpw(password: bytes, salt: bytes) -> bytes:
-                nonlocal generated
-                generated += 1
-                return real_hashpw(password, salt)
+        def counting_hashpw(password: bytes, salt: bytes) -> bytes:
+            nonlocal generated
+            generated += 1
+            return real_hashpw(password, salt)
 
-            monkeypatch.setattr(bcrypt, 'hashpw', counting_hashpw)
+        monkeypatch.setattr(bcrypt, 'hashpw', counting_hashpw)
 
-            AuthService._absorb_timing('a')
-            AuthService._absorb_timing('b')
-            AuthService._absorb_timing('c')
+        for password in ('a', 'b', 'c'):
+            Passwords().absorb_timing(password)
 
-            assert generated == 1, f'dummy hash rebuilt {generated} times'
-        finally:
-            AuthService._dummy_hash = None
+        assert generated == 0, f'dummy hash built {generated} times'
+
+    def test_the_dummy_hash_costs_what_a_real_one_does(self):
+        """Level only while its cost matches the one new hashes are made at."""
+        assert TIMING_HASH[:7] == bcrypt.gensalt()[:7]
 
 
 class TestNoOtherCallerBypassesTheGuard:
@@ -218,7 +216,7 @@ class TestNoOtherCallerBypassesTheGuard:
         import pathlib
 
         root = pathlib.Path(__file__).resolve().parent.parent / 'app'
-        allowed = {'services/auth/auth_service.py', 'security/super_admin.py', 'security/deployment_admin.py'}
+        allowed = {'services/auth/passwords.py', 'security/super_admin.py', 'security/deployment_admin.py'}
 
         offenders = [
             str(p.relative_to(root))

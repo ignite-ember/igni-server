@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from sqlalchemy import text
 
 from tests.cloud_world import platform, shared_plane
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
@@ -67,6 +68,62 @@ async def test_adding_a_member_already_there_is_refused(client, acme):
 
     assert response.status_code == 409
     assert 'already in this organization' in response.json()['detail']
+
+
+async def _invite_bob(client, acme):
+    return await client.post(
+        '/portal/team/invite', json={'email': 'bob@acme.com', 'role': 'member'}, headers=acme['admin']
+    )
+
+
+async def _bob_in_globex(status: str) -> str:
+    async with shared_plane() as db:
+        globex_owner = await create_user(db, email='owner@globex.com')
+        globex = await create_org(db, owner_user_id=str(globex_owner.user_id), slug='globex')
+        bob = await create_user(db, email='bob@acme.com')
+        await add_member(db, str(globex.id), str(bob.user_id), status=status)
+    return str(bob.user_id)
+
+
+async def _memberships_of(user_id: str) -> list[str]:
+    async with shared_plane() as db:
+        rows = await db.execute(
+            text('SELECT status FROM org_memberships WHERE user_id = :u ORDER BY status'), {'u': user_id}
+        )
+        return list(rows.scalars().all())
+
+
+async def test_an_account_that_is_a_member_of_another_organisation_is_refused(client, acme):
+    bob = await _bob_in_globex('active')
+
+    response = await _invite_bob(client, acme)
+
+    assert response.status_code == 409
+    assert response.json()['detail'] == 'bob@acme.com is a member of another organization'
+    assert await _memberships_of(bob) == ['active']
+
+
+async def test_a_membership_elsewhere_that_is_not_active_does_not_keep_an_account_out(client, acme):
+    bob = await _bob_in_globex('invited')
+
+    response = await _invite_bob(client, acme)
+
+    assert response.status_code == 201, response.text
+    assert (response.json()['user_id'], response.json()['status']) == (bob, 'active')
+    assert await _memberships_of(bob) == ['active', 'invited']
+
+
+async def test_a_deactivated_account_is_refused_until_it_is_reactivated(client, acme):
+    async with shared_plane() as db:
+        bob = await create_user(db, email='bob@acme.com')
+        await db.execute(text('UPDATE users SET deactivated_at = now() WHERE user_id = :u'), {'u': str(bob.user_id)})
+        await db.commit()
+
+    response = await _invite_bob(client, acme)
+
+    assert response.status_code == 409
+    assert response.json()['detail'] == 'The account of bob@acme.com is deactivated; reactivate it first'
+    assert await _memberships_of(str(bob.user_id)) == []
 
 
 async def test_a_session_for_the_organisation_ends_with_the_membership(client, acme):

@@ -25,7 +25,7 @@ class OrgDomain(Base):
 
     id: Mapped[str] = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
     org_id: Mapped[str] = Column(Text, ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False)
-    #: Lowercased, no leading ``@``. See ``app.db.sql.org_domains.normalise_domain``.
+    #: Lowercased, no leading ``@``. See ``app.services.portal.company_domain.CompanyDomain``.
     domain: Mapped[str] = Column(Text, nullable=False)
     created_at: Mapped[datetime] = Column(
         TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)

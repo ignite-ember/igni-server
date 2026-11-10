@@ -31,6 +31,9 @@ from sqlalchemy.orm import Mapped
 
 from app.db.sql.models import Base, TenantBase
 
+#: The kind of producer a person is, beside `APP` and `SPACE`.
+PERSON = 'person'
+
 #: The numbers the feed is ordered by.
 FEED_SEQ = Sequence('producer_feed_seq', metadata=Base.metadata)
 

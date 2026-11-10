@@ -33,10 +33,11 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
+from app.api.base_v1.schema.audit_detail import AuditExportAudit
 from app.api.base_v1.schema.portal.audit import AuditEventPage, AuditEventView
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.db.sql.audit_events import AuditEventDB
-from app.middlewares.audit import set_audit_detail
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import require_admin
 
 logger = logging.getLogger(__name__)
@@ -137,7 +138,9 @@ async def export_audit_events(
 
     # Counts, never the rows. The audit trail must not become the place
     # a copy of the audit trail lives.
-    set_audit_detail(request, {'exported': len(rows), 'since': since.isoformat() if since else None})
+    RequestAudit.of(request).add_detail(
+        AuditExportAudit(exported=len(rows), since=since.isoformat() if since else None)
+    )
 
     def lines():
         for row in rows:

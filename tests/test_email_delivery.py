@@ -21,6 +21,7 @@ import uuid
 import pytest
 import yaml
 
+from app.config import Settings, settings
 from app.services.email.delivery import EmailDelivery, invite_url_for
 
 
@@ -30,11 +31,21 @@ def delivery() -> EmailDelivery:
 
 
 class TestEnabled:
+    def test_injected_settings_decide_it(self, monkeypatch):
+        """The process-wide settings say email is on; the injected ones say
+        it is off, and the injected ones are the ones asked."""
+
+        monkeypatch.setattr(settings, 'email_enabled', True)
+        monkeypatch.setattr(settings, 'smtp_host', 'smtp.example.com')
+        email_off = settings.model_copy(update={'email_enabled': False})
+
+        assert EmailDelivery().enabled is True
+        assert EmailDelivery(settings=email_off).enabled is False
+
     def test_needs_both_the_flag_and_a_relay(self, delivery, monkeypatch):
         """``email_enabled`` on with no host is a misconfiguration that
         would otherwise fail once per message in a background task,
         where nobody is watching."""
-        from app.config import settings
 
         monkeypatch.setattr(settings, 'email_enabled', True)
         monkeypatch.setattr(settings, 'smtp_host', 'smtp.example.com')
@@ -44,8 +55,6 @@ class TestEnabled:
         assert delivery.enabled is False
 
     def test_the_flag_alone_can_disable_it(self, delivery, monkeypatch):
-        from app.config import settings
-
         monkeypatch.setattr(settings, 'email_enabled', False)
         monkeypatch.setattr(settings, 'smtp_host', 'smtp.example.com')
         assert delivery.enabled is False
@@ -54,7 +63,6 @@ class TestEnabled:
 @pytest.fixture
 def codes_logged(monkeypatch):
     """The operator's explicit opt-in: ``LOG_SIGN_IN_CODES=true``."""
-    from app.config import settings
 
     monkeypatch.setattr(settings, 'log_sign_in_codes', True)
 
@@ -66,8 +74,6 @@ class TestCodesAreNotLoggedByDefault:
     be able to sign in as anybody."""
 
     def test_the_setting_defaults_to_off(self):
-        from app.config import Settings
-
         assert Settings.model_fields['log_sign_in_codes'].default is False
 
     def test_the_shipped_configuration_leaves_it_off(self):
@@ -96,7 +102,7 @@ class TestCodesAreNotLoggedByDefault:
         assert 'not delivered' in caplog.text
 
     def test_the_user_is_not_told_to_ask_for_a_code_nobody_has(self):
-        message = EmailDelivery.no_relay_message()
+        message = EmailDelivery().no_relay_message()
         assert 'not configured' in message
         assert 'no verification code can be sent' in message
 
@@ -151,7 +157,7 @@ class TestUndeliverableCodesWhenOptedIn:
         )
 
     def test_the_user_is_told_to_ask_for_it(self):
-        assert 'Ask your administrator for the verification code' in EmailDelivery.no_relay_message()
+        assert 'Ask your administrator for the verification code' in EmailDelivery().no_relay_message()
 
 
 class TestTheSesBackendIsARelay:
@@ -161,16 +167,12 @@ class TestTheSesBackendIsARelay:
     them nowhere."""
 
     def test_ses_needs_no_smtp_host(self, delivery, monkeypatch):
-        from app.config import settings
-
         monkeypatch.setattr(settings, 'email_enabled', True)
         monkeypatch.setattr(settings, 'email_backend', 'ses')
         monkeypatch.setattr(settings, 'smtp_host', '')
         assert delivery.enabled is True
 
     def test_ses_still_needs_the_flag(self, delivery, monkeypatch):
-        from app.config import settings
-
         monkeypatch.setattr(settings, 'email_enabled', False)
         monkeypatch.setattr(settings, 'email_backend', 'ses')
         assert delivery.enabled is False
@@ -188,20 +190,14 @@ class TestDroppedMessages:
 
 class TestInviteUrl:
     def test_it_points_at_signup_with_the_address(self, monkeypatch):
-        from app.config import settings
-
         monkeypatch.setattr(settings, 'portal_base_url', 'https://igni.acme.internal')
         assert invite_url_for('new@acme.test') == 'https://igni.acme.internal/signup?email=new%40acme.test'
 
     def test_the_address_is_escaped(self, monkeypatch):
-        from app.config import settings
-
         monkeypatch.setattr(settings, 'portal_base_url', 'https://igni.acme.internal')
         assert '%2B' in invite_url_for('a+tag@acme.test')
 
     def test_a_trailing_slash_does_not_double_up(self, monkeypatch):
-        from app.config import settings
-
         monkeypatch.setattr(settings, 'portal_base_url', 'https://igni.acme.internal/')
         assert '//signup' not in invite_url_for('a@b.test').removeprefix('https://')
 
@@ -209,7 +205,6 @@ class TestInviteUrl:
         """No token, no expiry — the invite is claimed by signing up with
         the invited address, so the URL carries no secret. That is why
         the API returns it to the admin who created it."""
-        from app.config import settings
 
         monkeypatch.setattr(settings, 'portal_base_url', 'https://igni.acme.internal')
         assert invite_url_for('a@b.test') == invite_url_for('a@b.test')

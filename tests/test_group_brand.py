@@ -26,8 +26,7 @@ would do:
 
 import pytest
 
-from app.api.base_v1.schema.portal.groups import GroupTheme, MAX_BRAND_MARK_BYTES
-from app.services.portal.groups_service import _theme_from_json, _theme_to_json
+from app.api.base_v1.schema.portal.group_theme import GroupTheme, MAX_BRAND_MARK_BYTES
 from tests.conftest import auth_header, create_org, create_user, make_token
 
 A_PNG = 'data:image/png;base64,iVBORw0KGgo='
@@ -97,12 +96,11 @@ class TestStoringIt:
     def test_a_theme_that_overrides_nothing_is_no_theme(self):
         # One representation of "no branding" in the database rather
         # than two that behave identically.
-        assert _theme_to_json(GroupTheme()) is None
-        assert _theme_to_json(None) is None
+        assert GroupTheme().to_column() is None
 
     def test_a_round_trip_keeps_what_was_set(self):
-        stored = _theme_to_json(GroupTheme(accent='#abc', brand_name='Acme'))
-        back = _theme_from_json(stored)
+        stored = GroupTheme(accent='#abc', brand_name='Acme').to_column()
+        back = GroupTheme.from_column(stored)
         assert back is not None
         assert back.accent == '#abc'
         assert back.brand_name == 'Acme'
@@ -115,9 +113,16 @@ class TestStoringIt:
         was written around the API. Refusing to serve the group would
         turn a cosmetic problem into an outage for everyone in it.
         """
-        assert _theme_from_json('not json') is None
-        assert _theme_from_json('{"accent": "red; }body{"}') is None
-        assert _theme_from_json(None) is None
+        assert GroupTheme.from_column('not json') is None
+        assert GroupTheme.from_column('{"accent": "red; }body{"}') is None
+        assert GroupTheme.from_column(None) is None
+
+    @pytest.mark.parametrize('raw', ['[]', 'null', '1', '"#abc"'])
+    def test_a_row_that_is_not_an_object_serves_the_default_palette(self, raw):
+        assert GroupTheme.from_column(raw) is None
+
+    def test_a_row_naming_a_field_igni_does_not_know_serves_the_default_palette(self):
+        assert GroupTheme.from_column('{"accent": "#abc", "font": "Comic Sans"}') is None
 
 
 class TestThroughTheApi:

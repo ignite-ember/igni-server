@@ -1,32 +1,21 @@
 """Portal user endpoint — current user profile with portal role."""
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 
 from app.api.base_v1.schema.auth import AuthResponse
 from app.api.base_v1.schema.portal.team import SessionsWithdrawnResponse
 from app.api.base_v1.schema.portal.user import (
+    CompanyAddressConfirm,
+    CompanyAddressRequest,
+    DeleteAccountResponse,
     PortalAccount,
     UpdateProfileRequest,
     UserMeResponse,
 )
-from app.db.sql.org_domains import NOT_A_COMPANY_ADDRESS, OrgDomainDB
-from app.db.sql.user import UserDB
 from app.security.portal_auth import get_current_account
-from app.services.auth.otp_service import CodeSendThrottled, OTPService
-from app.services.cloud.revocations import Revocations
-from app.services.cloud.vm_credentials import VmCredentials
-from app.services.email.delivery import EmailDelivery
-from app.services.email.service import EmailService
-from app.services.identity.api_keys import ApiKeys
+from app.services.portal.company_address import CompanyAddress
+from app.services.portal.session_withdrawal import SessionWithdrawal
 from app.services.portal.user_service import UserService
-
-_user_db = UserDB()
-
-
-class DeleteAccountResponse(BaseModel):
-    message: str
-
 
 router = APIRouter()
 
@@ -58,41 +47,6 @@ async def update_me(
     return await UserService().update_me(body, current_user)
 
 
-# ``POST /me/set-password`` was here, and it was an account-takeover
-# primitive. Removed rather than repaired — F110.
-#
-# It replaced the account password given nothing but a session token: no
-# current password, and no check whether one already existed. So anybody
-# holding a token could set a password of their own and lock the owner
-# out, turning a leaked session into a permanent credential that survives
-# the token expiring. Demonstrated end to end before removal: original
-# password 200, set-password with only a token 200, attacker's password
-# 200, original password 401.
-#
-# It also bypassed the password policy the rest of the application
-# enforces. `SetPasswordRequest` never applied
-# `_validate_password_strength`, so a one-character password was accepted
-# here and then worked at sign-in, while sign-up and reset both demand
-# eight characters with mixed classes.
-#
-# Removed rather than fixed for three reasons, in order of weight:
-#
-#   * nothing called it. No portal page, no CLI path;
-#   * its stated purpose — letting an OAuth user add a password — is
-#     already served by `POST /send-reset-password-code` followed by
-#     `POST /reset-password`, which works for an account with no password
-#     and requires proving control of the mailbox. That is a *stronger*
-#     check than holding a session token, so a second weaker path was
-#     strictly worse;
-#   * a change-password endpoint that does the right thing needs the
-#     current password, a session-invalidation story, and a notification
-#     to the address on file. None of that exists yet, and shipping a
-#     third of it would read as though it did.
-#
-# Same disposition as F10, which removed a routed endpoint that reported
-# success without doing anything.
-
-
 @router.post(
     '/me/revoke-sessions',
     response_model=SessionsWithdrawnResponse,
@@ -120,12 +74,7 @@ async def revoke_my_sessions(
     There is nothing to undo. Signing in again mints a token with a
     fresh `iat` after the watermark, which is why one column is enough.
     """
-    watermark = await _user_db.withdraw_sessions(current_user.user_id)
-    # Their cloud VMs sign out too (docs/service-identity.md §16), and the
-    # gateway and services learn of it (§21).
-    await VmCredentials().revoke_person(current_user.user_id)
-    await ApiKeys().revoke_person(current_user.user_id)
-    await Revocations().sessions_withdrawn(current_user.user_id, watermark)
+    watermark = await SessionWithdrawal().withdraw(current_user.user_id)
     return SessionsWithdrawnResponse(user_id=current_user.user_id, tokens_valid_after=watermark)
 
 
@@ -143,15 +92,6 @@ async def delete_account(
     return DeleteAccountResponse(message='Account deleted')
 
 
-class CompanyAddress(BaseModel):
-    email: EmailStr
-
-
-class CompanyAddressConfirm(BaseModel):
-    email: EmailStr
-    code: str
-
-
 @router.post(
     '/me/company-address/code',
     response_model=AuthResponse,
@@ -159,36 +99,13 @@ class CompanyAddressConfirm(BaseModel):
     description='Send a code proving a company address, for an account in no organisation.',
 )
 async def send_company_address_code(
-    body: CompanyAddress,
+    body: CompanyAddressRequest,
     bg: BackgroundTasks,
     current_user: PortalAccount = Depends(get_current_account),
 ) -> AuthResponse:
-    """The bootstrap account's first step onto its company's domain.
-
-    Only for an account in no organisation: everybody else's address
-    already decides which organisation they are in. Checked here as well
-    as at confirmation, so nobody is sent a code that could never work.
-    """
-    if current_user.org_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail='Your address decides your organisation, so it is not changed here.',
-        )
-    address = str(body.email).strip()
-    if await OrgDomainDB().org_for_address(address) is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=NOT_A_COMPANY_ADDRESS)
-    try:
-        result = await OTPService().generate_address_code(address)
-    except CodeSendThrottled:
-        return AuthResponse(message=f'A code was sent to {address} recently. Use that one.')
-    delivery = EmailDelivery()
-    if not delivery.enabled:
-        delivery.record_undeliverable_code(purpose='company-address', email=address, code=result.code)
-        if delivery.logs_codes:
-            return AuthResponse(message=f'No mail relay here: ask the operator for the code sent to {address}.')
-        return AuthResponse(message='No mail relay here, so no code can be sent. Ask the operator to configure one.')
-    bg.add_task(EmailService().send_sign_up_code, to_email=address, code=result.code)
-    return AuthResponse(message=result.message)
+    """The bootstrap account's first step onto its company's domain."""
+    message = await CompanyAddress().send_code(bg, current_user, str(body.email))
+    return AuthResponse(message=message)
 
 
 @router.post(
@@ -203,8 +120,4 @@ async def adopt_company_address(
 ) -> UserMeResponse:
     """The old address is gone afterwards, and the account is in the
     organisation that owns the new one — as its admin if it has none yet."""
-    address = str(body.email).strip()
-    await OTPService().validate_address_code(address, body.code)
-    joined = await UserDB().move_to_company_address(current_user.user_id, address)
-    moved = current_user.model_copy(update={'email': address, 'org_id': str(joined.id), 'org_role': None})
-    return await UserService().get_me(moved)
+    return await CompanyAddress().adopt(current_user, str(body.email), body.code)

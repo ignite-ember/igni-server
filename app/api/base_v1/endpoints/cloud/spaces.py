@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 from app.api.base_v1.schema.spaces import EXTERNAL_ID_PATTERN, SpacePage, SpaceRecord
 from app.security.producer import ProducerCaller, require_producer
 from app.services.cloud.spaces import Spaces
-from app.services.cloud.vm_credentials import VmCredentialRecord
+from app.services.cloud.vm_credential_records import VmCredentialRecord
 
 router = APIRouter(prefix='/apps/{app_id}/spaces')
 

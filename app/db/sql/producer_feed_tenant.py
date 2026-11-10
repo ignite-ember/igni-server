@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from sqlalchemy import delete, select
 
+from app.db.sql.bind_chunks import chunks
 from app.db.sql.models.org_app import OrgApp
 from app.db.sql.models.org_group_member import OrgGroupMember
 from app.db.sql.models.producer_feed import TenantProducerFeedMark
 from app.db.sql.models.vm_credential import VmCredential
-from app.db.sql.producer_feed import chunks
 from app.db.sql.schemas.producer_feed import FeedMark
 from app.db.sql.tenancy import TenantData
 

@@ -16,7 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.security.producer import ProducerRef
-from app.services.identity.impact import ServiceGrant
+from app.services.identity.impact.grants import ServiceGrant
 
 #: The largest payload, as JSON.
 MAX_PAYLOAD_BYTES = 65536
@@ -115,9 +115,9 @@ class DeliverItemRequest(BaseModel):
                 raise ValueError(reason)
         return self
 
-    def needs(self) -> set[str]:
+    def needs(self) -> set[ServiceGrant]:
         """The grants this item needs beyond a plain event."""
-        needed = set()
+        needed: set[ServiceGrant] = set()
         if self.kind == 'message':
             needed.add(ServiceGrant.MESSAGES)
         if self.kind in ('chat', 'action') or self.thread is not None:
@@ -217,6 +217,10 @@ class AckEvents(BaseModel):
     event_ids: list[str] = Field(min_length=1, max_length=500)
     #: Of `event_ids`, the events no handler took: `not_handled`, not `delivered`.
     not_handled: list[NotHandledEvent] = Field(default_factory=list, max_length=500)
+
+    def not_handled_reasons(self) -> dict[str, str]:
+        """Each event no handler took, by its id, with the reason."""
+        return {missed.event_id: missed.reason for missed in self.not_handled}
 
 
 class FailEvents(BaseModel):

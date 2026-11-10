@@ -1,6 +1,6 @@
 """Migrations for one organisation's own database.
 
-Run per tenant by `app.db.sql.tenancy.TenantDatabases.migrate`, which
+Run per tenant by `app.db.sql.tenant_migrator.TenantMigrator.migrate`, which
 passes the tenant's URL in `sqlalchemy.url` — this tree never targets the
 shared plane, and `alembic/` never targets a tenant. Online only: a
 tenant database is always there to connect to, because it was just made

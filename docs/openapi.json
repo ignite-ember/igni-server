@@ -179,6 +179,99 @@
         "title": "AccessReviewRow",
         "type": "object"
       },
+      "AccountRow": {
+        "additionalProperties": false,
+        "description": "`users`: the account matched on the address.",
+        "properties": {
+          "auth_provider": {
+            "title": "Auth Provider",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deactivated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deactivated At"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "is_super_admin": {
+            "title": "Is Super Admin",
+            "type": "boolean"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sign In At"
+          },
+          "tokens_valid_after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Valid After"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "email",
+          "full_name",
+          "auth_provider",
+          "created_at",
+          "updated_at",
+          "last_sign_in_at",
+          "tokens_valid_after",
+          "deactivated_at",
+          "is_super_admin"
+        ],
+        "title": "AccountRow",
+        "type": "object"
+      },
       "AckEvents": {
         "properties": {
           "event_ids": {
@@ -241,10 +334,11 @@
             "type": "string"
           },
           "kind": {
-            "title": "Kind",
-            "type": "string"
+            "$ref": "#/components/schemas/GrantKind"
           },
           "label": {
+            "description": "The kind in words, for the portal and the log.",
+            "readOnly": true,
             "title": "Label",
             "type": "string"
           },
@@ -262,10 +356,50 @@
         },
         "required": [
           "kind",
-          "label",
-          "item"
+          "item",
+          "label"
         ],
         "title": "AddedGrant",
+        "type": "object"
+      },
+      "AgentOverride": {
+        "description": "An agent this extension overrides, as its own file defines it while it runs.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "exclusive": {
+            "default": false,
+            "title": "Exclusive",
+            "type": "boolean"
+          },
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "when": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "When"
+          }
+        },
+        "required": [
+          "agent",
+          "file"
+        ],
+        "title": "AgentOverride",
         "type": "object"
       },
       "AgentToolsResponse": {
@@ -355,6 +489,114 @@
         "title": "ApiKeyRecord",
         "type": "object"
       },
+      "ApiKeyRow": {
+        "additionalProperties": false,
+        "description": "`api_keys` they hold or revoked.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "revoked_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked By Id"
+          },
+          "revoked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked Reason"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "revoked_at",
+          "revoked_reason",
+          "revoked_by_id"
+        ],
+        "title": "ApiKeyRow",
+        "type": "object"
+      },
+      "AppExtensionRow": {
+        "additionalProperties": false,
+        "description": "`org_app_extensions`: an extension they switched on for an app.",
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "enabled_at": {
+            "format": "date-time",
+            "title": "Enabled At",
+            "type": "string"
+          },
+          "extension_id": {
+            "title": "Extension Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "extension_id",
+          "enabled_at"
+        ],
+        "title": "AppExtensionRow",
+        "type": "object"
+      },
       "AppLegalHoldResponse": {
         "description": "A hold on an app: it and its spaces are not erased while it stands, discarded or not.",
         "properties": {
@@ -388,6 +630,37 @@
           "placed_at"
         ],
         "title": "AppLegalHoldResponse",
+        "type": "object"
+      },
+      "AppLegalHoldRow": {
+        "additionalProperties": false,
+        "description": "`app_legal_holds` they placed.",
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "placed_at": {
+            "format": "date-time",
+            "title": "Placed At",
+            "type": "string"
+          },
+          "placed_by_user_id": {
+            "title": "Placed By User Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_id",
+          "reason",
+          "placed_by_user_id",
+          "placed_at"
+        ],
+        "title": "AppLegalHoldRow",
         "type": "object"
       },
       "ApproveVmProfileRequest": {
@@ -539,6 +812,102 @@
           }
         },
         "title": "AuditEventPage",
+        "type": "object"
+      },
+      "AuditEventRow": {
+        "additionalProperties": false,
+        "description": "`audit_events`: one request, from either trail.\n\nThe same columns whether the row was found by the actor's id or by\ntheir address, so both activity reads return this.",
+        "properties": {
+          "client_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Host"
+          },
+          "forwarded_for": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forwarded For"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "route": {
+            "title": "Route",
+            "type": "string"
+          },
+          "status_code": {
+            "title": "Status Code",
+            "type": "integer"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Id"
+          },
+          "target_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Type"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          }
+        },
+        "required": [
+          "occurred_at",
+          "method",
+          "route",
+          "target_type",
+          "target_id",
+          "status_code",
+          "outcome",
+          "client_host",
+          "forwarded_for",
+          "user_agent"
+        ],
+        "title": "AuditEventRow",
         "type": "object"
       },
       "AuditEventView": {
@@ -723,7 +1092,36 @@
         "title": "AuthResponse",
         "type": "object"
       },
+      "AuthenticationScheme": {
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "primary": {
+            "default": false,
+            "title": "Primary",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "description"
+        ],
+        "title": "AuthenticationScheme",
+        "type": "object"
+      },
       "AuthorizationAsk": {
+        "description": "`GET /oauth/request`: who is asking, and the organisations the person may pick.",
         "properties": {
           "client_name": {
             "title": "Client Name",
@@ -745,6 +1143,7 @@
         "type": "object"
       },
       "Authorize": {
+        "description": "`POST /oauth/authorize`: the person's choice, and the client's PKCE challenge.",
         "properties": {
           "client_id": {
             "title": "Client Id",
@@ -816,6 +1215,27 @@
           }
         },
         "title": "Body_ack_v1_platform_orgs__org_id__vm_commands__command_id__ack_post",
+        "type": "object"
+      },
+      "BulkSupport": {
+        "properties": {
+          "maxOperations": {
+            "default": 0,
+            "title": "Maxoperations",
+            "type": "integer"
+          },
+          "maxPayloadSize": {
+            "default": 0,
+            "title": "Maxpayloadsize",
+            "type": "integer"
+          },
+          "supported": {
+            "default": false,
+            "title": "Supported",
+            "type": "boolean"
+          }
+        },
+        "title": "BulkSupport",
         "type": "object"
       },
       "CLITokenRequest": {
@@ -1201,7 +1621,9 @@
           "tool_calls": {
             "anyOf": [
               {
-                "items": {},
+                "items": {
+                  "$ref": "#/components/schemas/ToolCall"
+                },
                 "type": "array"
               },
               {
@@ -1367,15 +1789,7 @@
             "type": "string"
           },
           "jwks": {
-            "additionalProperties": {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "title": "Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/SubmittedJwks"
           },
           "kind": {
             "default": "service",
@@ -1599,21 +2013,8 @@
         "title": "CommandResult",
         "type": "object"
       },
-      "CompanyAddress": {
-        "properties": {
-          "email": {
-            "format": "email",
-            "title": "Email",
-            "type": "string"
-          }
-        },
-        "required": [
-          "email"
-        ],
-        "title": "CompanyAddress",
-        "type": "object"
-      },
       "CompanyAddressConfirm": {
+        "description": "The address and the code that proves it.",
         "properties": {
           "code": {
             "title": "Code",
@@ -1630,6 +2031,21 @@
           "code"
         ],
         "title": "CompanyAddressConfirm",
+        "type": "object"
+      },
+      "CompanyAddressRequest": {
+        "description": "An address on a claimed domain, for an account in no organisation.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "CompanyAddressRequest",
         "type": "object"
       },
       "CompletionUsage": {
@@ -1898,6 +2314,7 @@
         "type": "object"
       },
       "CreateOrgResponse": {
+        "description": "An organisation as its admin sees it after creating or changing it.",
         "properties": {
           "display_name": {
             "title": "Display Name",
@@ -1977,6 +2394,82 @@
           "api_key"
         ],
         "title": "CreatedApiKey",
+        "type": "object"
+      },
+      "CreatedAppRow": {
+        "additionalProperties": false,
+        "description": "`org_apps` they registered or own.",
+        "properties": {
+          "app_id": {
+            "title": "App Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By User Id"
+          },
+          "owner_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner User Id"
+          }
+        },
+        "required": [
+          "app_id",
+          "owner_user_id",
+          "created_by_user_id",
+          "created_at"
+        ],
+        "title": "CreatedAppRow",
+        "type": "object"
+      },
+      "CreatedGroupRow": {
+        "additionalProperties": false,
+        "description": "`org_groups` they created.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "created_at"
+        ],
+        "title": "CreatedGroupRow",
         "type": "object"
       },
       "DeleteAccountResponse": {
@@ -2248,6 +2741,86 @@
         "title": "DeploymentOrg",
         "type": "object"
       },
+      "DeploymentRoleRow": {
+        "additionalProperties": false,
+        "description": "`user_roles`: where they stand in the deployment.",
+        "properties": {
+          "assigned_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned By"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "pending_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Email"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "status",
+          "email",
+          "full_name",
+          "pending_email",
+          "assigned_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DeploymentRoleRow",
+        "type": "object"
+      },
       "DiscardAppRequest": {
         "properties": {
           "start_fresh": {
@@ -2407,9 +2980,7 @@
             "type": "string"
           },
           "publisher_jwks": {
-            "additionalProperties": true,
-            "title": "Publisher Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/JwkSet"
           },
           "service_url": {
             "title": "Service Url",
@@ -2831,6 +3402,60 @@
         "title": "EventAccepted",
         "type": "object"
       },
+      "EventAttachmentRow": {
+        "additionalProperties": false,
+        "description": "`service_attachments` on an event they produced.",
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_id",
+          "filename",
+          "content_type",
+          "size",
+          "sha256",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "EventAttachmentRow",
+        "type": "object"
+      },
       "EventStatus": {
         "description": "What became of an item, as the service that sent it reads it.",
         "properties": {
@@ -3188,18 +3813,14 @@
             "type": "string"
           },
           "manifest": {
-            "additionalProperties": true,
-            "title": "Manifest",
-            "type": "object"
+            "$ref": "#/components/schemas/Manifest"
           },
           "name": {
             "title": "Name",
             "type": "string"
           },
           "plugin": {
-            "additionalProperties": true,
-            "title": "Plugin",
-            "type": "object"
+            "$ref": "#/components/schemas/PluginSummary"
           },
           "published_at": {
             "format": "date-time",
@@ -3346,7 +3967,7 @@
           },
           "service": {
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ServiceGrant"
             },
             "title": "Service",
             "type": "array"
@@ -3513,6 +4134,47 @@
         "title": "FailedEvents",
         "type": "object"
       },
+      "FilterSupport": {
+        "properties": {
+          "maxResults": {
+            "default": 200,
+            "title": "Maxresults",
+            "type": "integer"
+          },
+          "supported": {
+            "default": true,
+            "title": "Supported",
+            "type": "boolean"
+          }
+        },
+        "title": "FilterSupport",
+        "type": "object"
+      },
+      "GrantKind": {
+        "description": "What an added grant is, with the words the portal shows for it.",
+        "enum": [
+          "workspace",
+          "workspace_paths",
+          "egress",
+          "secret",
+          "host",
+          "rpc",
+          "service",
+          "tool",
+          "tool_hints",
+          "tool_audience",
+          "hook",
+          "prompt_override",
+          "prompt_edit",
+          "anchor",
+          "command",
+          "page",
+          "agent",
+          "skill"
+        ],
+        "title": "GrantKind",
+        "type": "string"
+      },
       "GrantsComparison": {
         "description": "A new version against the approved one.",
         "properties": {
@@ -3532,6 +4194,37 @@
           "wider"
         ],
         "title": "GrantsComparison",
+        "type": "object"
+      },
+      "GroupEntryRow": {
+        "additionalProperties": false,
+        "description": "`org_group_entries` they created.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entry_name": {
+            "title": "Entry Name",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "group_id",
+          "entry_name",
+          "created_at"
+        ],
+        "title": "GroupEntryRow",
         "type": "object"
       },
       "GroupExtension": {
@@ -3583,6 +4276,65 @@
           "extensions"
         ],
         "title": "GroupExtensionList",
+        "type": "object"
+      },
+      "GroupExtensionRow": {
+        "additionalProperties": false,
+        "description": "`org_group_extensions`: an extension they switched on for a group.",
+        "properties": {
+          "enabled_at": {
+            "format": "date-time",
+            "title": "Enabled At",
+            "type": "string"
+          },
+          "extension_id": {
+            "title": "Extension Id",
+            "type": "string"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "extension_id",
+          "enabled_at"
+        ],
+        "title": "GroupExtensionRow",
+        "type": "object"
+      },
+      "GroupMembershipRow": {
+        "additionalProperties": false,
+        "description": "`org_group_members`: one group they are in.",
+        "properties": {
+          "added_at": {
+            "format": "date-time",
+            "title": "Added At",
+            "type": "string"
+          },
+          "added_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By User Id"
+          },
+          "group_id": {
+            "title": "Group Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id",
+          "added_by_user_id",
+          "added_at"
+        ],
+        "title": "GroupMembershipRow",
         "type": "object"
       },
       "GroupTheme": {
@@ -4003,27 +4755,68 @@
         "title": "ImpactTool",
         "type": "object"
       },
+      "InferenceNodeRow": {
+        "additionalProperties": false,
+        "description": "`inference_nodes` they registered.",
+        "properties": {
+          "base_url": {
+            "title": "Base Url",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "base_url",
+          "created_at"
+        ],
+        "title": "InferenceNodeRow",
+        "type": "object"
+      },
       "InferenceStatusView": {
-        "description": "Both pools, plus whether registration is available at all.\n\n``registration_enabled`` lets the portal explain an empty registered\nlist correctly: \"nothing has registered\" and \"this deployment does\nnot accept registrations\" look identical otherwise, and they call for\ncompletely different fixes.",
+        "description": "Every node, its totals, and whether registration is available at all.\n\nThe totals are what answers \"do we need another GPU?\", which is the\nquestion this page exists for. Per-node rows answer the follow-up:\nwhich one.\n\n``registration_enabled`` lets the portal explain an empty registered\nlist correctly: \"nothing has registered\" and \"this deployment does\nnot accept registrations\" look identical otherwise, and they call for\ncompletely different fixes.",
         "properties": {
           "heartbeat_interval_seconds": {
             "title": "Heartbeat Interval Seconds",
             "type": "integer"
           },
-          "pools": {
+          "nodes": {
             "items": {
-              "$ref": "#/components/schemas/PoolStatusView"
+              "$ref": "#/components/schemas/NodeStatusView"
             },
-            "title": "Pools",
+            "title": "Nodes",
             "type": "array"
           },
           "registration_enabled": {
             "title": "Registration Enabled",
             "type": "boolean"
+          },
+          "total_capacity": {
+            "title": "Total Capacity",
+            "type": "integer"
+          },
+          "total_in_flight": {
+            "title": "Total In Flight",
+            "type": "integer"
+          },
+          "utilization": {
+            "title": "Utilization",
+            "type": "number"
           }
         },
         "required": [
-          "pools",
+          "nodes",
+          "total_in_flight",
+          "total_capacity",
+          "utilization",
           "registration_enabled",
           "heartbeat_interval_seconds"
         ],
@@ -4190,6 +4983,21 @@
         "title": "JobScope",
         "type": "object"
       },
+      "JsonValue": {},
+      "JwkSet": {
+        "description": "What `/.well-known/jwks.json` serves, and what a client registers.",
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/PublicJwk"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "title": "JwkSet",
+        "type": "object"
+      },
       "LegalHoldBody": {
         "properties": {
           "reason": {
@@ -4268,6 +5076,37 @@
           "incarnations"
         ],
         "title": "LegalHoldResponse",
+        "type": "object"
+      },
+      "LegalHoldRow": {
+        "additionalProperties": false,
+        "description": "`legal_holds` on them, or placed by them.",
+        "properties": {
+          "placed_at": {
+            "format": "date-time",
+            "title": "Placed At",
+            "type": "string"
+          },
+          "placed_by_user_id": {
+            "title": "Placed By User Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "reason",
+          "placed_by_user_id",
+          "placed_at"
+        ],
+        "title": "LegalHoldRow",
         "type": "object"
       },
       "LicenceEnvelope": {
@@ -4549,6 +5388,50 @@
         "title": "MakeSuperAdmin",
         "type": "object"
       },
+      "Manifest": {
+        "additionalProperties": true,
+        "description": "The parts of an extension manifest igni reads. The rest is kept as sent.",
+        "properties": {
+          "contributes": {
+            "additionalProperties": true,
+            "title": "Contributes",
+            "type": "object"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "vendor": {
+            "default": "",
+            "title": "Vendor",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "Manifest",
+        "type": "object"
+      },
       "MarkRead": {
         "description": "``{\"ids\": [...]}``, ``{\"source\": \"...\"}``, or ``{}`` for everything.",
         "properties": {
@@ -4621,6 +5504,32 @@
         "title": "McpApprovalList",
         "type": "object"
       },
+      "McpApprovalRow": {
+        "additionalProperties": false,
+        "description": "`person_mcp_approvals` they gave.",
+        "properties": {
+          "approved_at": {
+            "format": "date-time",
+            "title": "Approved At",
+            "type": "string"
+          },
+          "server_name": {
+            "title": "Server Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_name",
+          "source",
+          "approved_at"
+        ],
+        "title": "McpApprovalRow",
+        "type": "object"
+      },
       "McpServerRef": {
         "description": "One MCP server, as igni names it: its name and the configuration it came from.",
         "properties": {
@@ -4686,6 +5595,71 @@
           }
         },
         "title": "Meta",
+        "type": "object"
+      },
+      "ModelUsageRow": {
+        "additionalProperties": false,
+        "description": "`chat_usage`: one call they made to a model.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "input_tokens": {
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "org_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Org Id"
+          },
+          "output_tokens": {
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "stream": {
+            "title": "Stream",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "org_id",
+          "model",
+          "input_tokens",
+          "output_tokens",
+          "total_tokens",
+          "duration",
+          "stream",
+          "created_at"
+        ],
+        "title": "ModelUsageRow",
         "type": "object"
       },
       "Module": {
@@ -5137,21 +6111,6 @@
             "description": "Whether the model accepts image input",
             "title": "Multimodal",
             "type": "boolean"
-          },
-          "pools": {
-            "default": [
-              "chat"
-            ],
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "minItems": 1,
-            "title": "Pools",
-            "type": "array"
           }
         },
         "required": [
@@ -5250,17 +6209,6 @@
             "title": "Multimodal",
             "type": "boolean"
           },
-          "pools": {
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "title": "Pools",
-            "type": "array"
-          },
           "registered_at": {
             "anyOf": [
               {
@@ -5285,7 +6233,6 @@
           "id",
           "base_url",
           "models",
-          "pools",
           "multimodal",
           "source",
           "in_flight",
@@ -5493,6 +6440,63 @@
           "page"
         ],
         "title": "NotificationTarget",
+        "type": "object"
+      },
+      "OpenAIError": {
+        "description": "The `error` object an OpenAI SDK parses; four keys fixed by somebody else's published API.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "param": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Param"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "type"
+        ],
+        "title": "OpenAIError",
+        "type": "object"
+      },
+      "OpenAIErrorBody": {
+        "description": "The whole response body: the envelope, plus FastAPI's own `detail`.\n\n`detail` is kept so nothing that reads it today has to change. It is\n`Any` because it is whatever was raised — the one field here with no\nknowable shape.",
+        "properties": {
+          "detail": {
+            "title": "Detail"
+          },
+          "error": {
+            "$ref": "#/components/schemas/OpenAIError"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "OpenAIErrorBody",
         "type": "object"
       },
       "OrgAppList": {
@@ -5720,7 +6724,7 @@
         "type": "object"
       },
       "OrgGroupEntryResponse": {
-        "description": "A single entry entry for a group.",
+        "description": "A single entry for a group.",
         "properties": {
           "content": {
             "title": "Content",
@@ -5988,7 +6992,7 @@
         "type": "object"
       },
       "OrgGroupPackEntry": {
-        "description": "One entry entry in the group pack.",
+        "description": "One entry in the group pack.",
         "properties": {
           "content": {
             "title": "Content",
@@ -6362,6 +7366,98 @@
         "title": "OrganisationChoice",
         "type": "object"
       },
+      "OrganisationMembershipRow": {
+        "additionalProperties": false,
+        "description": "`org_memberships`: one organisation they belong to.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "invited_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited By"
+          },
+          "invited_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited Email"
+          },
+          "org_id": {
+            "title": "Org Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "role",
+          "status",
+          "invited_email",
+          "invited_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OrganisationMembershipRow",
+        "type": "object"
+      },
+      "OrganisationOwnedRow": {
+        "additionalProperties": false,
+        "description": "`organizations`: one organisation they own.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "display_name",
+          "created_at"
+        ],
+        "title": "OrganisationOwnedRow",
+        "type": "object"
+      },
       "PatchOperation": {
         "properties": {
           "op": {
@@ -6709,21 +7805,6 @@
             "pattern": "^[A-Za-z0-9._-]+$",
             "title": "Node Id",
             "type": "string"
-          },
-          "pools": {
-            "default": [
-              "chat"
-            ],
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "minItems": 1,
-            "title": "Pools",
-            "type": "array"
           }
         },
         "required": [
@@ -6807,25 +7888,6 @@
               }
             ],
             "title": "Multimodal"
-          },
-          "pools": {
-            "anyOf": [
-              {
-                "items": {
-                  "enum": [
-                    "chat",
-                    "codeindex"
-                  ],
-                  "type": "string"
-                },
-                "minItems": 1,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pools"
           }
         },
         "title": "PinnedNodeUpdate",
@@ -6864,17 +7926,6 @@
           "node_id": {
             "title": "Node Id",
             "type": "string"
-          },
-          "pools": {
-            "items": {
-              "enum": [
-                "chat",
-                "codeindex"
-              ],
-              "type": "string"
-            },
-            "title": "Pools",
-            "type": "array"
           }
         },
         "required": [
@@ -6882,7 +7933,6 @@
           "base_url",
           "models",
           "max_concurrent",
-          "pools",
           "multimodal",
           "enabled",
           "has_api_key"
@@ -7011,45 +8061,73 @@
         "title": "PlatformVmCapsResponse",
         "type": "object"
       },
-      "PoolStatusView": {
-        "description": "One pool's nodes and its totals.\n\nThe totals are what answers \"do we need another GPU?\", which is the\nquestion this page exists for. Per-node rows answer the follow-up:\nwhich one.",
+      "PluginAgent": {
+        "description": "One of the plugin's own agents, under the extension's namespace.",
         "properties": {
-          "nodes": {
-            "items": {
-              "$ref": "#/components/schemas/NodeStatusView"
-            },
-            "title": "Nodes",
-            "type": "array"
-          },
-          "pool": {
-            "enum": [
-              "chat",
-              "codeindex"
-            ],
-            "title": "Pool",
+          "description": {
+            "default": "",
+            "title": "Description",
             "type": "string"
           },
-          "total_capacity": {
-            "title": "Total Capacity",
-            "type": "integer"
+          "file": {
+            "title": "File",
+            "type": "string"
           },
-          "total_in_flight": {
-            "title": "Total In Flight",
-            "type": "integer"
-          },
-          "utilization": {
-            "title": "Utilization",
-            "type": "number"
+          "name": {
+            "title": "Name",
+            "type": "string"
           }
         },
         "required": [
-          "pool",
-          "nodes",
-          "total_in_flight",
-          "total_capacity",
-          "utilization"
+          "file",
+          "name"
         ],
-        "title": "PoolStatusView",
+        "title": "PluginAgent",
+        "type": "object"
+      },
+      "PluginSkill": {
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PluginSkill",
+        "type": "object"
+      },
+      "PluginSummary": {
+        "properties": {
+          "agent_overrides": {
+            "items": {
+              "$ref": "#/components/schemas/AgentOverride"
+            },
+            "title": "Agent Overrides",
+            "type": "array"
+          },
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/PluginAgent"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/PluginSkill"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "title": "PluginSummary",
         "type": "object"
       },
       "Position": {
@@ -7113,6 +8191,59 @@
         "title": "PriorityView",
         "type": "object"
       },
+      "ProcessingContext": {
+        "additionalProperties": false,
+        "description": "The half of Article 15 that is not rows.\n\nPurposes, categories, recipients, retention and source, built by\n`ProcessingDescription` from what the deployment is configured to do.",
+        "properties": {
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "controller": {
+            "title": "Controller",
+            "type": "string"
+          },
+          "purposes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Purposes",
+            "type": "array"
+          },
+          "recipients": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention"
+          },
+          "rights": {
+            "title": "Rights",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "controller",
+          "purposes",
+          "categories",
+          "recipients",
+          "retention",
+          "source",
+          "rights"
+        ],
+        "title": "ProcessingContext",
+        "type": "object"
+      },
       "ProducerAssignment": {
         "properties": {
           "id": {
@@ -7141,6 +8272,181 @@
           "vm_profile_id"
         ],
         "title": "ProducerAssignment",
+        "type": "object"
+      },
+      "ProducerEventRow": {
+        "additionalProperties": false,
+        "description": "`producer_events` they produced.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "attachment_ids": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "extension_id": {
+            "title": "Extension Id",
+            "type": "string"
+          },
+          "failed_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Reason"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "not_handled_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Handled Reason"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "start_run": {
+            "title": "Start Run",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "thread": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "extension_id",
+          "kind",
+          "event_type",
+          "payload",
+          "thread",
+          "text",
+          "title",
+          "start_run",
+          "action",
+          "attachment_ids",
+          "state",
+          "failed_reason",
+          "not_handled_reason",
+          "created_at",
+          "delivered_at"
+        ],
+        "title": "ProducerEventRow",
+        "type": "object"
+      },
+      "ProducerExportRow": {
+        "additionalProperties": false,
+        "description": "`producer_exports` of their data, or ones they asked for.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by_user_id": {
+            "title": "Requested By User Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "requested_by_user_id",
+          "requested_at",
+          "state",
+          "finished_at"
+        ],
+        "title": "ProducerExportRow",
         "type": "object"
       },
       "ProducerFeedItem": {
@@ -7254,6 +8560,129 @@
           "cursor"
         ],
         "title": "ProducerFeedPage",
+        "type": "object"
+      },
+      "ProducerFeedRow": {
+        "additionalProperties": false,
+        "description": "`producer_feed`: what the gateway was last told about their VM.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "changed_at": {
+            "format": "date-time",
+            "title": "Changed At",
+            "type": "string"
+          },
+          "discarded_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discarded At"
+          },
+          "discarded_by_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discarded By User Id"
+          },
+          "erase_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erase At"
+          },
+          "erased": {
+            "title": "Erased",
+            "type": "boolean"
+          },
+          "erasure_done_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erasure Done At"
+          },
+          "legal_hold": {
+            "title": "Legal Hold",
+            "type": "boolean"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "removed": {
+            "title": "Removed",
+            "type": "boolean"
+          },
+          "removed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Removed At"
+          },
+          "seen_removed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen Removed At"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "active",
+          "removed",
+          "removed_at",
+          "erase_at",
+          "changed_at",
+          "seen_removed_at",
+          "erased",
+          "legal_hold",
+          "erasure_done_at",
+          "discarded_by_user_id",
+          "discarded_at"
+        ],
+        "title": "ProducerFeedRow",
         "type": "object"
       },
       "ProducerRef": {
@@ -7435,10 +8864,157 @@
         "title": "ProducerVolume",
         "type": "object"
       },
+      "ProducerVolumeRow": {
+        "additionalProperties": false,
+        "description": "`producer_volumes`: their own VM's growth, or growth they caused.",
+        "properties": {
+          "gib": {
+            "title": "Gib",
+            "type": "integer"
+          },
+          "grown_as": {
+            "title": "Grown As",
+            "type": "string"
+          },
+          "grown_at": {
+            "format": "date-time",
+            "title": "Grown At",
+            "type": "string"
+          },
+          "grown_by_id": {
+            "title": "Grown By Id",
+            "type": "string"
+          },
+          "grown_by_kind": {
+            "title": "Grown By Kind",
+            "type": "string"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "gib",
+          "grown_by_kind",
+          "grown_by_id",
+          "grown_as",
+          "grown_at"
+        ],
+        "title": "ProducerVolumeRow",
+        "type": "object"
+      },
+      "PublicJwk": {
+        "additionalProperties": false,
+        "description": "One public key. RSA (`n`, `e`) or P-256 (`crv`, `x`, `y`).",
+        "properties": {
+          "alg": {
+            "anyOf": [
+              {
+                "enum": [
+                  "RS256",
+                  "ES256"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alg"
+          },
+          "crv": {
+            "anyOf": [
+              {
+                "const": "P-256",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crv"
+          },
+          "e": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "E"
+          },
+          "kid": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Kid",
+            "type": "string"
+          },
+          "kty": {
+            "enum": [
+              "RSA",
+              "EC"
+            ],
+            "title": "Kty",
+            "type": "string"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N"
+          },
+          "use": {
+            "const": "sig",
+            "default": "sig",
+            "title": "Use",
+            "type": "string"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          }
+        },
+        "required": [
+          "kty"
+        ],
+        "title": "PublicJwk",
+        "type": "object"
+      },
       "Published": {
         "properties": {
           "added": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/AddedGrant"
             },
@@ -7608,7 +9184,110 @@
         "title": "Reason",
         "type": "string"
       },
+      "ReceivedNotificationRow": {
+        "additionalProperties": false,
+        "description": "`notifications` addressed to them.",
+        "properties": {
+          "actor_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Email"
+          },
+          "actor_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor User Id"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "kind",
+          "title",
+          "body",
+          "actor_user_id",
+          "actor_email",
+          "target",
+          "created_at",
+          "delivered_at",
+          "read_at"
+        ],
+        "title": "ReceivedNotificationRow",
+        "type": "object"
+      },
       "Redirect": {
+        "description": "Where the page sends the person next: the client's redirect URI, carrying the code.",
         "properties": {
           "redirect_to": {
             "title": "Redirect To",
@@ -7625,15 +9304,7 @@
         "description": "An org admin registering an app.\n\nThe app generated its own key pair; `jwks` is the public half, as a\nJWK set — the same as a service sends to `POST /v1/clients`. Nothing\nsecret is handed to the app, and nothing secret is typed in here.",
         "properties": {
           "jwks": {
-            "additionalProperties": {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "title": "Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/SubmittedJwks"
           },
           "name": {
             "maxLength": 80,
@@ -7734,15 +9405,7 @@
         "description": "A key rotation: the app's new public keys, replacing the old ones.",
         "properties": {
           "jwks": {
-            "additionalProperties": {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            "title": "Jwks",
-            "type": "object"
+            "$ref": "#/components/schemas/SubmittedJwks"
           }
         },
         "required": [
@@ -7861,6 +9524,26 @@
         "title": "ResolveRequest",
         "type": "object"
       },
+      "Retention": {
+        "additionalProperties": false,
+        "description": "How long the deployment keeps what it holds.",
+        "properties": {
+          "audit_events": {
+            "title": "Audit Events",
+            "type": "string"
+          },
+          "everything else": {
+            "title": "Everything Else",
+            "type": "string"
+          }
+        },
+        "required": [
+          "audit_events",
+          "everything else"
+        ],
+        "title": "Retention",
+        "type": "object"
+      },
       "RetentionCapsBody": {
         "properties": {
           "max_removed_member_retention_days": {
@@ -7975,6 +9658,32 @@
           "cursor"
         ],
         "title": "RevocationPage",
+        "type": "object"
+      },
+      "RevocationRow": {
+        "additionalProperties": false,
+        "description": "`revocations` of their tokens, here or everywhere.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_id",
+          "reason",
+          "created_at"
+        ],
+        "title": "RevocationRow",
         "type": "object"
       },
       "RoleChangeRequest": {
@@ -8343,6 +10052,16 @@
         "title": "ServerMetadata",
         "type": "object"
       },
+      "ServiceGrant": {
+        "description": "What a service may do towards producers' agents beyond a plain event: `permissions.service`.\n\n`docs/service-identity.md` §15. Shown to the super admin who approves\nthe service, and checked by igni server on every item the service sends.",
+        "enum": [
+          "messages",
+          "attachments",
+          "chats"
+        ],
+        "title": "ServiceGrant",
+        "type": "string"
+      },
       "ServiceNotification": {
         "description": "One thing that happened, and who it concerns, as a service says it.",
         "properties": {
@@ -8411,6 +10130,45 @@
           }
         },
         "title": "ServiceNotifications",
+        "type": "object"
+      },
+      "ServiceProviderConfig": {
+        "description": "What this implementation supports (RFC 7643 §5). Providers read it first.\n\nThe defaults *are* this server's answer, so the route serves a bare\ninstance. Unsupported features are said plainly rather than left for\na provider to discover by having a run fail.\n\nNo ``documentationUri``. It is optional, and the one URL worth\nputting there is the vendor's — which is a host named in ``app/``\nfor a convenience link, on a product whose rule is that there are\nnone. The operator reads how to configure this where they configure\nit: ``dist.env`` and the chart.",
+        "properties": {
+          "authenticationSchemes": {
+            "items": {
+              "$ref": "#/components/schemas/AuthenticationScheme"
+            },
+            "title": "Authenticationschemes",
+            "type": "array"
+          },
+          "bulk": {
+            "$ref": "#/components/schemas/BulkSupport"
+          },
+          "changePassword": {
+            "$ref": "#/components/schemas/Supported"
+          },
+          "etag": {
+            "$ref": "#/components/schemas/Supported"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/FilterSupport"
+          },
+          "patch": {
+            "$ref": "#/components/schemas/Supported"
+          },
+          "schemas": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Schemas",
+            "type": "array"
+          },
+          "sort": {
+            "$ref": "#/components/schemas/Supported"
+          }
+        },
+        "title": "ServiceProviderConfig",
         "type": "object"
       },
       "ServiceVmProfile": {
@@ -8564,6 +10322,26 @@
           "password"
         ],
         "title": "SignUpRequest",
+        "type": "object"
+      },
+      "SignedNoPack": {
+        "description": "What `GET /v1/portal/me/group/pack` serves to a person with no pack.\n\nSigned for that person (`GroupPackSigner.sign_absence`), so igni can\nclear the policy it cached rather than ignore an unsigned `null`.",
+        "properties": {
+          "no_pack": {
+            "const": true,
+            "default": true,
+            "title": "No Pack",
+            "type": "boolean"
+          },
+          "signed_pack": {
+            "title": "Signed Pack",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signed_pack"
+        ],
+        "title": "SignedNoPack",
         "type": "object"
       },
       "SignedOrgGroupPack": {
@@ -8919,14 +10697,15 @@
         "type": "object"
       },
       "SubjectAccessReport": {
-        "description": "What an Article 15 request is answered with.\n\nThe envelope has a fixed key set and was a `dict[str, Any]` built\nup by assignment, returned straight out of an endpoint annotated\nthe same way — so the one HTTP contract in this product that a\nregulator might read was described nowhere.\n\n`sections` stays an untyped map on purpose, and that is the part\nworth stating: the section *names* are chosen as the export runs\nand each one holds rows shaped by the table it came from. Typing\nthose would mean a model per table, maintained in step with every\nmigration, on a path where being out of step means under-\nreporting somebody's data. The envelope is a contract; the\nsections are an inventory.",
+        "additionalProperties": false,
+        "description": "What an Article 15 request is answered with.\n\nThe one HTTP contract in this product a regulator might read, so\nevery part of it is declared: the context is a `ProcessingContext`\nand the sections a `SubjectAccessSections`, whose rows are the row\nmodels the reads return.",
         "properties": {
           "generated_at": {
             "title": "Generated At",
             "type": "string"
           },
           "processing": {
-            "title": "Processing"
+            "$ref": "#/components/schemas/ProcessingContext"
           },
           "scope": {
             "anyOf": [
@@ -8940,9 +10719,7 @@
             "title": "Scope"
           },
           "sections": {
-            "additionalProperties": true,
-            "title": "Sections",
-            "type": "object"
+            "$ref": "#/components/schemas/SubjectAccessSections"
           },
           "subject": {
             "title": "Subject",
@@ -8995,6 +10772,183 @@
         "title": "SubjectAccessRequest",
         "type": "object"
       },
+      "SubjectAccessSections": {
+        "additionalProperties": false,
+        "description": "One field per section an export can produce, in the order it produces them.\n\nThe section names are a fixed set, and each section's rows are the\nrow model its read returns. A section the export did not\nproduce is absent from the wire rather than null — the subject is\ntold what was looked at, and `null` would read as \"looked, found\nnothing\", which is what an empty list says.\n\n`extra='forbid'` with `validate_assignment` so a misspelt section\nfails loudly instead of being dropped on the way out.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AccountRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account"
+          },
+          "authentication_attempts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AuditEventRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authentication Attempts"
+          },
+          "deployment_role": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DeploymentRoleRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Role"
+          },
+          "group_memberships": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GroupMembershipRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Memberships"
+          },
+          "model_usage": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ModelUsageRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Usage"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "organisation_memberships": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OrganisationMembershipRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisation Memberships"
+          },
+          "organisations_owned": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OrganisationOwnedRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisations Owned"
+          },
+          "own_activity": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AuditEventRow"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Activity"
+          },
+          "services": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "items": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Services"
+          },
+          "things_they_created": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThingsTheyCreated"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "SubjectAccessSections",
+        "type": "object"
+      },
+      "SubmittedJwks": {
+        "description": "A JWK set a client sends to register, each key still unchecked.\n\nThe keys stay mappings until `public_keys` reads them, so a private\nkey is refused by name rather than as an unexplained extra field.",
+        "properties": {
+          "keys": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "title": "SubmittedJwks",
+        "type": "object"
+      },
       "SuperAdmin": {
         "properties": {
           "email": {
@@ -9028,6 +10982,20 @@
           "user_id"
         ],
         "title": "SuperAdmin",
+        "type": "object"
+      },
+      "Supported": {
+        "description": "RFC 7643 §5's ``{\"supported\": …}`` for a feature with no settings.",
+        "properties": {
+          "supported": {
+            "title": "Supported",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "supported"
+        ],
+        "title": "Supported",
         "type": "object"
       },
       "SwitchedOff": {
@@ -9168,6 +11136,192 @@
         "title": "TeamMemberResponse",
         "type": "object"
       },
+      "ThingsTheyCreated": {
+        "additionalProperties": false,
+        "description": "Everything one person authored, owned, registered or decided in one organisation.\n\nThe field order is the wire order and matches the order\n`SubjectAccessDB.things_they_created` reads them in. Adding a group\nmeans adding a field here **and** its query there — every field is\nrequired, so forgetting either side fails loudly.",
+        "properties": {
+          "api_keys": {
+            "items": {
+              "$ref": "#/components/schemas/ApiKeyRow"
+            },
+            "title": "Api Keys",
+            "type": "array"
+          },
+          "app_extensions": {
+            "items": {
+              "$ref": "#/components/schemas/AppExtensionRow"
+            },
+            "title": "App Extensions",
+            "type": "array"
+          },
+          "app_legal_holds": {
+            "items": {
+              "$ref": "#/components/schemas/AppLegalHoldRow"
+            },
+            "title": "App Legal Holds",
+            "type": "array"
+          },
+          "apps": {
+            "items": {
+              "$ref": "#/components/schemas/CreatedAppRow"
+            },
+            "title": "Apps",
+            "type": "array"
+          },
+          "event_attachments": {
+            "items": {
+              "$ref": "#/components/schemas/EventAttachmentRow"
+            },
+            "title": "Event Attachments",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ProducerEventRow"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "group_entries": {
+            "items": {
+              "$ref": "#/components/schemas/GroupEntryRow"
+            },
+            "title": "Group Entries",
+            "type": "array"
+          },
+          "group_extensions": {
+            "items": {
+              "$ref": "#/components/schemas/GroupExtensionRow"
+            },
+            "title": "Group Extensions",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CreatedGroupRow"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "inference_nodes": {
+            "items": {
+              "$ref": "#/components/schemas/InferenceNodeRow"
+            },
+            "title": "Inference Nodes",
+            "type": "array"
+          },
+          "legal_holds": {
+            "items": {
+              "$ref": "#/components/schemas/LegalHoldRow"
+            },
+            "title": "Legal Holds",
+            "type": "array"
+          },
+          "mcp_approvals": {
+            "items": {
+              "$ref": "#/components/schemas/McpApprovalRow"
+            },
+            "title": "Mcp Approvals",
+            "type": "array"
+          },
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/ReceivedNotificationRow"
+            },
+            "title": "Notifications",
+            "type": "array"
+          },
+          "producer_exports": {
+            "items": {
+              "$ref": "#/components/schemas/ProducerExportRow"
+            },
+            "title": "Producer Exports",
+            "type": "array"
+          },
+          "producer_feed": {
+            "items": {
+              "$ref": "#/components/schemas/ProducerFeedRow"
+            },
+            "title": "Producer Feed",
+            "type": "array"
+          },
+          "producer_volumes": {
+            "items": {
+              "$ref": "#/components/schemas/ProducerVolumeRow"
+            },
+            "title": "Producer Volumes",
+            "type": "array"
+          },
+          "revocations": {
+            "items": {
+              "$ref": "#/components/schemas/RevocationRow"
+            },
+            "title": "Revocations",
+            "type": "array"
+          },
+          "vm_commands": {
+            "items": {
+              "$ref": "#/components/schemas/VmCommandRow"
+            },
+            "title": "Vm Commands",
+            "type": "array"
+          },
+          "vm_credentials": {
+            "items": {
+              "$ref": "#/components/schemas/VmCredentialRow"
+            },
+            "title": "Vm Credentials",
+            "type": "array"
+          },
+          "vm_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/VmJobRow"
+            },
+            "title": "Vm Jobs",
+            "type": "array"
+          },
+          "vm_profile_requests": {
+            "items": {
+              "$ref": "#/components/schemas/VmProfileRequestRow"
+            },
+            "title": "Vm Profile Requests",
+            "type": "array"
+          },
+          "vm_profiles": {
+            "items": {
+              "$ref": "#/components/schemas/VmProfileRow"
+            },
+            "title": "Vm Profiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "groups",
+          "group_entries",
+          "group_extensions",
+          "apps",
+          "app_extensions",
+          "vm_profiles",
+          "vm_profile_requests",
+          "vm_commands",
+          "vm_jobs",
+          "events",
+          "event_attachments",
+          "vm_credentials",
+          "api_keys",
+          "producer_volumes",
+          "mcp_approvals",
+          "notifications",
+          "producer_exports",
+          "revocations",
+          "legal_holds",
+          "app_legal_holds",
+          "producer_feed",
+          "inference_nodes"
+        ],
+        "title": "ThingsTheyCreated",
+        "type": "object"
+      },
       "TokenResponse": {
         "description": "JWT token response.",
         "properties": {
@@ -9185,6 +11339,80 @@
           "access_token"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "ToolCall": {
+        "additionalProperties": true,
+        "description": "One of an assistant message's `tool_calls`. Extra fields are passed through.",
+        "properties": {
+          "function": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCallFunction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "title": "ToolCall",
+        "type": "object"
+      },
+      "ToolCallFunction": {
+        "additionalProperties": true,
+        "description": "The function an assistant's tool call names. Extra fields are passed through.",
+        "properties": {
+          "arguments": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arguments"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "ToolCallFunction",
         "type": "object"
       },
       "UpdateAppRequest": {
@@ -9769,6 +11997,124 @@
         "title": "VmCommandRecord",
         "type": "object"
       },
+      "VmCommandRow": {
+        "additionalProperties": false,
+        "description": "`vm_commands` they asked for, or that ran in their own VM.",
+        "properties": {
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "requested_as": {
+            "title": "Requested As",
+            "type": "string"
+          },
+          "requested_by_id": {
+            "title": "Requested By Id",
+            "type": "string"
+          },
+          "requested_by_kind": {
+            "title": "Requested By Kind",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "producer_kind",
+          "producer_id",
+          "command",
+          "requested_by_kind",
+          "requested_by_id",
+          "requested_as",
+          "state",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "exit_code",
+          "output",
+          "error"
+        ],
+        "title": "VmCommandRow",
+        "type": "object"
+      },
       "VmCredentialList": {
         "properties": {
           "credentials": {
@@ -9856,6 +12202,92 @@
         "title": "VmCredentialRecord",
         "type": "object"
       },
+      "VmCredentialRow": {
+        "additionalProperties": false,
+        "description": "`vm_credentials` for their VM, made by them, or revoked by them.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_id": {
+            "title": "Created By Id",
+            "type": "string"
+          },
+          "created_by_kind": {
+            "title": "Created By Kind",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "producer_id": {
+            "title": "Producer Id",
+            "type": "string"
+          },
+          "producer_kind": {
+            "title": "Producer Kind",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "revoked_by_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked By Id"
+          },
+          "revoked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked Reason"
+          }
+        },
+        "required": [
+          "producer_kind",
+          "producer_id",
+          "created_by_kind",
+          "created_by_id",
+          "created_at",
+          "last_used_at",
+          "revoked_at",
+          "revoked_reason",
+          "revoked_by_id"
+        ],
+        "title": "VmCredentialRow",
+        "type": "object"
+      },
       "VmJobList": {
         "properties": {
           "jobs": {
@@ -9935,6 +12367,50 @@
           "cancelled_at"
         ],
         "title": "VmJobRecord",
+        "type": "object"
+      },
+      "VmJobRow": {
+        "additionalProperties": false,
+        "description": "`vm_jobs` they asked for or cancelled.",
+        "properties": {
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "requested_as": {
+            "title": "Requested As",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "command",
+          "requested_as",
+          "created_at",
+          "cancelled_at"
+        ],
+        "title": "VmJobRow",
         "type": "object"
       },
       "VmPackages": {
@@ -10091,6 +12567,56 @@
           "requested_at"
         ],
         "title": "VmProfileRequestRecord",
+        "type": "object"
+      },
+      "VmProfileRequestRow": {
+        "additionalProperties": false,
+        "description": "`vm_profile_requests` they decided.",
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_kind": {
+            "title": "Subject Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "state",
+          "decided_at",
+          "reason"
+        ],
+        "title": "VmProfileRequestRow",
         "type": "object"
       },
       "VmProfileRequestSettings": {
@@ -10327,6 +12853,38 @@
           "updated_at"
         ],
         "title": "VmProfileResponse",
+        "type": "object"
+      },
+      "VmProfileRow": {
+        "additionalProperties": false,
+        "description": "`vm_profiles` they created or last changed.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "VmProfileRow",
         "type": "object"
       },
       "VmProfileSettings": {
@@ -10704,7 +13262,7 @@
     },
     "/ready": {
       "get": {
-        "description": "Readiness: this process can actually serve a request.\n\n``/health`` answered ``ok`` while the API could serve nothing —\nverified by running it with Postgres and Redis unreachable: it booted,\n``/health`` returned 200, and every database-backed route returned\n500. A load balancer reading ``/health`` would have kept sending\ntraffic to it indefinitely.\n\n503 when a dependency is down, so an orchestrator can drain the\ninstance without killing it. The checks are deliberately the cheapest\npossible round trip to each — ``SELECT 1`` and a ``PING`` — because\nthis endpoint gets polled.\n\n**A busy pool is not an unready process.** This check used to run\nagainst its own private connection pool, so it answered ``ready`` in\n40ms while every repository around it was failing on pool exhaustion —\na probe insulated from the failure it exists to detect. It shares the\npool now, which introduces the opposite hazard: under a burst the\ncheck would queue, time out, report the database unavailable and get\nthe pod pulled out of service — sending its traffic to the sibling\nreplica, which then saturates too. A burst that should have queued\ntakes the whole deployment down instead.\n\nSo saturation and unavailability are answered differently. The check\nwaits a short, fixed time; if it does not get a connection and the\npool is full, that is ``busy`` and the process stays **ready**,\nbecause removing a working replica from a load balancer is the one\naction guaranteed to make a capacity problem worse. Anything else —\nthe server refusing, the host unreachable, a timeout with the pool\n*not* full — is ``unavailable``, and that is a 503. F116.",
+        "description": "Readiness: this process can actually serve a request.\n\n503 when a dependency is down, so an orchestrator can drain the\ninstance without killing it. The checks are the cheapest possible\nround trip to each — ``SELECT 1`` and a ``PING`` — because this\nendpoint gets polled.\n\n**A busy pool is not an unready process.** The check shares the\napplication's connection pool, so it cannot be insulated from the\nexhaustion it exists to detect; but under a burst it would then queue,\ntime out and get the pod pulled out of service, sending its traffic to\na sibling replica that saturates in turn.\n\nSo saturation and unavailability are answered differently. The check\nwaits a short, fixed time; if it does not get a connection and the\npool is full, that is ``busy`` and the process stays **ready**,\nbecause removing a working replica from a load balancer is the one\naction guaranteed to make a capacity problem worse. Anything else —\nthe server refusing, the host unreachable, a timeout with the pool\n*not* full — is ``unavailable``, and that is a 503. F116.",
         "operationId": "readiness_check_ready_get",
         "responses": {
           "200": {
@@ -10751,9 +13309,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Service Provider Config Scim V2 Serviceproviderconfig Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ServiceProviderConfig"
                 }
               }
             },
@@ -11882,7 +14438,7 @@
     },
     "/v1/chat/completions": {
       "post": {
-        "description": "OpenAI-compatible chat completion (proxied via AI key pool)",
+        "description": "OpenAI-compatible chat completion, proxied to the organisation's inference nodes",
         "operationId": "chat_completions_v1_chat_completions_post",
         "requestBody": {
           "content": {
@@ -11905,18 +14461,85 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "401": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Missing, invalid or expired token, or a session that has been withdrawn"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "Not a member of the named organisation"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "No inference node serves the model"
           },
           "429": {
-            "description": "All keys for this pool are at capacity"
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "Every node is at capacity and the queue is full, or the wait timed out; see Retry-After"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "A node's own 4xx (other than the above) passes through: the model refused the request"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "No node produced a usable answer"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "No inference node is configured"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAIErrorBody"
+                }
+              }
+            },
+            "description": "The node stopped sending, or timed out, before the answer was complete"
           }
         },
         "security": [
@@ -16716,7 +19339,7 @@
     },
     "/v1/portal/inference": {
       "get": {
-        "description": "Live inference node statistics and health for both pools.",
+        "description": "Live inference node statistics and health.",
         "operationId": "get_inference_status_v1_portal_inference_get",
         "responses": {
           "200": {
@@ -16743,7 +19366,7 @@
     },
     "/v1/portal/inference/models": {
       "get": {
-        "description": "Model ids the chat pool serves, for choosing a group default.",
+        "description": "Model ids the inference nodes serve, for choosing a group default.",
         "operationId": "list_models_v1_portal_inference_models_get",
         "responses": {
           "200": {
@@ -17350,7 +19973,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CompanyAddress"
+                "$ref": "#/components/schemas/CompanyAddressRequest"
               }
             }
           },
@@ -17426,7 +20049,7 @@
     },
     "/v1/portal/me/group/pack": {
       "get": {
-        "description": "The current user's group pack. Any signed-in account.\n\nAn account rather than an org member: igni asks for this on every\nsession, and an account in no organisation yet is a normal state\nthat has no pack, not a refusal for the CLI to report.\n\nRevalidates: a client that sends back the ``ETag`` it holds gets a\n304 and no body when nothing has changed. igni polls this every few\nminutes from every running session, and the answer is almost always\n\"same as before\" — a full pack of agent prompts each time would be\na lot of bytes to say nothing.\n\nRevalidation, not caching: every response leaves here with\n``no-store`` (see ``DisableCacheMiddleware``), so the client asks\nevery time and the saving is in the answer, not in the asking.",
+        "description": "The current user's group pack, signed. Any signed-in account.\n\nAn account rather than an org member: igni asks for this on every\nsession, and an account in no organisation yet is a normal state\nthat has no pack, not a refusal for the CLI to report. It gets a\nsigned \"no pack\" so igni can clear the policy it cached.\n\nRevalidates: a client that sends back the ``ETag`` it holds gets a\n304 and no body when nothing has changed (see ``GroupPackDelivery``).\n\nRevalidation, not caching: every response leaves here with\n``no-store`` (see ``DisableCacheMiddleware``), so a ``Cache-Control``\nset here would not be delivered. ``no-store`` stops a cache *storing*\nthe pack and leaves conditional revalidation alone, so the client asks\nevery time and the saving is in the answer, not in the asking.",
         "operationId": "get_my_group_pack_v1_portal_me_group_pack_get",
         "responses": {
           "200": {
@@ -17438,7 +20061,7 @@
                       "$ref": "#/components/schemas/SignedOrgGroupPack"
                     },
                     {
-                      "type": "null"
+                      "$ref": "#/components/schemas/SignedNoPack"
                     }
                   ],
                   "title": "Response Get My Group Pack V1 Portal Me Group Pack Get"
@@ -17828,7 +20451,7 @@
     },
     "/v1/portal/organizations/{org_id}/domains/{domain}": {
       "delete": {
-        "description": "Release a domain. Super admins only; 409 while any member's address is on it.",
+        "description": "Release a domain. Super admins only; 404 if not theirs, 409 while any member's address is on it.",
         "operationId": "remove_domain_v1_portal_organizations__org_id__domains__domain__delete",
         "parameters": [
           {

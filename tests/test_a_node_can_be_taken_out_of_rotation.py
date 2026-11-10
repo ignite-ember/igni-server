@@ -27,13 +27,13 @@ from __future__ import annotations
 
 import pytest
 
+from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.node_drain import NodeDrainRegistry
 from app.services.ai.node_registry import NodeRegistry
 from app.services.ai.pool_manager import PoolManager
 from app.services.ai.schemas import (
     AllBackendsDrainedError,
     InferenceBackend,
-    NoBackendConfiguredError,
 )
 from tests.conftest import add_member, audit_rows, auth_header, create_org, create_user, make_token
 
@@ -42,12 +42,11 @@ pytestmark = pytest.mark.anyio
 _ABSOLUTE = 'http://test'
 
 
-def _backend(node_id: str, *, pools=('chat',), port: int = 9001) -> InferenceBackend:
+def _backend(node_id: str, *, port: int = 9001) -> InferenceBackend:
     return InferenceBackend(
         id=node_id,
         base_url=f'http://127.0.0.1:{port}',
         models=['test-model'],
-        pools=list(pools),
         max_concurrent=4,
     )
 
@@ -80,12 +79,11 @@ async def _leave_the_fleet_as_we_found_it():
 
     redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
     try:
-        for pool_name in ('chat', 'codeindex'):
-            for kind in ('inflight', 'sticky'):
-                pattern = redis_key('backends', pool_name, kind) + ':*'
-                keys = [key async for key in redis_client.scan_iter(match=pattern, count=500)]
-                if keys:
-                    await redis_client.delete(*keys)
+        for kind in ('inflight', 'sticky'):
+            pattern = redis_key('backends', kind) + ':*'
+            keys = [key async for key in redis_client.scan_iter(match=pattern, count=500)]
+            if keys:
+                await redis_client.delete(*keys)
     finally:
         await redis_client.aclose()
 
@@ -110,14 +108,14 @@ class TestDrainingStopsSelection:
     # the drain. Parametrised so a broken filter has to fail one of them.
     @pytest.mark.parametrize('stopped, expected', [('gpu-a', 'gpu-b'), ('gpu-b', 'gpu-a')])
     async def test_a_drained_node_is_never_chosen(self, two_nodes, stopped, expected):
-        pool = PoolManager().get_chat_pool()
+        pool = PoolManager().get_pool()
         await NodeDrainRegistry().drain(stopped, by='admin-1')
 
         # Enough attempts that stickiness and least-loaded both get a
         # turn: one lease could land on the survivor by luck.
         chosen = set()
         for index in range(8):
-            lease = await pool.acquire(f'user-{index}', 'chat')
+            lease = await pool.acquire(f'user-{index}')
             chosen.add(lease.backend_id)
             await pool.release(lease)
 
@@ -131,15 +129,15 @@ class TestDrainingStopsSelection:
         would be useless for the case it exists for — the operator is
         watching, and the next request is the one that matters.
         """
-        pool = PoolManager().get_chat_pool()
+        pool = PoolManager().get_pool()
         # Warm the provider cache first, so the drain is the only thing
         # that changes between the two acquires.
-        first = await pool.acquire('u', 'chat')
+        first = await pool.acquire('u')
         await pool.release(first)
 
         await NodeDrainRegistry().drain(first.backend_id, by='admin-1')
 
-        second = await pool.acquire('u', 'chat')
+        second = await pool.acquire('u')
         await pool.release(second)
 
         assert second.backend_id != first.backend_id
@@ -155,13 +153,13 @@ class TestDrainingStopsSelection:
         the leaked lease state that had been skewing it was cleaned up.
         """
         drains = NodeDrainRegistry()
-        pool = PoolManager().get_chat_pool()
+        pool = PoolManager().get_pool()
 
         await drains.drain('gpu-a', by='admin-1')
         assert await drains.resume('gpu-a') is True
         await drains.drain('gpu-b', by='admin-1')
 
-        lease = await pool.acquire('u', 'chat')
+        lease = await pool.acquire('u')
         await pool.release(lease)
 
         assert lease.backend_id == 'gpu-a'
@@ -178,7 +176,7 @@ class TestDrainingStopsSelection:
             await drains.drain(node_id, by='admin-1')
 
         with pytest.raises(AllBackendsDrainedError) as caught:
-            await PoolManager().get_chat_pool().acquire('u', 'chat')
+            await PoolManager().get_pool().acquire('u')
 
         assert 'gpu-a' in str(caught.value) and 'gpu-b' in str(caught.value)
         assert 'drained' in str(caught.value)
@@ -187,8 +185,8 @@ class TestDrainingStopsSelection:
         """The new error must not swallow the old one."""
         PoolManager().provider.invalidate()
 
-        with pytest.raises((NoBackendConfiguredError, Exception)) as caught:
-            await PoolManager().get_chat_pool().acquire('u', 'chat')
+        with pytest.raises(BackendConfigError) as caught:
+            await PoolManager().get_pool().acquire('u')
 
         assert not isinstance(caught.value, AllBackendsDrainedError), caught.value
 
@@ -201,19 +199,18 @@ class TestDrainingStopsSelection:
                 id='gpu-only-me',
                 base_url='http://127.0.0.1:9003',
                 models=['exclusive-model'],
-                pools=['chat'],
                 max_concurrent=1,
             )
         )
         PoolManager().provider.invalidate()
-        pool = PoolManager().get_chat_pool()
+        pool = PoolManager().get_pool()
 
-        before = {name for name, _ in await pool.list_available_models('chat')}
+        before = {name for name, _ in await pool.list_available_models()}
         assert 'exclusive-model' in before
 
         await NodeDrainRegistry().drain('gpu-only-me', by='admin-1')
 
-        after = {name for name, _ in await pool.list_available_models('chat')}
+        after = {name for name, _ in await pool.list_available_models()}
         assert 'exclusive-model' not in after
         assert 'test-model' in after, 'the rest of the fleet is still advertised'
 
@@ -264,9 +261,9 @@ class TestTheDrainOutlivesTheRegistration:
 
         chosen = set()
         for index in range(8):
-            lease = await PoolManager().get_chat_pool().acquire(f'user-{index}', 'chat')
+            lease = await PoolManager().get_pool().acquire(f'user-{index}')
             chosen.add(lease.backend_id)
-            await PoolManager().get_chat_pool().release(lease)
+            await PoolManager().get_pool().release(lease)
         assert chosen == {'gpu-b'}, chosen
 
     async def test_a_heartbeat_does_not_resume_it(self, two_nodes):
@@ -288,7 +285,7 @@ class TestTheNodeStaysVisible:
         response = await client.get('/portal/inference', headers=auth_header(admin['token']))
         assert response.status_code == 200, response.text
 
-        chat = next(p for p in response.json()['pools'] if p['pool'] == 'chat')
+        chat = response.json()
         by_id = {node['id']: node for node in chat['nodes']}
 
         assert 'gpu-a' in by_id, 'the drained node disappeared from the portal'
@@ -302,12 +299,12 @@ class TestTheNodeStaysVisible:
         whether they need another GPU. A node that cannot take work is
         not capacity."""
         before = await client.get('/portal/inference', headers=auth_header(admin['token']))
-        capacity_before = next(p for p in before.json()['pools'] if p['pool'] == 'chat')['total_capacity']
+        capacity_before = before.json()['total_capacity']
 
         await client.post('/portal/inference/nodes/gpu-a/drain', headers=auth_header(admin['token']), json={})
 
         after = await client.get('/portal/inference', headers=auth_header(admin['token']))
-        chat = next(p for p in after.json()['pools'] if p['pool'] == 'chat')
+        chat = after.json()
 
         assert chat['total_capacity'] == capacity_before - 4
         assert len(chat['nodes']) == 2, 'it should be listed but not counted'

@@ -8,10 +8,12 @@ hands out a token for a producer (`docs/service-identity.md` §16).
 
 from fastapi import APIRouter, Depends, Request
 
-from app.middlewares.audit import set_audit_detail, set_audit_target
+from app.api.base_v1.schema.audit_detail import VmCredentialPickedUpAudit
+from app.middlewares.request_audit import RequestAudit
 from app.security.platform_caller import PlatformCaller, require_platform
 from app.security.producer import ProducerKind, ProducerRef
-from app.services.cloud.vm_credentials import PickedUp, VmCredentials
+from app.services.cloud.vm_credential_records import PickedUp
+from app.services.cloud.vm_credentials import VmCredentials
 
 router = APIRouter()
 
@@ -28,6 +30,6 @@ async def pick_up(
     picked = await VmCredentials().pick_up(
         org_id, ProducerRef(kind=kind, id=producer_id), by_client_id=platform.client_id
     )
-    set_audit_target(request, target_type='vm_credential', target_id=picked.credential_id)
-    set_audit_detail(request, {kind: producer_id, 'org': org_id})
+    RequestAudit.of(request).set_target(target_type='vm_credential', target_id=picked.credential_id)
+    RequestAudit.of(request).add_detail(VmCredentialPickedUpAudit(producer=f'{kind}:{producer_id}', org=org_id))
     return picked

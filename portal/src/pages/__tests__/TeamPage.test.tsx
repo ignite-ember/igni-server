@@ -146,6 +146,26 @@ describe('TeamPage', () => {
     expect(within(menu).queryByText(/Sign out everywhere/i)).not.toBeInTheDocument()
   })
 
+  test('a member menu never stacks two dividers between groups', async () => {
+    // The role group used to close with a divider and the status item
+    // open with another, drawing a double rule between them.
+    server.use(
+      http.get('/v1/portal/me', () => HttpResponse.json(meAs('admin'))),
+      http.get('/v1/portal/team', () => HttpResponse.json(TEAM_MEMBERS)),
+    )
+
+    renderWithProviders(<TeamPage />)
+    await screen.findByText('Bob')
+
+    await userEvent.click(screen.getByRole('button', { name: /Actions for Bob/i }))
+    const menu = await screen.findByRole('menu')
+    const dividers = [...menu.querySelectorAll('[data-component="ActionList.Divider"]')]
+    const doubled = dividers.filter(
+      (divider) => divider.nextElementSibling?.getAttribute('data-component') === 'ActionList.Divider',
+    )
+    expect(dividers.length).toBeGreaterThan(0)
+    expect(doubled).toHaveLength(0)
+  })
 
   test('invited row exposes no Reactivate / Deactivate action', async () => {
     server.use(

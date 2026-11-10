@@ -19,11 +19,11 @@ from typing import Literal
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from app.db.sql.models.app_space import SPACE
 from app.db.sql.models.registered_client import APP
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import get_current_account
 from app.services.auth.jwt_service import JWTService, PERSON, TokenUse
 from app.services.identity.registry import ClientRegistry
@@ -39,6 +39,14 @@ class ProducerRef(BaseModel):
 
     kind: ProducerKind
     id: str
+
+    @classmethod
+    def stored(cls, kind: str, producer_id: str) -> ProducerRef:
+        """A producer as a table stores it, its kind checked rather than assumed."""
+        return cls(kind=_KINDS.validate_python(kind), id=producer_id)
+
+
+_KINDS: TypeAdapter[ProducerKind] = TypeAdapter(ProducerKind)
 
 
 class ProducerCaller(BaseModel):
@@ -74,14 +82,14 @@ class Producers:
         payload = tokens.verify(token, audience=tokens.issuer, use=TokenUse.APP)
         if payload is None:
             return None
-        client = await ClientRegistry().approved(str(payload['sub']), kind=APP)
-        if client is None or client.org_id != payload.get('org'):
+        client = await ClientRegistry().approved(payload.sub, kind=APP)
+        if client is None or client.org_id != payload.org:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail='This app is no longer registered',
                 headers={'WWW-Authenticate': 'Bearer'},
             )
-        set_audit_actor(request, user_id=f'app:{client.client_id}', org_id=str(client.org_id))
+        RequestAudit.of(request).attribute_to(user_id=f'app:{client.client_id}', org_id=str(client.org_id))
         return ProducerCaller(kind=APP, id=client.client_id, org_id=str(client.org_id), name=client.name)
 
     async def space(self, request: Request, token: str) -> ProducerCaller | None:
@@ -90,15 +98,15 @@ class Producers:
         payload = tokens.verify(token, audience=tokens.issuer, use=TokenUse.SPACE)
         if payload is None:
             return None
-        org_id = str(payload.get('org') or '')
-        space = await SpaceTokens.live(org_id, str(payload['sub']), app_id=str(payload.get('app') or ''))
+        org_id = payload.org or ''
+        space = await SpaceTokens.live(org_id, payload.sub, app_id=payload.app or '')
         if space is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail='This space no longer exists',
                 headers={'WWW-Authenticate': 'Bearer'},
             )
-        set_audit_actor(request, user_id=f'space:{space.id}', org_id=org_id)
+        RequestAudit.of(request).attribute_to(user_id=f'space:{space.id}', org_id=org_id)
         return ProducerCaller(kind=SPACE, id=space.id, org_id=org_id, name=space.external_id, app_id=space.app_id)
 
     async def machine(self, request: Request, token: str) -> ProducerCaller | None:

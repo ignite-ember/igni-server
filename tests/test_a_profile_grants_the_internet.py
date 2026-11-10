@@ -5,13 +5,15 @@ profile says `internet: true`. An org admin sets it on a profile, or
 approves it when an app or an extension asks for it; the request shows
 it, the audit trail records it, and the producers feed carries it to the
 gateway (`docs/service-identity.md` §12.4). Every profile that existed
-before t0026 is internal-only, and adding the field moves no version: the
-gateway would re-provision every VM, and every decided request would go
-back to pending.
+before t0026 is internal-only, and adding the field moves no profile's
+version: the gateway would re-provision every VM. A request's version
+covers the field whatever its value; t0028 stored every request kept
+before at that version, so none goes back to pending.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from alembic.config import Config
@@ -23,8 +25,8 @@ from alembic import command
 from app.api.base_v1.schema.effective_vm_profile import EffectiveVmProfile
 from app.api.base_v1.schema.vm_profile_requests import ManifestVm, VmProfileRequestSettings
 from app.api.base_v1.schema.vm_profiles import VmProfileSettings
-from app.services.cloud.vm_profile_requests import VmProfileRequests
-from app.services.cloud.vm_profiles import ProfileVersion
+from app.services.cloud.vm_profile_request_records import VmProfileRequestRecords
+from app.services.cloud.vm_profile_versions import ProfileVersion
 from tests.cloud_world import CloudOrg, platform, shipped
 from tests.conftest import audit_rows, TEST_DB_URL_SYNC
 
@@ -93,13 +95,14 @@ class TestNoVersionMoves:
             'p', settings
         )
 
-    def test_an_internal_only_request_keeps_the_version_it_had(self):
+    def test_a_request_version_covers_everything_asked_for(self):
         asked = VmProfileRequestSettings(vcpus=2)
-        before = asked.model_dump(mode='json', exclude={'internet'})
 
-        assert VmProfileRequests.version_of(asked) == ProfileVersion.digest({'requested': before})
-        assert VmProfileRequests.version_of(asked.model_copy(update={'internet': True})) != (
-            VmProfileRequests.version_of(asked)
+        assert VmProfileRequestRecords.version_of(asked) == ProfileVersion.digest(
+            {'requested': asked.model_dump(mode='json')}
+        )
+        assert VmProfileRequestRecords.version_of(asked.model_copy(update={'internet': True})) != (
+            VmProfileRequestRecords.version_of(asked)
         )
 
 
@@ -286,3 +289,34 @@ class TestTheMigration:
         assert kept is False
         assert 'internet' not in rolled_back
         assert 'internet' in _columns(engine)
+
+    def test_t0028_gives_every_request_the_version_it_reads_with_now_and_rolls_back(self, tenant):
+        cfg, engine = tenant
+        command.upgrade(cfg, 'head')
+        command.downgrade(cfg, 't0027')
+        kept = VmProfileRequestSettings(vcpus=2)
+        before = kept.model_dump(mode='json', exclude={'internet'})
+        old_version = ProfileVersion.digest({'requested': before})
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    'INSERT INTO vm_profile_requests (id, subject_kind, subject_id, settings, version, state, '
+                    'requested_by_kind, requested_by_id, requested_at) '
+                    "VALUES ('r-1', 'app', 'a-1', CAST(:settings AS JSONB), :version, 'approved', 'app', 'a-1', now())"
+                ),
+                {'settings': json.dumps(before), 'version': old_version},
+            )
+
+        command.upgrade(cfg, 't0028')
+        with engine.connect() as conn:
+            settings, version = conn.execute(
+                text("SELECT settings, version FROM vm_profile_requests WHERE id = 'r-1'")
+            ).one()
+        command.downgrade(cfg, 't0027')
+        with engine.connect() as conn:
+            rolled_back = conn.execute(text("SELECT version FROM vm_profile_requests WHERE id = 'r-1'")).scalar_one()
+        command.upgrade(cfg, 'head')
+
+        assert settings['internet'] is False
+        assert version == VmProfileRequestRecords.version_of(kept)
+        assert rolled_back == old_version

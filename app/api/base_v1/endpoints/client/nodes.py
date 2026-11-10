@@ -25,28 +25,15 @@ import logging
 
 from fastapi import APIRouter, Body, HTTPException, Request, Response, status
 
+from app.api.base_v1.schema.audit_detail import NodeRegisteredAudit, NodeRemovedAudit
 from app.api.base_v1.schema.nodes import NodeRegistration, NodeRegistrationAccepted
-from app.middlewares.audit import set_audit_detail
+from app.middlewares.request_audit import RequestAudit
 from app.services.ai.node_registry import HEARTBEAT_INTERVAL_SECONDS, NodeRegistry
 from app.services.ai.pool_manager import PoolManager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _audit(request: Request, **detail: object) -> None:
-    """Attach the facts to the audit record F90 writes for this request.
-
-    The principal is named rather than left blank. These routes
-    authenticate with a shared node token, so there is no user behind
-    them — `actor_user_id` is null and stays null. An operator reading
-    the trail needs to know the *kind* of credential used, because "the
-    node token did this from that address" is the whole of what can be
-    said, and a row with no actor and no explanation reads like a bug in
-    the audit trail rather than a fact about the caller.
-    """
-    set_audit_detail(request, {'principal': 'node-token', **detail})
 
 
 @router.post(
@@ -83,13 +70,13 @@ async def register_node(request: Request, body: NodeRegistration = Body(...)) ->
     # *replaces* where its traffic goes — and without this the trail
     # would say a node was registered without saying where. Never the
     # api_key, which is a credential for the node's own proxy.
-    _audit(
-        request,
-        node_id=backend.id,
-        base_url=backend.base_url,
-        models=list(backend.models),
-        pools=list(backend.pools),
-        replaced=bool(existing),
+    RequestAudit.of(request).add_detail(
+        NodeRegisteredAudit(
+            node_id=backend.id,
+            base_url=backend.base_url,
+            models=list(backend.models),
+            replaced=bool(existing),
+        )
     )
 
     _forget_cached_backends()
@@ -134,7 +121,7 @@ async def deregister_node(request: Request, node_id: str) -> Response:
     # second time, and the caller's goal — the node is not in rotation —
     # holds either way.
     await NodeRegistry().deregister(node_id)
-    _audit(request, node_id=node_id)
+    RequestAudit.of(request).add_detail(NodeRemovedAudit(node_id=node_id))
     _forget_cached_backends()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

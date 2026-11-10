@@ -32,7 +32,7 @@ from app.api.base_v1.schema.notification import (
 )
 from app.db.sql.schemas.notification import MAX_KEY, NotificationCounts
 from app.security.auth import get_token
-from app.security.subject import resolve_existing_user_id
+from app.security.subject import Subjects
 from app.services.notifications import NotificationFeed, NotificationStream
 
 router = APIRouter()
@@ -44,10 +44,11 @@ async def list_notifications(
     source: str = Query(default='', max_length=MAX_KEY, description='One extension id'),
     limit: int = Query(default=NotificationFeed.MAX_PAGE, ge=1, le=NotificationFeed.MAX_PAGE),
     token: str = Depends(get_token),
+    subjects: Subjects = Depends(Subjects.default),
     feed: NotificationFeed = Depends(NotificationFeed.default),
 ) -> NotificationList:
     """Newest first. What is listed here is marked delivered."""
-    user_id = await resolve_existing_user_id(token)
+    user_id = await subjects.resolve_existing_user_id(token)
     refs = await feed.listing(user_id=user_id, unread_only=unread_only, source=source, limit=limit)
     return NotificationList(notifications=[NotificationRow.from_ref(ref) for ref in refs])
 
@@ -55,10 +56,11 @@ async def list_notifications(
 @router.get('/notifications/counts', response_model=NotificationCounts, summary='Unread, per extension')
 async def count_notifications(
     token: str = Depends(get_token),
+    subjects: Subjects = Depends(Subjects.default),
     feed: NotificationFeed = Depends(NotificationFeed.default),
 ) -> NotificationCounts:
     """The badge on each extension, and on igni."""
-    user_id = await resolve_existing_user_id(token)
+    user_id = await subjects.resolve_existing_user_id(token)
     return await feed.counts(user_id=user_id)
 
 
@@ -71,10 +73,11 @@ async def count_notifications(
 async def mark_read(
     body: MarkRead | None = Body(default=None),
     token: str = Depends(get_token),
+    subjects: Subjects = Depends(Subjects.default),
     feed: NotificationFeed = Depends(NotificationFeed.default),
 ) -> NotificationRead:
     """``{"ids": [...]}``, ``{"source": "..."}``, or ``{}`` for everything."""
-    user_id = await resolve_existing_user_id(token)
+    user_id = await subjects.resolve_existing_user_id(token)
     which = body or MarkRead()
     changed = await feed.mark_read(user_id=user_id, ids=which.ids, source=which.source)
     counts = await feed.counts(user_id=user_id)
@@ -85,6 +88,7 @@ async def mark_read(
 async def stream_notifications(
     request: Request,
     token: str = Depends(get_token),
+    subjects: Subjects = Depends(Subjects.default),
     last_event_id: str | None = Header(default=None, alias='Last-Event-ID'),
     stream: NotificationStream = Depends(NotificationStream.default),
 ):
@@ -93,7 +97,7 @@ async def stream_notifications(
     Lossy, in-process, and carrying a cursor rather than contents; the
     list is what is true.
     """
-    user_id = await resolve_existing_user_id(token)
+    user_id = await subjects.resolve_existing_user_id(token)
 
     async def events():
         with stream.listen(user_id=user_id, cursor=last_event_id or '') as channel:

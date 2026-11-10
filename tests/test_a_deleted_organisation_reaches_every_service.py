@@ -17,7 +17,8 @@ import pytest
 from app.db.sql.organisation_deletion_notices import OrganisationDeletionNoticeDB
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.services.auth.jwt_service import JWTService
-from app.services.identity.key_ring import SigningKeys
+from app.services.identity.key_ring import ProcessSigningKeys
+from app.services.identity.organisation_deletion_wake import DeletionWake
 from app.services.identity.organisation_deletions import LEASE, OrganisationDeletions
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import RegisteredService
@@ -40,7 +41,7 @@ class _Services:
 
     def claims(self, request: httpx.Request, audience: str) -> dict:
         token = request.headers['authorization'].removeprefix('Bearer ')
-        key = SigningKeys.ring().published.keys[0].as_dict()
+        key = ProcessSigningKeys().ring().published.keys[0].as_dict()
         return jwt.decode(token, jwt.PyJWK(key), algorithms=['RS256'], audience=audience, issuer=JWTService().issuer)
 
 
@@ -115,7 +116,7 @@ class TestDelivering:
 
         round_ = await deliveries.deliver_due()
 
-        assert sorted(name for _, name in round_.confirmed) == ['Artifacts', 'CodeIndex']
+        assert sorted(n.service_name for n in round_.confirmed) == ['Artifacts', 'CodeIndex']
         told = {r.url.host: r for r in services.calls}
         request = told['codeindex.example.com']
         assert request.method == 'DELETE'
@@ -135,7 +136,7 @@ class TestDelivering:
 
         first = await deliveries.deliver_due()
 
-        assert [name for _, name in first.unconfirmed] == ['CodeIndex']
+        assert [n.service_name for n in first.unconfirmed] == ['CodeIndex']
         [owed] = await OrganisationDeletionNoticeDB().outstanding()
         assert owed.attempts == 1
         assert 'HTTP 503' in owed.last_error
@@ -149,7 +150,7 @@ class TestDelivering:
         services.failing.clear()
         later = await deliveries.deliver_due(now=_later(minutes=1))
 
-        assert [name for _, name in later.confirmed] == ['CodeIndex']
+        assert [n.service_name for n in later.confirmed] == ['CodeIndex']
         assert await OrganisationDeletionNoticeDB().outstanding() == []
 
     async def test_an_unreachable_service_is_unconfirmed_not_fatal(self, client, admin):
@@ -212,3 +213,18 @@ class TestBackoff:
         assert delays[:4] == [timedelta(seconds=s) for s in (30, 60, 120, 240)]
         assert delays[-1] == timedelta(hours=6)
         assert OrganisationDeletions.retry_delay(10_000) == timedelta(hours=6)
+
+
+class TestWaking:
+    def test_a_nudge_wakes_the_armed_round_and_nothing_once_it_stops(self):
+        wake = DeletionWake()
+        wake.nudge()  # No round: nothing to wake, and nothing breaks.
+
+        event = wake.arm()
+        wake.nudge()
+        assert event.is_set()
+
+        event.clear()
+        wake.disarm()
+        wake.nudge()
+        assert not event.is_set()

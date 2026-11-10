@@ -79,7 +79,8 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
-from app.db.sql.tenancy import TenantDatabases
+from app.db.sql.tenant_migrator import TenantMigrator
+from app.db.sql.tenant_names import TenantNames
 from app.services.secrets import decrypt_secret, encrypt_secret, previous_keys, primary_cipher
 
 #: Ciphertext columns in the shared plane: `(table, primary key, column)`.
@@ -121,9 +122,10 @@ def _databases() -> list[tuple[str, str, tuple[tuple[str, str, str], ...]]]:
     kept, and a row in it left on the old key becomes unreadable the day
     that key is removed.
     """
-    shared = TenantDatabases.base_name()
+    names = TenantNames()
+    shared = names.base_name()
     found: list[tuple[str, str, tuple[tuple[str, str, str], ...]]] = [('shared', shared, SHARED_COLUMNS)]
-    engine = create_engine(TenantDatabases.sync_url(shared), poolclass=NullPool)
+    engine = create_engine(names.sync_url(shared), poolclass=NullPool)
     try:
         with engine.connect() as conn:
             for row in conn.execute(text('SELECT org_id, database, state FROM tenants ORDER BY number')):
@@ -194,14 +196,16 @@ def rotate(*, apply: bool) -> dict[str, int]:
     key.
     """
     counts = dict.fromkeys(COUNTS, 0)
+    names = TenantNames()
+    migrator = TenantMigrator(names=names)
 
     for label, database, columns in _databases():
-        if label != 'shared' and not TenantDatabases.exists(database):
+        if label != 'shared' and not migrator.exists(database):
             counts['missing'] += 1
             print(f'  {label}: database {database} is registered but does not exist; skipped')
             continue
         counts['databases'] += 1
-        engine = create_engine(TenantDatabases.sync_url(database), poolclass=NullPool)
+        engine = create_engine(names.sync_url(database), poolclass=NullPool)
         try:
             _rotate_one(engine, label, columns, apply=apply, counts=counts)
         finally:

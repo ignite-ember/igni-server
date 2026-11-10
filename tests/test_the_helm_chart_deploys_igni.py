@@ -101,8 +101,6 @@ _FULL = _MINIMAL + [
     '--set',
     'github.appId=12345',
     '--set',
-    'codeindex.baseUrl=http://code-index:8000',
-    '--set',
     'urls.portalBase=https://igni.example.com',
     '--set',
     'urls.oauthRedirectBase=https://igni.example.com',
@@ -123,18 +121,6 @@ _FULL = _MINIMAL + [
     '--set',
     'ingress.host=igni.example.com',
 ]
-
-
-# Artifacts, published on its own host. Kept out of `_FULL`: its Service
-# is deployed separately, so the "every backend names a Service in this
-# release" rule cannot hold for it.
-_ARTIFACTS_WITHOUT_HOST = [
-    '--set',
-    'artifacts.enabled=true',
-    '--set',
-    'artifacts.serviceName=igni-artifacts-svc',
-]
-_ARTIFACTS = _ARTIFACTS_WITHOUT_HOST + ['--set', 'artifacts.host=artifacts.example.com']
 
 
 def _without(*keys: str) -> list[str]:
@@ -234,9 +220,9 @@ class TestTheChartRendersAtAll:
         success while measuring nothing, so the CI side is asserted here."""
         ci = (_ROOT / '.github/workflows/ci.yml').read_text()
 
-        assert (
-            'helm' in ci.lower()
-        ), 'CI does not install helm, so every assertion in this file skips there — and a skip is not a pass'
+        assert 'helm' in ci.lower(), (
+            'CI does not install helm, so every assertion in this file skips there — and a skip is not a pass'
+        )
 
 
 class TestEveryWorkloadIsHardened:
@@ -332,9 +318,9 @@ class TestTheProbesSayWhatTheyMean:
         across every replica."""
         container = _pod_specs(manifests)['igni-api']['containers'][0]
 
-        assert (
-            container['livenessProbe']['httpGet']['path'] == '/health'
-        ), 'the API liveness probe is not /health. If it is /ready, a database blip restarts every replica at once.'
+        assert container['livenessProbe']['httpGet']['path'] == '/health', (
+            'the API liveness probe is not /health. If it is /ready, a database blip restarts every replica at once.'
+        )
         assert container['readinessProbe']['httpGet']['path'] == '/ready'
 
     def test_the_migration_job_has_no_probes(self, manifests):
@@ -373,12 +359,12 @@ class TestTheMigrationRunsBeforeAnythingServes:
                     referenced.add(source[key]['name'])
 
         assert referenced, 'the migration job takes no configuration at all'
-        assert (
-            'igni-config' not in referenced
-        ), 'the migration hook reads igni-config, which does not exist when a hook runs on a first install'
-        assert (
-            'igni-secrets' not in referenced
-        ), 'the migration hook reads igni-secrets, which does not exist when a hook runs'
+        assert 'igni-config' not in referenced, (
+            'the migration hook reads igni-config, which does not exist when a hook runs on a first install'
+        )
+        assert 'igni-secrets' not in referenced, (
+            'the migration hook reads igni-secrets, which does not exist when a hook runs'
+        )
 
     def test_everything_the_hook_names_is_itself_a_hook_that_sorts_first(self, manifests):
         """A rule over the pod spec, because the list version missed one.
@@ -652,101 +638,6 @@ class TestNothingIsRoutedToNothing:
         assert 'igni-api' in {m['metadata']['name'] for m in _of_kind(manifests, 'Service')}
 
 
-@pytest.fixture(scope='module')
-def with_artifacts() -> list[dict]:
-    return _render(*_FULL, *_ARTIFACTS)
-
-
-class TestAServiceHasItsOwnHost:
-    """Artifacts is served on its own hostname, never as a path on igni's.
-
-    A service's URL is its identity (docs/service-identity.md): the
-    audience of every token people get for it, and the base igni calls
-    for erasure and export. It used to be `/v1/artifacts` on igni's host,
-    which shared igni's origin — a token's audience could no longer say
-    which service it was for — and took a path igni could never use.
-    """
-
-    @staticmethod
-    def _artifacts_env(manifests: list[dict]) -> dict:
-        return next(m for m in _of_kind(manifests, 'ConfigMap') if m['metadata']['name'] == 'igni-artifacts-env')[
-            'data'
-        ]
-
-    def test_no_path_on_igni_host_routes_to_artifacts(self, with_artifacts):
-        igni_rules = [
-            rule
-            for ingress in _of_kind(with_artifacts, 'Ingress')
-            for rule in ingress['spec']['rules']
-            if rule['host'] == 'igni.example.com'
-        ]
-        assert igni_rules, 'no rule for igni.example.com rendered at all'
-
-        for rule in igni_rules:
-            for path in rule['http']['paths']:
-                backend = path['backend']['service']['name']
-                assert backend != 'igni-artifacts-svc', f'{path["path"]} on igni\'s host routes to Artifacts'
-                assert not path['path'].startswith('/v1/artifacts'), path
-
-    def test_artifacts_is_served_on_its_own_host(self, with_artifacts):
-        rules = [
-            rule
-            for ingress in _of_kind(with_artifacts, 'Ingress')
-            for rule in ingress['spec']['rules']
-            if rule['host'] == 'artifacts.example.com'
-        ]
-
-        assert len(rules) == 1, rules
-        routes = {p['path']: p['backend']['service'] for p in rules[0]['http']['paths']}
-        assert routes == {'/': {'name': 'igni-artifacts-svc', 'port': {'number': 8100}}}, routes
-
-    def test_its_public_base_url_is_its_own_host(self, with_artifacts):
-        """The address it is deployed with is the one the Ingress
-        publishes, by construction — and not igni's."""
-        env = self._artifacts_env(with_artifacts)
-        published = {
-            rule['host']
-            for ingress in _of_kind(with_artifacts, 'Ingress')
-            if ingress['metadata']['name'] == 'igni-artifacts'
-            for rule in ingress['spec']['rules']
-        }
-        igni_public = _of_kind(with_artifacts, 'ConfigMap')
-        igni_public = next(m for m in igni_public if m['metadata']['name'] == 'igni-config')['data']['PUBLIC_BASE_URL']
-
-        assert env['PUBLIC_BASE_URL'] == 'https://artifacts.example.com', env
-        assert published == {'artifacts.example.com'}, published
-        assert env['PUBLIC_BASE_URL'] != igni_public
-
-    def test_it_reaches_igni_through_the_api_service(self, with_artifacts):
-        env = self._artifacts_env(with_artifacts)
-        services = {svc['metadata']['name'] for svc in _of_kind(with_artifacts, 'Service')}
-
-        assert env['IGNI_SERVER_BASE_URL'] == 'http://igni-api.default.svc:7777', env
-        assert 'igni-api' in services
-
-    def test_its_certificate_is_its_own(self):
-        manifests = _render(
-            *_FULL,
-            *_ARTIFACTS,
-            '--set',
-            'ingress.tls.enabled=true',
-            '--set',
-            'ingress.tls.secretName=igni-tls',
-            '--set',
-            'artifacts.tls.secretName=artifacts-tls',
-        )
-        tls = {i['metadata']['name']: i['spec']['tls'] for i in _of_kind(manifests, 'Ingress')}
-
-        assert tls['igni'] == [{'hosts': ['igni.example.com'], 'secretName': 'igni-tls'}], tls
-        assert tls['igni-artifacts'] == [{'hosts': ['artifacts.example.com'], 'secretName': 'artifacts-tls'}], tls
-
-    def test_disabled_renders_nothing_for_it(self, manifests):
-        names = {m['metadata']['name'] for m in manifests}
-
-        assert 'igni-artifacts' not in names
-        assert 'igni-artifacts-env' not in names
-
-
 class TestConfigurationChangesReachTheRunningPods:
     def test_a_config_change_rolls_the_pods(self, manifests):
         """Without a checksum annotation, an upgrade that alters only a
@@ -1013,37 +904,6 @@ class TestItRefusesRatherThanGuessing:
                     'ingress.tls.enabled=true',
                 ],
             ),
-            ('artifacts.host is required', _MINIMAL + _ARTIFACTS_WITHOUT_HOST),
-            (
-                'artifacts.host must differ from ingress.host',
-                _MINIMAL
-                + _ARTIFACTS_WITHOUT_HOST
-                + ['--set', 'ingress.enabled=true', '--set', 'ingress.host=igni.example.com']
-                + ['--set', 'artifacts.host=igni.example.com'],
-            ),
-            (
-                'artifacts.host must be a bare hostname',
-                _MINIMAL + _ARTIFACTS_WITHOUT_HOST + ['--set', 'artifacts.host=https://artifacts.example.com'],
-            ),
-            (
-                'artifacts.serviceName is required',
-                _MINIMAL + ['--set', 'artifacts.enabled=true', '--set', 'artifacts.host=a.example.com'],
-            ),
-            (
-                'artifacts.tls.secretName is required',
-                _MINIMAL
-                + _ARTIFACTS
-                + [
-                    '--set',
-                    'ingress.enabled=true',
-                    '--set',
-                    'ingress.host=igni.example.com',
-                    '--set',
-                    'ingress.tls.enabled=true',
-                    '--set',
-                    'ingress.tls.secretName=igni-tls',
-                ],
-            ),
         ],
         ids=[
             'no-api-image',
@@ -1057,11 +917,6 @@ class TestItRefusesRatherThanGuessing:
             'plain-http-public-url',
             'ingress-without-host',
             'tls-without-secret',
-            'artifacts-without-host',
-            'artifacts-on-igni-host',
-            'artifacts-host-is-a-url',
-            'artifacts-without-service',
-            'artifacts-tls-without-its-own-secret',
         ],
     )
     def test_it_refuses(self, expected_phrase, args):
@@ -1188,9 +1043,9 @@ class TestBackupsAreOffUntilYouChooseWhereTheyGo:
     recovery."""
 
     def test_it_is_off_by_default(self, manifests):
-        assert not [
-            m for m in manifests if m['kind'] == 'CronJob'
-        ], 'a backup CronJob renders by default, which means the chart chose your storage for you'
+        assert not [m for m in manifests if m['kind'] == 'CronJob'], (
+            'a backup CronJob renders by default, which means the chart chose your storage for you'
+        )
 
     def test_enabling_it_without_a_claim_refuses(self):
         message = _refuse(*_MINIMAL, '--set', 'backup.enabled=true')
@@ -1211,9 +1066,9 @@ class TestBackupsAreOffUntilYouChooseWhereTheyGo:
         cron = next(m for m in rendered if m['kind'] == 'CronJob')
 
         assert cron['spec']['timeZone'] == 'Etc/UTC', cron['spec']
-        assert (
-            cron['spec']['concurrencyPolicy'] == 'Forbid'
-        ), 'two dumps of the same database at once is how a backup volume fills up'
+        assert cron['spec']['concurrencyPolicy'] == 'Forbid', (
+            'two dumps of the same database at once is how a backup volume fills up'
+        )
 
     def test_it_runs_once_rather_than_looping(self):
         """The same script, invoked differently: the compose stack loops
@@ -1355,40 +1210,34 @@ class TestNothingIsPulledFromAPublicRegistry:
     _PRIVATE = 'registry.example.com/'
 
     #: Everything the chart can switch on, with what each one requires.
-    _EVERYTHING = (
-        _FULL
-        + _ARTIFACTS
-        + [
-            '--set',
-            'backup.enabled=true',
-            '--set',
-            'backup.existingClaim=igni-backups',
-            '--set',
-            'monitoring.serviceMonitor.enabled=true',
-            '--set',
-            'monitoring.prometheusRule.enabled=true',
-            '--set',
-            'monitoring.dashboard.enabled=true',
-            '--set',
-            'networkPolicy.enabled=true',
-            '--set',
-            'networkPolicy.ingressFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=ingress-nginx',
-            '--set',
-            'networkPolicy.metricsFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=monitoring',
-            '--set',
-            'marketplace.enabled=true',
-            '--set',
-            'ingress.tls.enabled=true',
-            '--set',
-            'ingress.tls.secretName=igni-tls',
-            '--set',
-            'artifacts.tls.secretName=artifacts-tls',
-            '--set',
-            'licence.existingSecret=igni-licence',
-            '--set',
-            'socialSignIn.googleClientId=igni.apps.googleusercontent.com',
-        ]
-    )
+    _EVERYTHING = _FULL + [
+        '--set',
+        'backup.enabled=true',
+        '--set',
+        'backup.existingClaim=igni-backups',
+        '--set',
+        'monitoring.serviceMonitor.enabled=true',
+        '--set',
+        'monitoring.prometheusRule.enabled=true',
+        '--set',
+        'monitoring.dashboard.enabled=true',
+        '--set',
+        'networkPolicy.enabled=true',
+        '--set',
+        'networkPolicy.ingressFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=ingress-nginx',
+        '--set',
+        'networkPolicy.metricsFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=monitoring',
+        '--set',
+        'marketplace.enabled=true',
+        '--set',
+        'ingress.tls.enabled=true',
+        '--set',
+        'ingress.tls.secretName=igni-tls',
+        '--set',
+        'licence.existingSecret=igni-licence',
+        '--set',
+        'socialSignIn.googleClientId=igni.apps.googleusercontent.com',
+    ]
 
     @staticmethod
     def _images(node, path: str = '') -> list[tuple[str, str]]:

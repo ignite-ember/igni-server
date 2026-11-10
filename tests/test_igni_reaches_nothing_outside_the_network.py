@@ -84,7 +84,6 @@ def deployment(monkeypatch: pytest.MonkeyPatch, peers: Peers) -> Iterator[None]:
             'base_url': f'{peers.node.url}/v1',
             'model': StubModelNode.MODEL,
             'max_concurrent': 4,
-            'pools': ['chat', 'codeindex'],
         }
     ]
     monkeypatch.setattr(settings, 'inference_backends', json.dumps(backends))
@@ -92,7 +91,15 @@ def deployment(monkeypatch: pytest.MonkeyPatch, peers: Peers) -> Iterator[None]:
     # this one's chat to wherever that test pointed it.
     SingletonMeta._instances.pop(PoolManager, None)
     PoolManager(provider=InferenceBackendProvider())
+    # The chat services are built once per app and cached on it, and the
+    # app is the module's own singleton — so a chat service an earlier
+    # test built still holds the pool manager of that moment, and this
+    # test's own backends would never be reached through it.
+    from app.main import app as _app
+
+    _app.state.chat_services = None
     yield
+    _app.state.chat_services = None
     SingletonMeta._instances.pop(PoolManager, None)
 
 

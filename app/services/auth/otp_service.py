@@ -36,9 +36,10 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.db.redis.sealed import seal, unseal
 from app.db.sql.user import UserDB
-from app.security.subject import refuse_if_deactivated
+from app.security.subject import Subjects
 from app.services.auth.code_throttle import CodeThrottle
 from app.services.auth.jwt_service import JWTService, TokenResponse
+from app.services.identity.account_refusals import AccountRefusals
 from app.services.secrets import SecretDecryptError
 from app.utils.singleton import SingletonMeta
 
@@ -293,7 +294,7 @@ class OTPService(metaclass=SingletonMeta):
                 detail='User not found',
             )
 
-        refuse_if_deactivated(user)
+        Subjects.refuse_if_deactivated(user)
         token = JWTService().create_token(str(user.user_id))
         await self._users.note_sign_in(str(user.user_id))
         return TokenResponse(access_token=token)
@@ -310,5 +311,11 @@ class OTPService(metaclass=SingletonMeta):
             )
 
         hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
-        await self._users.update_password(user_id=str(user.user_id), hashed_password=hashed)
+        with AccountRefusals():
+            await self._users.update_password(str(user.user_id), hashed)
         return 'Password has been reset successfully. Please sign in with your new password.'
+
+
+def otp_service() -> OTPService:
+    """The FastAPI dependency; tests replace it through `app.dependency_overrides`."""
+    return OTPService()

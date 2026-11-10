@@ -3,14 +3,14 @@
 The notification is already written by the time anything here runs.
 This only decides how soon it is read: a listener on another worker
 misses the nudge and finds out on reconnect, which is the bargain
-:mod:`app.services.comment_notifier` was built on.
+:mod:`app.services.notifications.listeners` was built on.
 """
 
 from __future__ import annotations
 
 import logging
 
-from app.services.comment_notifier import CommentNotifier
+from app.services.notifications.listeners import Listeners
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 class Nudger:
     """Wakes whoever is listening, so the news arrives now."""
 
-    def __init__(self, *, notifier: CommentNotifier | None = None) -> None:
+    def __init__(self, *, notifier: Listeners | None = None) -> None:
         # Resolved once, here, rather than read out of the module from
         # inside a loop. A test hands in a recording fake instead of
         # patching a global.
-        self._notifier = notifier or CommentNotifier()
+        self._notifier = notifier or Listeners()
 
     async def wake(self, user_ids: set[str], *, cursor: str = '') -> None:
         """Nudge each of these accounts. Lossy on purpose.

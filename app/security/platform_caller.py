@@ -15,7 +15,7 @@ from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
 from app.db.sql.models.registered_client import PLATFORM
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 from app.services.auth.jwt_service import JWTService, TokenUse
 from app.services.identity.registry import ClientRegistry
 
@@ -32,12 +32,12 @@ class PlatformCaller(BaseModel):
 async def require_platform(request: Request, token: str | None = Depends(_bearer)) -> PlatformCaller:
     tokens = JWTService()
     payload = tokens.verify(token or '', audience=tokens.issuer, use=TokenUse.PLATFORM)
-    client = await ClientRegistry().approved(str(payload['sub']), kind=PLATFORM) if payload else None
+    client = await ClientRegistry().approved(payload.sub, kind=PLATFORM) if payload else None
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='A platform token from an approved platform client is required',
             headers={'WWW-Authenticate': 'Bearer'},
         )
-    set_audit_actor(request, user_id=f'client:{client.client_id}')
+    RequestAudit.of(request).attribute_to(user_id=f'client:{client.client_id}')
     return PlatformCaller(client_id=client.client_id, name=client.name)

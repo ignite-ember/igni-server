@@ -23,7 +23,11 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.db.sql.group_person_erasure import GroupPersonErasureDB
+from app.db.sql.schemas.tenancy import OrganisationDetached
+from app.db.sql.tenant_registry import TenantRegistryDB
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -99,7 +103,7 @@ class TestTheOrgKeepsItsWork:
     """The reason provenance is cleared rather than the rows deleted.
 
     Groups are in the organisation's own database and `users` in the
-    shared plane, so no foreign key joins them; `GroupsDB.forget_person`
+    shared plane, so no foreign key joins them; `GroupPersonErasureDB.forget_person`
     does what `SET NULL` used to.
     """
 
@@ -174,6 +178,34 @@ class TestTheOrgKeepsItsWork:
         assert rows[0][0] is None
 
 
+class TestAnOrganisationThatCannotBeCleared:
+    """The account is already gone when the organisation's groups are cleared of it.
+
+    A failure in the organisation's own database leaves a stale group
+    row for nobody, never a person who can still sign in, so it is
+    logged and the deletion still succeeds.
+    """
+
+    async def test_it_is_logged_and_the_deletion_stands(
+        self, client, db, org_db, leaver_and_stayer, monkeypatch, caplog
+    ):
+        org_id = leaver_and_stayer['org']
+
+        async def _down(self, org_id: str, *, user_id: str) -> None:
+            raise SQLAlchemyError("the organisation's database is down")
+
+        monkeypatch.setattr(GroupPersonErasureDB, 'forget_person', _down)
+        response = await client.delete('/portal/me', headers=leaver_and_stayer['headers'])
+
+        assert response.status_code == 200, response.text
+        assert not (await db.execute(text('SELECT 1 FROM users WHERE user_id = :u'), {'u': 'leaver'})).fetchall()
+        assert f'Could not clear a deleted account from organisation {org_id}' in caplog.text
+        stale = await _in_org(
+            org_db, org_id, 'SELECT count(*) FROM org_group_members WHERE added_by_user_id = :u', {'u': 'leaver'}
+        )
+        assert stale.scalar() == 1
+
+
 class TestTheSoleMemberCase:
     async def test_a_sole_member_takes_the_org_with_them(self, client, db):
         """The case that passed all along, kept so the fix is shown to be
@@ -191,6 +223,21 @@ class TestTheSoleMemberCase:
             await db.execute(text('SELECT count(*) FROM organizations WHERE id = :o'), {'o': str(org.id)})
         ).scalar()
         assert count == 0
+
+    async def test_the_org_s_own_database_is_kept_and_no_longer_routed_to(self, client, db):
+        await create_user(db, user_id='solo', email='s@s.com')
+        org = await create_org(db, owner_user_id='solo', slug='solo', display_name='Solo')
+        await add_member(db, org_id=str(org.id), user_id='solo', role='admin')
+        headers = auth_header(make_token('solo', org_id=str(org.id)))
+        await client.post('/portal/groups', json={'name': 'mine'}, headers=headers)
+
+        response = await client.delete('/portal/me', headers=headers)
+
+        assert response.status_code == 200, response.text
+        row = (await db.execute(text('SELECT state FROM tenants WHERE org_id = :o'), {'o': str(org.id)})).one()
+        assert row.state == 'detached'
+        with pytest.raises(OrganisationDetached):
+            await TenantRegistryDB().database_of(str(org.id))
 
 
 class TestWhatIsRetained:
@@ -281,14 +328,14 @@ class TestTheDeletionIsAllOrNothing:
         """The user row is deleted last, so making *that* statement fail
         is the way to land mid-deletion. Everything before it must roll
         back with it."""
-        from app.db.sql.user import UserDB
+        from app.db.sql.account_deletion import AccountDeletionDB
 
         user_id = f'u-atomic-{uuid.uuid4().hex[:8]}'
         await create_user(db, user_id=user_id, email=f'{user_id}@example.com')
         org = await create_org(db, owner_user_id=user_id, slug=f'solo-{uuid.uuid4().hex[:6]}', display_name='Solo')
         await db.commit()
 
-        original = UserDB.delete_account
+        original = AccountDeletionDB.remove
 
         async def _fail_at_the_end(self, *, user_id, delete_org_ids, leave_org_ids):
             async with self.session_scope() as session:
@@ -299,13 +346,13 @@ class TestTheDeletionIsAllOrNothing:
                 await session.execute(Organization.__table__.delete().where(Organization.id.in_(delete_org_ids)))
                 raise RuntimeError('the database went away mid-deletion')
 
-        monkeypatch.setattr(UserDB, 'delete_account', _fail_at_the_end)
+        monkeypatch.setattr(AccountDeletionDB, 'remove', _fail_at_the_end)
         token = make_token(user_id, org_id=str(org.id))
         try:
             with pytest.raises(RuntimeError):
                 await client.delete('/portal/me', headers=auth_header(token))
         finally:
-            monkeypatch.setattr(UserDB, 'delete_account', original)
+            monkeypatch.setattr(AccountDeletionDB, 'remove', original)
 
         # Nothing is half-done: the org the transaction tried to remove
         # is still there, and so is the person.

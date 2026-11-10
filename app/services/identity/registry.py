@@ -22,14 +22,11 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.sql.models.registered_client import APP, APPROVED, PENDING, PLATFORM, RegisteredClient, REVOKED, SERVICE
 from app.db.sql.registered_clients import RegisteredClientDB
 from app.db.sql.service_extensions import ServiceExtensionDB
-from app.services.identity.jwk import PublicJwk
+from app.services.identity.jwk import JwkSet, KeysRefused, SubmittedJwks, TooManyKeys
 from app.services.identity.service_url import ServiceUrl
 
 #: How many registrations may wait for a super admin at once.
 MAX_PENDING = 20
-
-#: More than a rotation needs (old and new, perhaps a third staged).
-MAX_KEYS = 3
 
 
 class RegistrationRefused(ValueError):
@@ -60,22 +57,19 @@ class ClientRegistration(BaseModel):
     kind: Literal['service', 'platform'] = 'service'
     redirect_uris: list[str] = Field(default_factory=list, max_length=10)
     token_endpoint_auth_method: Literal['private_key_jwt'] = 'private_key_jwt'
-    jwks: dict[str, list[dict[str, object]]]
+    jwks: SubmittedJwks
 
     @field_validator('redirect_uris')
     @classmethod
     def _redirects(cls, value: list[str]) -> list[str]:
         return [ServiceUrl.redirect(uri) for uri in value]
 
-    def keys(self) -> list[PublicJwk]:
-        raw = self.jwks.get('keys') or []
-        if not raw:
-            raise RegistrationRefused('jwks must hold at least one public key')
-        if len(raw) > MAX_KEYS:
-            raise RegistrationRefused(f'at most {MAX_KEYS} keys per client')
+    def keys(self) -> JwkSet:
         try:
-            return [PublicJwk.from_mapping(dict(key)) for key in raw]
-        except ValueError as exc:
+            return self.jwks.public_keys()
+        except TooManyKeys as exc:
+            raise RegistrationRefused(f'at most {exc.limit} keys per client') from exc
+        except KeysRefused as exc:
             raise RegistrationRefused(str(exc)) from exc
 
     def url(self) -> str:
@@ -95,7 +89,7 @@ class ClientRegistry:
     async def register(self, registration: ClientRegistration) -> RegisteredClient:
         keys = registration.keys()
         url = registration.url()
-        thumbprint = keys[0].thumbprint()
+        thumbprint = keys.keys[0].thumbprint()
 
         existing = await self._store.by_thumbprint(thumbprint)
         if existing is not None:
@@ -112,7 +106,7 @@ class ClientRegistry:
                 name=registration.client_name.strip(),
                 base_url=url,
                 redirect_uris=registration.redirect_uris,
-                jwks={'keys': [key.as_dict() for key in keys]},
+                jwks=keys.model_dump(exclude_none=True),
                 thumbprint=thumbprint,
                 state=PENDING,
             )

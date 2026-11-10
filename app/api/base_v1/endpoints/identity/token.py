@@ -8,11 +8,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
-from app.middlewares.audit import audit_this_request, set_audit_actor, set_audit_detail, set_audit_target
-from app.services.cloud.vm_credentials import VM_GRANTS, VmCredentials
+from app.api.base_v1.schema.audit_detail import TokenGrantAudit
+from app.middlewares.request_audit import RequestAudit
+from app.services.cloud.vm_credential_grants import VM_GRANTS, VmCredentialGrants
 from app.services.identity.api_keys import API_KEY, ApiKeys, ApiKeyString
 from app.services.identity.errors import OAuthError
-from app.services.identity.grants import IssuedTokens, RevocationRequest, TokenGrants, TokenRequest
+from app.services.identity.grants import TokenGrants
+from app.services.identity.sign_in_revocation import SignInRevocation
+from app.services.identity.token_requests import IssuedTokens, RevocationRequest, TokenRequest
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,9 @@ async def token(request: Request) -> JSONResponse:
         else:
             # A VM's own credential, and the sign-in that issues a person's:
             # docs/service-identity.md §16.
-            issued = await (VmCredentials().grant(body) if body.grant_type in VM_GRANTS else TokenGrants().grant(body))
+            issued = await (
+                VmCredentialGrants().grant(body) if body.grant_type in VM_GRANTS else TokenGrants().grant(body)
+            )
     except ValidationError:
         return OAuthError.invalid_request('grant_type is required').response()
     except OAuthError as refusal:
@@ -43,14 +48,16 @@ async def token(request: Request) -> JSONResponse:
 
 async def _api_key(request: Request, body: TokenRequest) -> IssuedTokens:
     """A personal API key exchanged for a session (§22) — recorded, granted or refused."""
-    audit_this_request(request)
-    set_audit_detail(request, {'grant': 'api_key'})
+    RequestAudit.of(request).record_regardless()
+    RequestAudit.of(request).add_detail(TokenGrantAudit())
     try:
-        set_audit_target(request, target_type='api_key', target_id=ApiKeyString.parse(body.api_key or '').key_id)
+        RequestAudit.of(request).set_target(
+            target_type='api_key', target_id=ApiKeyString.parse(body.api_key or '').key_id
+        )
     except OAuthError:
         pass  # not even shaped like one: refused below, recorded without a target
     exchanged = await ApiKeys().exchange(body)
-    set_audit_actor(request, user_id=exchanged.user_id, email=None, org_id=exchanged.org_id)
+    RequestAudit.of(request).attribute_to(user_id=exchanged.user_id, email=None, org_id=exchanged.org_id)
     return exchanged.issued
 
 
@@ -63,7 +70,7 @@ async def revoke(request: Request) -> Response:
     form = await request.form()
     try:
         body = RevocationRequest.model_validate({name: str(value) for name, value in form.items()})
-        await TokenGrants().revoke(body)
+        await SignInRevocation().revoke(body)
     except ValidationError:
         return OAuthError.invalid_request('token is required').response()
     except OAuthError as refusal:

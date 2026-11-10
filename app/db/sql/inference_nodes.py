@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db.sql import SQLAlchemySessionManager
 from app.db.sql.models.inference_node import InferenceNode
 from app.db.sql.schemas.inference_node import NodeChanges, NodeIdAlreadyRegistered
-from app.services.ai.schemas import InferenceBackend, pools_from_storage
+from app.services.ai.schemas import InferenceBackend
 from app.services.secrets import decrypt_secret, encrypt_secret
 from app.utils.singleton import SingletonMeta
 
@@ -57,7 +57,6 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         created_by_user_id: str,
         api_key: str | None = None,
         max_concurrent: int = 64,
-        pools: list[str] | None = None,
         multimodal: bool = False,
     ) -> InferenceNode:
         async with self.session_scope() as session:
@@ -69,7 +68,6 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 models=list(models),
                 api_key=encrypt_secret(api_key) if api_key else None,
                 max_concurrent=max_concurrent,
-                pools=','.join(pools or ['chat']),
                 multimodal=multimodal,
                 created_by_user_id=created_by_user_id,
             )
@@ -119,8 +117,6 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 node.multimodal = changes.multimodal
             if changes.enabled is not None:
                 node.enabled = changes.enabled
-            if changes.pools is not None:
-                node.pools = ','.join(changes.pools)
             if changes.api_key is not None:
                 # Absent leaves the credential alone; an explicit empty
                 # string clears it. The portal never sends the key back,
@@ -148,8 +144,7 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         """The ids this node answers to.
 
         Stored as JSON because a model id is arbitrary text — an adapter can
-        be named anything — and the comma-joining used for ``pools`` would
-        corrupt any name containing one.
+        be named anything, commas included.
         """
         raw = node.models
         if isinstance(raw, list):
@@ -167,22 +162,16 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         backend_provider.py had to import the free function to convert
         rows this class had just returned.
 
-        An unrecognised pool name is dropped rather than raising: the column
-        is free text, and one bad row should cost that node rather than
-        every node's ability to route.
-
         The stored key is a ciphertext (see ``InferenceNode.api_key``) and
         is decrypted here, the one place it is used. A key that will not
         decrypt raises ``SecretDecryptError``: routing to the node without
         it would fail every request with the node's 401 instead.
         """
-        pools = pools_from_storage(node.pools)
         return InferenceBackend(
             id=str(node.node_id),
             base_url=str(node.base_url),
             models=self._models_of(node),
             api_key=decrypt_secret(str(node.api_key)) if node.api_key else None,
             max_concurrent=int(node.max_concurrent),
-            pools=pools or ['chat'],
             multimodal=bool(node.multimodal),
         )

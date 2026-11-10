@@ -1,7 +1,7 @@
 """What an extension asks for, and whether a new version asks for more.
 
-`compare_grants` is the one place the rule is written
-(`app.services.identity.extension_grants`). Every grant has a case that
+`GrantsComparison.between` is the one place the rule is written
+(`app.services.identity.grants_comparison`). Every grant has a case that
 widens it and, where it can narrow, one that narrows it: an approved
 service's version that asks for more is held for a super admin, and one
 that asks for the same or less goes live — so a case missing here is a
@@ -15,7 +15,9 @@ from typing import Any
 
 import pytest
 
-from app.services.identity.extension_grants import compare_grants, ExtensionGrants, GrantKind
+from app.services.identity.extension_grants import ExtensionGrants
+from app.services.identity.extension_manifest import Manifest, PluginSummary
+from app.services.identity.grants_comparison import GrantKind, GrantsComparison
 
 READS = {'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': True, 'openWorldHint': False}
 
@@ -54,7 +56,9 @@ PLUGIN: dict[str, Any] = {
 
 
 def _grants(manifest: dict[str, Any], plugin: dict[str, Any] | None = None) -> ExtensionGrants:
-    return ExtensionGrants.of(manifest, plugin=PLUGIN if plugin is None else plugin)
+    return ExtensionGrants.of(
+        Manifest.model_validate(manifest), PluginSummary.model_validate(PLUGIN if plugin is None else plugin)
+    )
 
 
 def _changed(**at: Any) -> dict[str, Any]:
@@ -70,7 +74,7 @@ def _changed(**at: Any) -> dict[str, Any]:
 
 
 def _compare(candidate: dict[str, Any], plugin: dict[str, Any] | None = None):
-    return compare_grants(_grants(BASE), _grants(candidate, plugin))
+    return GrantsComparison.between(_grants(BASE), _grants(candidate, plugin))
 
 
 class TestTheSame:
@@ -94,7 +98,7 @@ class TestTheSame:
         assert not _compare(manifest).wider
 
 
-WIDER: list[tuple[str, dict[str, Any], dict[str, Any] | None, str, str]] = [
+WIDER: list[tuple[str, dict[str, Any], dict[str, Any] | None, GrantKind, str]] = [
     # (case, change, plugin, kind, item)
     ('a host', {'permissions__egress': ['api.acme.example', 'evil.example']}, None, GrantKind.EGRESS, 'evil.example'),
     (
@@ -283,9 +287,7 @@ class TestWider:
 
     def test_every_kind_of_grant_has_a_case(self):
         covered = {kind for *_, kind, _ in WIDER}
-        every = {v for k, v in vars(GrantKind).items() if k.isupper() and isinstance(v, str)}
-
-        assert every - covered == set()
+        assert set(GrantKind) - covered == set()
 
     def test_what_it_widened_from_is_said(self):
         comparison = _compare(_changed(permissions__workspace='write'))
@@ -304,7 +306,7 @@ class TestWider:
         before = _grants(_changed(permissions__workspace='none', permissions__workspacePaths=[]))
         after = _grants(_changed(permissions__workspace='read', permissions__workspacePaths=['src/**']))
 
-        comparison = compare_grants(before, after)
+        comparison = GrantsComparison.between(before, after)
 
         assert [(g.kind, g.item) for g in comparison.added] == [(GrantKind.WORKSPACE, 'read')]
 
@@ -347,19 +349,19 @@ class TestTheSameOrNarrower:
     def test_a_conditional_edit_that_was_always_is_narrower(self):
         before = _grants(_changed(contributes__prompt__edits=[{'target': 'main', 'append': 'docs_tips', 'from': 't'}]))
 
-        assert not compare_grants(before, _grants(BASE)).wider
+        assert not GrantsComparison.between(before, _grants(BASE)).wider
 
     def test_a_path_fewer(self):
         before = _grants(_changed(permissions__workspacePaths=['docs/**', 'src/**']))
 
-        assert not compare_grants(before, _grants(BASE)).wider
+        assert not GrantsComparison.between(before, _grants(BASE)).wider
 
     def test_tools_for_own_agents_only_is_narrower(self):
         before = _grants(_changed(permissions__toolAudience='all-agents'))
 
-        assert not compare_grants(before, _grants(BASE)).wider
+        assert not GrantsComparison.between(before, _grants(BASE)).wider
 
     def test_paths_where_the_whole_project_was_approved_is_narrower(self):
         before = _grants(_changed(permissions__workspacePaths=[]))
 
-        assert not compare_grants(before, _grants(BASE)).wider
+        assert not GrantsComparison.between(before, _grants(BASE)).wider

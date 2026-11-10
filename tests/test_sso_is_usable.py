@@ -37,7 +37,7 @@ from cryptography.fernet import Fernet
 import pytest
 
 from app.config import settings
-from app.security.startup_checks import check_deployment
+from app.security.startup_checks import SettingsChecks
 from app.services.auth.oauth_service import OAuthService
 from app.services.auth.oidc import OidcClient, OidcError
 
@@ -127,8 +127,8 @@ class TestPkce:
         """
         stored: dict[str, dict[str, str]] = {}
 
-        async def _capture(metadata=None):
-            stored['metadata'] = dict(metadata or {})
+        async def _capture(record):
+            stored['record'] = record
             return 'state-token'
 
         async def _discovery(self):
@@ -138,12 +138,12 @@ class TestPkce:
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni', raising=False)
         monkeypatch.setattr(settings, 'oidc_client_secret', 'shh', raising=False)
         monkeypatch.setattr(OidcClient, 'discover', _discovery)
-        monkeypatch.setattr(OAuthService, 'generate_state', _capture)
+        monkeypatch.setattr(OAuthService, 'generate_state', staticmethod(_capture))
 
         response = await client.get('/auth/oidc', follow_redirects=False)
 
         assert response.status_code == 302, response.text
-        verifier = stored['metadata']['pkce']
+        verifier = stored['record'].pkce
         assert verifier, 'no verifier was stored'
 
         location = response.headers['location']
@@ -163,8 +163,8 @@ class TestPkce:
         """
         exchanged: list[str] = []
 
-        async def _state(state: str):
-            return {'nonce': 'n-1'}  # a nonce, no verifier
+        async def _state(state: str, shape):
+            return shape.model_validate({'nonce': 'n-1'})  # a nonce, no verifier
 
         async def _exchange(self, **kwargs):
             exchanged.append(kwargs.get('code', ''))
@@ -173,7 +173,7 @@ class TestPkce:
         monkeypatch.setattr(settings, 'oidc_issuer', 'https://idp.example.com', raising=False)
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni', raising=False)
         monkeypatch.setattr(settings, 'oidc_client_secret', 'shh', raising=False)
-        monkeypatch.setattr(OAuthService, 'validate_state', _state)
+        monkeypatch.setattr(OAuthService, 'validate_state', staticmethod(_state))
         monkeypatch.setattr(OidcClient, 'exchange', _exchange)
 
         response = await client.get('/auth/oidc/callback?code=injected&state=s', follow_redirects=False)
@@ -353,7 +353,7 @@ class TestTheIssuerMustBeHttps:
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni')
         monkeypatch.setattr(settings, 'oidc_client_secret', 'shh')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert any('not HTTPS' in problem for problem in problems), problems
 
@@ -369,7 +369,7 @@ class TestHalfConfiguredOidcIsNotSilent:
         monkeypatch.setattr(settings, 'oidc_client_id', 'igni')
         monkeypatch.setattr(settings, 'oidc_client_secret', '')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert any('partly configured' in problem for problem in problems), problems
         assert any('OIDC_CLIENT_SECRET' in problem for problem in problems), problems
@@ -382,7 +382,7 @@ class TestHalfConfiguredOidcIsNotSilent:
         for name in ('oidc_issuer', 'oidc_client_id', 'oidc_client_secret'):
             monkeypatch.setattr(settings, name, '')
 
-        problems = check_deployment(raise_on_unsafe=False)
+        problems = SettingsChecks().check(raise_on_unsafe=False)
 
         assert not any('OIDC' in problem for problem in problems), problems
 

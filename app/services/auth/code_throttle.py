@@ -59,6 +59,7 @@ import redis.asyncio as aioredis
 
 from app.config import settings
 from app.monitoring import EMAIL_CODES_THROTTLED
+from app.utils.email_mask import mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -78,20 +79,6 @@ COOLDOWN_SECONDS = 60
 PER_ADDRESS_HOURLY = 10
 
 _HOUR = 3600
-
-
-def _mask(email: str) -> str:
-    """`jane@example.com` -> `j***@example.com`.
-
-    The same masking F96 uses in audit detail. An operator investigating
-    abuse needs to see the domain and tell two reports apart; they do not
-    need the mailbox, and this line goes to logs that F102 made
-    shippable.
-    """
-    local, _, domain = email.partition('@')
-    if not domain:
-        return '***'
-    return f'{local[:1]}***@{domain}'
 
 
 class CodeThrottle:
@@ -180,5 +167,5 @@ class CodeThrottle:
     @staticmethod
     def _refuse(purpose: str, address: str, reason: str) -> bool:
         EMAIL_CODES_THROTTLED.labels(purpose=purpose, reason=reason).inc()
-        logger.info('Not sending a %s code to %s: %s', purpose, _mask(address), reason)
+        logger.info('Not sending a %s code to %s: %s', purpose, mask_email(address), reason)
         return False

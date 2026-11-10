@@ -1,6 +1,7 @@
 """The two queries the startup checks need.
 
-`app/security/startup_checks.py` ran both itself, which is the invariant
+`app/security/database_checks.py` (then part of
+`app/security/startup_checks.py`) ran both itself, which is the invariant
 that put it in D — Rule 3 does not exempt a module for not being a
 conventional service.
 

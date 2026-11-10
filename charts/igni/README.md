@@ -65,22 +65,16 @@ Postgres host, the Redis host and a 44-character Fernet
 ingress is enabled. Each refusal names the value and says why.
 
 `urls.publicBase` is `PUBLIC_BASE_URL`: the issuer of every token the
-server signs, and the URL a service such as CodeIndex or Artifacts is
-deployed with, beside its own public URL. The ingress routes `/.well-known` to the API so the
+server signs, and the URL a registered service is deployed with, beside
+its own public URL. The ingress routes `/.well-known` to the API so the
 public signing keys are served there. How a service registers and is
 approved is in [docs/service-identity.md](../../docs/service-identity.md).
 
 There is no secret to share with a service, and so nothing for this
-chart to hold for one. Artifacts is deployed with two addresses — this
+chart to hold for one. A service is deployed with two addresses — this
 server's URL and its own public URL — registers itself on first start,
 and serves nobody until a super admin approves it on the portal's
 *Services* page.
-
-With `artifacts.enabled=true` the chart also refuses to render without
-`artifacts.host` (a bare hostname, different from `ingress.host`) and
-`artifacts.serviceName`, and — with `ingress.tls.enabled` — without
-`artifacts.tls.secretName`. See **Services have their own hostname**
-below.
 
 This is deliberate. `docker-compose.prod.yml` used to default its image
 to `ember/ember-api:latest`, which is an unqualified name and therefore
@@ -211,58 +205,19 @@ API documentation is a separate decision from deploying the product.
 
 ## Services have their own hostname
 
-Artifacts — and CodeIndex, and every later service — is served on **its
-own hostname**, never as a path on igni's. A service's URL is its
+A service is served on **its own hostname**, by its own deployment, never
+as a path on igni's; this chart deploys none. A service's URL is its
 identity ([docs/service-identity.md](../../docs/service-identity.md)): it
 is the audience of every token a person gets for the service, and the
 base igni calls (`{service URL}/v1/igni/subjects/...`) to erase or export
-a person's data. A path such as `https://igni.example.com/v1/artifacts`
-would share igni's origin, so a token's audience would no longer say
-which of the two it is for, and every path the service serves would be
-one igni can never use.
+a person's data. A path on igni's host would share igni's origin, so a
+token's audience would no longer say which of the two it is for, and
+every path the service serves would be one igni can never use.
 
-```bash
-helm install igni ./charts/igni \
-  ... \
-  --set ingress.enabled=true \
-  --set ingress.host=igni.example.com \
-  --set artifacts.enabled=true \
-  --set artifacts.host=artifacts.example.com \
-  --set artifacts.serviceName=igni-artifacts
-```
-
-This renders:
-
-* a second Ingress, `<release>-artifacts`, sending all of
-  `artifacts.example.com` to the `artifacts.serviceName` Service (which
-  must be in this namespace). Same class and annotations as igni's; with
-  `ingress.tls.enabled` it needs its own certificate,
-  `artifacts.tls.secretName`, because igni's names igni's host;
-* a ConfigMap, `<release>-artifacts-env`, for the service's Deployment
-  to `envFrom`. It holds the two addresses the service is deployed with —
-  `PUBLIC_BASE_URL=https://artifacts.example.com` and
-  `IGNI_SERVER_BASE_URL`, this release's API Service in-cluster. The
-  service's own secrets (`GRAPH_CREDENTIALS_KEY`, `POSTGRES_URL`,
-  `REDIS_URL`) are not this chart's, and neither is its embedder: that is
-  an igni__artifacts image, deployed beside the service, and the service
-  sets `EMBEDDER_URL` itself (igni__artifacts
-  `docs/running-the-embedder.md`).
-
-**Upgrading from a release that deployed the embedder.** This chart used
-to deploy `<release>-embedder` (`embedder.*`, `embedderImage.*`) and set
-`EMBEDDER_URL`, `NEO4J_*` on the API. The API never used either, and both
-are gone: `helm upgrade` deletes the embedder Deployment and Service.
-If an igni__artifacts deployment pointed `EMBEDDER_URL` at
-`<release>-embedder`, deploy the embedder from igni__artifacts first and
-point it there. Drop `embedder`, `embedderImage`, `neo4j` and
-`secrets.neo4jPassword` from your values file; with `secrets.existingSecret`,
-the `NEO4J_PASSWORD` key can be removed from it.
-
-Nothing on igni's host routes to Artifacts. Point the new hostname's DNS
-at the ingress controller. With `networkPolicy.enabled`, the API's egress
-must reach that hostname too (a `networkPolicy.egress` entry): igni calls
-it for erasure and export. Artifacts calls the API in-cluster, so allow it
-in `networkPolicy.apiIngressFrom`.
+With `networkPolicy.enabled`, the API's egress must reach each service's
+hostname (a `networkPolicy.egress` entry): igni calls it for erasure and
+export. A service that calls the API in-cluster needs allowing in
+`networkPolicy.apiIngressFrom`.
 
 ## Hardening
 

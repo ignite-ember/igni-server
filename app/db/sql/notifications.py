@@ -30,8 +30,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 
 from app.db.sql.models.notification import Notification
+from app.db.sql.organizations import OrganizationDB
 from app.db.sql.schemas.notification import NotificationCounts, NotificationDraft, NotificationRef
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenancy import TenantData, TenantSessions
 
 __all__ = ['MAX_NOTIFICATIONS', 'NotificationsDB']
 
@@ -44,6 +45,15 @@ _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
 class NotificationsDB(TenantData):
     """What is waiting on each account."""
+
+    def __init__(
+        self,
+        *,
+        sessions: TenantSessions | None = None,
+        organizations: OrganizationDB | None = None,
+    ) -> None:
+        super().__init__(sessions=sessions)
+        self._organizations = organizations or OrganizationDB()
 
     async def tell(self, *, org_id: str, user_ids: list[str], draft: NotificationDraft) -> list[NotificationRef]:
         """Write ``draft`` once for each of these people, in ``org_id``.
@@ -79,7 +89,7 @@ class NotificationsDB(TenantData):
         machine now, are marked delivered — what was read but cut by the
         merge is not.
         """
-        orgs = await self.provisioned_orgs_of(user_id)
+        orgs = await self._organizations.provisioned_member_org_ids(user_id)
         found = await asyncio.gather(
             *(self._newest(org_id, user_id, unread_only=unread_only, source=source, limit=limit) for org_id in orgs)
         )
@@ -122,7 +132,7 @@ class NotificationsDB(TenantData):
 
         Counted, not measured off a capped list.
         """
-        orgs = await self.provisioned_orgs_of(user_id)
+        orgs = await self._organizations.provisioned_member_org_ids(user_id)
         by_source: Counter[str] = Counter()
         for counted in await asyncio.gather(*(self._unread_by_source(org_id, user_id) for org_id in orgs)):
             by_source.update(counted)
@@ -156,7 +166,7 @@ class NotificationsDB(TenantData):
             statement = statement.where(Notification.id.in_(ids))
         if source:
             statement = statement.where(Notification.source == source)
-        orgs = await self.provisioned_orgs_of(user_id)
+        orgs = await self._organizations.provisioned_member_org_ids(user_id)
         return sum(await asyncio.gather(*(self._apply(org_id, statement) for org_id in orgs)))
 
     async def _apply(self, org_id: str, statement: Update) -> int:

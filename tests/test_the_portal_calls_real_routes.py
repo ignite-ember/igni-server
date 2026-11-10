@@ -89,21 +89,6 @@ def _served() -> set[tuple[str, str]]:
     return out
 
 
-#: Paths that belong to another service, not to this API. The portal
-#: asks for the documents service's organisation settings at
-#: `/v1/artifacts/...` — its own tests own whether those routes exist.
-#:
-#: KNOWN GAP: nothing on igni's host routes there any more. Every service
-#: has its own hostname (docs/service-identity.md), so the portal has to
-#: call igni__artifacts at that service's URL, with a token whose
-#: audience is that URL. Until it does, these calls answer 404.
-_ANOTHER_SERVICE = ('/v1/artifacts/',)
-
-
-def _ours(path: str) -> bool:
-    return not path.startswith(_ANOTHER_SERVICE)
-
-
 def _called() -> dict[tuple[str, str], set[str]]:
     """`(METHOD, template) -> {files}` for what the portal requests of this API."""
     out: dict[tuple[str, str], set[str]] = {}
@@ -113,8 +98,7 @@ def _called() -> dict[tuple[str, str], set[str]]:
         for verb, path in _CALL.findall(source.read_text()):
             method = 'DELETE' if verb == 'del' else verb.upper()
             key = (method, _normalise('/v1' + path))
-            if _ours(key[1]):
-                out.setdefault(key, set()).add(str(source.relative_to(_ROOT)))
+            out.setdefault(key, set()).add(str(source.relative_to(_ROOT)))
     return out
 
 
@@ -191,7 +175,7 @@ def test_every_page_that_calls_the_api_calls_something_real(page):
     for verb, path in _CALL.findall(source):
         method = 'DELETE' if verb == 'del' else verb.upper()
         key = (method, _normalise('/v1' + path))
-        if _ours(key[1]) and key not in served:
+        if key not in served:
             unserved.append(f'{key[0]} {key[1]}')
 
     assert not unserved, f'{page} requests {unserved}, which the API does not serve'

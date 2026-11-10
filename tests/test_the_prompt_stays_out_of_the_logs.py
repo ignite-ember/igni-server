@@ -194,12 +194,11 @@ class TestTheModelListingClaimsNothingItDoesNotDo:
         access were scoped per organisation."""
         import inspect
 
-        from app.api.base_v1.endpoints.client.chat import _resolve_models_for
+        from app.services.ai.chat.catalog import ChatModelCatalog
 
-        wrapped = getattr(_resolve_models_for, '__wrapped__', _resolve_models_for)
-        assert not inspect.signature(
-            wrapped
-        ).parameters, 'the model lookup takes a parameter again; if it is an org, make sure it actually filters'
+        assert list(inspect.signature(ChatModelCatalog.models).parameters) == ['self'], (
+            'the model lookup takes a parameter again; if it is an org, make sure it actually filters'
+        )
 
     def test_the_endpoint_does_not_advertise_an_org_override(self):
         """Read from the OpenAPI schema, not the source.
@@ -224,9 +223,9 @@ class TestTheModelListingClaimsNothingItDoesNotDo:
         # checked is that the description commits to the true behaviour,
         # and that the function takes no org argument — which is the
         # test above, and is about code rather than words.
-        assert (
-            'not per-org' in described.lower()
-        ), f'the published description does not state that model access is global: {described!r}'
+        assert 'not per-org' in described.lower(), (
+            f'the published description does not state that model access is global: {described!r}'
+        )
 
     async def test_it_still_requires_an_active_member(self, client):
         """Removing the org *filter* must not remove the org *check* —
@@ -235,7 +234,13 @@ class TestTheModelListingClaimsNothingItDoesNotDo:
         source = (_ROOT / 'app/api/base_v1/endpoints/client/chat.py').read_text()
         listing = source[source.index('async def list_chat_models') : source.index('async def chat_completions')]
 
-        assert 'resolve_user_org' in listing
+        assert 'assert_current_member' in listing
+
+        callers = (_ROOT / 'app/services/ai/chat/callers.py').read_text()
+        check = callers[callers.index('async def assert_current_member') : callers.index('async def _person')]
+        assert 'self._person(' in check
+        person = callers[callers.index('async def _person') : callers.index('def _org_header')]
+        assert 'self._orgs.resolve(' in person
 
 
 pytestmark = pytest.mark.anyio

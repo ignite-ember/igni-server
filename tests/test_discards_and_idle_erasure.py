@@ -24,8 +24,9 @@ from cryptography.fernet import Fernet
 import pytest
 
 from app.config import settings
-from app.services.cloud.vm_credentials import VM_CREDENTIAL
-from app.services.cloud.vm_profiles import ProfileVersion, VmProfiles
+from app.services.cloud.vm_credential_grants import VM_CREDENTIAL
+from app.services.cloud.vm_profile_versions import ProfileVersion
+from app.services.cloud.vm_profiles import VmProfiles
 from tests.cloud_world import CloudOrg, make_super_admin, platform
 from tests.conftest import audit_rows
 

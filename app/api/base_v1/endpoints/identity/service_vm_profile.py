@@ -9,11 +9,11 @@ from fastapi import APIRouter, Depends
 
 from app.api.base_v1.schema.vm_profile_requests import ServiceVmProfile
 from app.security.service_caller import require_service, ServiceCaller
-from app.services.cloud.vm_profile_requests import VmProfileRequests
+from app.services.cloud.extension_vm_requests import ExtensionVmRequests
 
 router = APIRouter()
 
 
 @router.get('/service-vm-profile', response_model=ServiceVmProfile, tags=['Directory'])
 async def read(caller: ServiceCaller = Depends(require_service)) -> ServiceVmProfile:
-    return await VmProfileRequests().for_service(caller)
+    return await ExtensionVmRequests().for_service(caller)

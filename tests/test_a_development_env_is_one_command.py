@@ -17,7 +17,7 @@ from dotenv import dotenv_values
 import pytest
 
 from app.config import Settings, settings
-from app.security.startup_checks import check_deployment
+from app.security.startup_checks import SettingsChecks
 import tools.dev_env as dev_env
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -68,7 +68,7 @@ def test_the_server_starts_on_it(path, monkeypatch):
     for field in ('app_env', 'secret_encryption_key', 'public_base_url', 'log_sign_in_codes'):
         monkeypatch.setattr(settings, field, getattr(loaded, field))
 
-    check_deployment()  # raises UnsafeDeployment on a fatal problem
+    SettingsChecks().check()  # raises UnsafeDeployment on a fatal problem
 
 
 def test_it_will_not_overwrite_a_file(tmp_path: Path, capsys):

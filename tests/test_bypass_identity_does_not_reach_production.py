@@ -39,10 +39,8 @@ import pytest
 from sqlalchemy import text
 
 from app.config import settings
-from app.security.startup_checks import (
-    check_no_bypass_identity_in_database,
-    UnsafeDeployment,
-)
+from app.security.database_checks import DatabaseChecks
+from app.security.deployment_findings import UnsafeDeployment
 
 pytestmark = pytest.mark.anyio
 
@@ -91,7 +89,7 @@ class TestItRefusesToServeSuchADatabase:
         monkeypatch.setattr(settings, 'app_env', app_env)
 
         with pytest.raises(UnsafeDeployment) as raised:
-            await check_no_bypass_identity_in_database()
+            await DatabaseChecks().check_no_bypass_identity_in_database()
 
         message = str(raised.value)
         assert _BYPASS_USER_ID in message
@@ -122,19 +120,19 @@ class TestItRefusesToServeSuchADatabase:
         monkeypatch.setattr(settings, 'app_env', 'production')
 
         with pytest.raises(UnsafeDeployment):
-            await check_no_bypass_identity_in_database()
+            await DatabaseChecks().check_no_bypass_identity_in_database()
 
     async def test_a_clean_database_starts(self, monkeypatch, db):
         monkeypatch.setattr(settings, 'app_env', 'production')
 
-        assert await check_no_bypass_identity_in_database() == []
+        assert await DatabaseChecks().check_no_bypass_identity_in_database() == []
 
     async def test_dev_is_left_alone(self, monkeypatch, bypass_rows):
         """The rows are the point in dev — refusing there would break the
         bypass this exists to clean up after."""
         monkeypatch.setattr(settings, 'app_env', 'dev')
 
-        assert await check_no_bypass_identity_in_database() == []
+        assert await DatabaseChecks().check_no_bypass_identity_in_database() == []
 
 
 class TestAnUnreachableDatabaseIsNotAVerdict:
@@ -147,7 +145,7 @@ class TestAnUnreachableDatabaseIsNotAVerdict:
         monkeypatch.setattr(settings, 'postgres_host', '127.0.0.1')
         monkeypatch.setattr(settings, 'postgres_port', 1)
 
-        assert await check_no_bypass_identity_in_database() == []
+        assert await DatabaseChecks().check_no_bypass_identity_in_database() == []
 
 
 class TestTheIdentityItselfCannotReceiveMail:
@@ -197,7 +195,7 @@ class TestTheCheckIsActuallyWired:
         main = (pathlib.Path(__file__).resolve().parent.parent / 'app/main.py').read_text()
 
         assert 'check_no_bypass_identity_in_database' in main, 'the check is never called'
-        assert 'await check_no_bypass_identity_in_database()' in main, (
+        assert 'await database_checks.check_no_bypass_identity_in_database()' in main, (
             'the check is imported but not awaited — a coroutine that is never '
             'awaited returns a coroutine object, which is truthy and raises nothing'
         )
@@ -215,11 +213,11 @@ class TestTheGuardAndTheIdentityCannotDrift:
     """
 
     def test_both_sides_read_the_same_constants(self):
-        from app.security import portal_auth, startup_checks
+        from app.security import database_checks, portal_auth
         from app.security.bypass_identity import BYPASS_ORG_ID, BYPASS_USER_ID
 
-        assert startup_checks.BYPASS_USER_ID is BYPASS_USER_ID
-        assert startup_checks.BYPASS_ORG_ID is BYPASS_ORG_ID
+        assert database_checks.BYPASS_USER_ID is BYPASS_USER_ID
+        assert database_checks.BYPASS_ORG_ID is BYPASS_ORG_ID
         assert portal_auth.BYPASS_ORG_ID is BYPASS_ORG_ID
         assert portal_auth._bypass_user().user_id is BYPASS_USER_ID
 
@@ -228,10 +226,10 @@ class TestTheGuardAndTheIdentityCannotDrift:
         import re
 
         root = pathlib.Path(__file__).resolve().parent.parent
-        for name in ('app/security/portal_auth.py', 'app/security/startup_checks.py'):
+        for name in ('app/security/portal_auth.py', 'app/security/database_checks.py'):
             code = re.sub(r'#[^\n]*', '', (root / name).read_text())
             # The literals belong in `bypass_identity` and nowhere else.
-            # `startup_checks` prints them in an operator-facing message,
+            # `database_checks` prints them in an operator-facing message,
             # which is why this reads the code and not the strings it
             # formats — those interpolate the constants.
             assert "'demo-user-001'" not in code, name
