@@ -84,7 +84,7 @@ class TestTheSupplyChainIsDerived:
         """A comparison against an empty set would pass everything."""
         pinned = _GEN.pinned_images()
         assert len(pinned) >= 5, sorted(pinned)
-        assert 'python:3.13-slim' in pinned, sorted(pinned)
+        assert 'python:3.13-slim-trixie' in pinned, sorted(pinned)
 
     def test_every_pinned_image_is_in_the_register(self):
         """The completeness direction. A base image added to a Dockerfile
@@ -194,7 +194,7 @@ class TestWhatItRefusesToDo:
         assert PLACEHOLDER in row, f'{field} has been filled in by the generator: {row}'
 
     def test_it_does_not_assess_the_suppliers_for_the_customer(self):
-        """Whether `python:3.13-slim` is acceptable is a judgement about a
+        """Whether `python:3.13-slim-trixie` is acceptable is a judgement about a
         threat model this document does not know."""
         prose = ' '.join(_DOC.read_text().split())
         assert "Assess the suppliers on the customer's behalf" in prose

@@ -61,7 +61,7 @@ honest accounting of what still assumes infrastructure we operate.
 ### Prerequisites
 
 - Python 3.13 — `pyproject.toml` pins `==3.13.*`, and the container image
-  builds on `python:3.13-slim`
+  builds on `python:3.13-slim-trixie` (Debian 13)
 - PostgreSQL, with a role that has `CREATEDB` — each organisation gets a
   database of its own, created the first time it is needed
 - Redis

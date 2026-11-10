@@ -48,7 +48,7 @@ shipped something malicious, because a list of names is not an assessment.
 
 | Supplier | What it is | Pinned in |
 |---|---|---|
-| `python:3.13-slim` | Base image for the API and worker | `containers/be/Dockerfile` |
+| `python:3.13-slim-trixie` | Base image for the API and worker | `containers/be/Dockerfile` |
 | `node:26-alpine` | Build stage for the portal bundle | `portal/Dockerfile` |
 | `nginxinc/nginx-unprivileged:alpine` | Runtime image for the portal | `portal/Dockerfile` |
 | `nginx:1.27-alpine` | The local edge for igni's own host in the compose stack | `containers/docker-compose.local.yml` |
@@ -59,9 +59,9 @@ shipped something malicious, because a list of names is not an assessment.
 | `npm` | Every portal dependency | a registry, not an image |
 | `GitHub Actions` | Builds and publishes the artefacts | a registry, not an image |
 
-### `python:3.13-slim`
+### `python:3.13-slim-trixie`
 
-Both stages of `containers/be/Dockerfile`. Slim rather than alpine because the wheels this project installs are built against glibc.
+Both stages of `containers/be/Dockerfile`. Slim rather than alpine because the wheels this project installs are built against glibc. The Debian release is named in the tag rather than inherited from `python:3.13-slim`, which was bookworm and became trixie silently, between two builds of this image; and the image installs the zlib1g security update for CVE-2026-76844 and CVE-2026-85091, the two HIGH advisories the scheduled scan gates on, because the published base image predates that update.
 
 **Exposure.** The largest single supply-chain exposure in the product: it is the OS under the process that holds the database credentials and the encryption key. Scanned on every pull request and daily against the default branch (V-4, V-7), and the scheduled scan gates.
 
@@ -185,7 +185,7 @@ ranges the claim fails rather than quietly becoming wrong.
 
 ## What this register does not do
 
-**Assess the suppliers on the customer's behalf.** Whether `python:3.13-slim` is
+**Assess the suppliers on the customer's behalf.** Whether `python:3.13-slim-trixie` is
 an acceptable dependency is a judgement about a threat model this document does
 not know. What it provides is the list, pinned versions, and where each one sits
 in the artefact.
