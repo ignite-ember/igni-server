@@ -29,7 +29,7 @@ from app.config import settings
 from app.db.sql.models.producer_export import ProducerExport, READY
 from app.db.sql.producer_exports import ArchiveTooLarge, ProducerExportsDB
 from app.db.sql.producer_feed import ProducerFeedDB
-from app.db.sql.tenancy import TenantData
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.org_authority import OrgAuthority
 from app.security.producer import ProducerRef
 from app.services.auth.jwt_service import PERSON
@@ -39,8 +39,9 @@ CHUNK = 1024 * 1024
 
 
 class ProducerExports:
-    def __init__(self) -> None:
+    def __init__(self, *, tenants: TenantRegistryDB | None = None) -> None:
         self._db = ProducerExportsDB()
+        self._tenants = tenants or TenantRegistryDB()
 
     @staticmethod
     def record(org_id: str, row: ProducerExport) -> ExportRecord:
@@ -138,7 +139,7 @@ class ProducerExports:
     async def pending(self, *, by_client_id: str) -> PendingExports:
         """Hand out waiting exports; one whose incarnation was erased meanwhile fails instead."""
         handed: list[PendingExport] = []
-        for org_id in await TenantData().each_tenant():
+        for org_id in await self._tenants.active_org_ids():
             for row in await self._db.pull(org_id, by_client_id=by_client_id):
                 if row.incarnation not in await self._waiting(org_id, row.producer_id):
                     await self._db.fail(org_id, row.id, 'the incarnation was erased before it could be exported')
@@ -178,4 +179,4 @@ class ProducerExports:
 
     async def close_out(self) -> int:
         """The retention round: delete expired archives."""
-        return sum([await self._db.expire(org_id) for org_id in await TenantData().each_tenant()])
+        return sum([await self._db.expire(org_id) for org_id in await self._tenants.active_org_ids()])

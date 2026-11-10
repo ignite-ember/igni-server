@@ -1,20 +1,31 @@
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import logging
 import threading
 from typing import ClassVar
 import weakref
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine, AsyncSession, create_async_engine
 
 from app.config import settings
-from app.observability.otel import ServerTelemetry
+from app.observability.otel import ProcessTelemetry
 from app.utils.singleton import SingletonMeta
 
 logger = logging.getLogger(__name__)
+
+
+class EngineEntry(BaseModel):
+    """One database's engine on one loop, and the session factory bound to it."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    engine: AsyncEngine
+    factory: async_sessionmaker[AsyncSession]
 
 
 class SQLAlchemySessionManager(metaclass=SingletonMeta):
@@ -88,16 +99,28 @@ class SQLAlchemySessionManager(metaclass=SingletonMeta):
         ``AsyncIOPool`` replaced loop-per-task with one shared loop, so the
         pools became process-lifetime and nobody revisited the number.
 
+        ## One entry per database, too
+
+        Each organisation has its own database (`app.db.sql.tenancy`), and
+        an engine is bound to one database, so each loop's entry is a map
+        from database name to engine. The shared plane is one key in it;
+        :meth:`database_scope` reaches the others. Keeping them here rather
+        than in a second registry means one place builds engines, one
+        place disposes them, and every session gets the same commit,
+        rollback and pool-exhaustion handling.
+
         ## What the numbers mean now
 
-        ``DB_POOL_SIZE + DB_MAX_OVERFLOW`` is the whole process's ceiling on
+        ``DB_POOL_SIZE + DB_MAX_OVERFLOW`` is the shared plane's ceiling on
         concurrent queries, and ``DB_POOL_TIMEOUT`` is how long a caller waits
-        for a slot before failing. `check_pool_fits_the_server` compares the
+        for a slot before failing. `DatabaseChecks.check_pool_fits_the_server` compares the
         arithmetic against the server's own ``max_connections`` at startup.
+        Each organisation's database has a pool of the same size of its own,
+        which that arithmetic does not count yet.
     """
 
     # Shared by every subclass. See the class docstring.
-    _engines: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[AsyncEngine, async_sessionmaker]]] = (
+    _engines: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, EngineEntry]]] = (
         weakref.WeakKeyDictionary()
     )
     # ``threading.Lock`` rather than ``asyncio.Lock``: this guards a
@@ -105,47 +128,57 @@ class SQLAlchemySessionManager(metaclass=SingletonMeta):
     # the first loop that awaits it.
     _engines_lock: ClassVar[threading.Lock] = threading.Lock()
 
-    def _get_or_create(self) -> tuple[AsyncEngine, async_sessionmaker]:
+    @staticmethod
+    def _shared_database() -> str:
+        """The shared plane's database name: its key in each loop's entry."""
+        return str(make_url(settings.postgres_url).database)
+
+    def _get_or_create(self, database: str) -> EngineEntry:
         loop = asyncio.get_running_loop()
-        entry = SQLAlchemySessionManager._engines.get(loop)
+        entry = SQLAlchemySessionManager._engines.get(loop, {}).get(database)
         if entry is not None:
             return entry
         with SQLAlchemySessionManager._engines_lock:
-            entry = SQLAlchemySessionManager._engines.get(loop)
+            pools = SQLAlchemySessionManager._engines.setdefault(loop, {})
+            entry = pools.get(database)
             if entry is not None:
                 return entry
             engine = create_async_engine(
-                settings.postgres_url,
+                make_url(settings.postgres_url).set(database=database),
                 pool_pre_ping=True,
                 echo=False,
                 pool_size=settings.db_pool_size,
                 max_overflow=settings.db_max_overflow,
                 pool_timeout=settings.db_pool_timeout,
             )
-            ServerTelemetry.watch_engine(engine)
+            ProcessTelemetry().watch_engine(engine)
             factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
-            SQLAlchemySessionManager._engines[loop] = (engine, factory)
+            entry = EngineEntry(engine=engine, factory=factory)
+            pools[database] = entry
             logger.info(
-                'Database pool ready: size=%d overflow=%d timeout=%.1fs (ceiling %d concurrent queries)',
+                'Database pool ready for %s: size=%d overflow=%d timeout=%.1fs (ceiling %d concurrent queries)',
+                database,
                 settings.db_pool_size,
                 settings.db_max_overflow,
                 settings.db_pool_timeout,
                 settings.db_pool_size + settings.db_max_overflow,
             )
-            return engine, factory
+            return entry
 
     @property
     def engine(self) -> AsyncEngine:
-        return self._get_or_create()[0]
+        """The shared plane's engine on this loop."""
+        return self._get_or_create(self._shared_database()).engine
 
     @property
-    def session_factory(self):
-        return self._get_or_create()[1]
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """The shared plane's session factory on this loop."""
+        return self._get_or_create(self._shared_database()).factory
 
     async def dispose(self) -> None:
-        """Dispose the engine bound to the current loop.
+        """Dispose every engine bound to the current loop: the shared plane's and each organisation's.
 
-        Shared state, so this closes the pool for **every** repository on
+        Shared state, so this closes the pools for **every** repository on
         this loop — which is what a test teardown or a worker shutting
         down its loop wants, and what nothing else should call while
         requests are in flight.
@@ -155,19 +188,18 @@ class SQLAlchemySessionManager(metaclass=SingletonMeta):
         except RuntimeError:
             return
         with SQLAlchemySessionManager._engines_lock:
-            entry = SQLAlchemySessionManager._engines.pop(loop, None)
-        if entry is not None:
-            engine, _ = entry
-            await engine.dispose()
+            pools = SQLAlchemySessionManager._engines.pop(loop, {})
+        for entry in pools.values():
+            await entry.engine.dispose()
 
     @classmethod
     async def dispose_all(cls) -> None:
-        """Dispose this loop's engine. One engine, so one call."""
+        """Dispose this loop's engines. One registry, so one call."""
         await cls().dispose()
 
     @classmethod
     def pool_status(cls) -> tuple[int, int] | None:
-        """``(checked_out, ceiling)`` for the current loop's pool.
+        """``(checked_out, ceiling)`` for the current loop's shared-plane pool.
 
         ``None`` when no engine exists on this loop yet, which is a real
         answer rather than zero: a pool that has never been created is
@@ -178,10 +210,10 @@ class SQLAlchemySessionManager(metaclass=SingletonMeta):
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return None
-        entry = cls._engines.get(loop)
+        entry = cls._engines.get(loop, {}).get(cls._shared_database())
         if entry is None:
             return None
-        pool = entry[0].pool
+        pool = entry.engine.pool
         checked_out = getattr(pool, 'checkedout', None)
         if checked_out is None:
             return None
@@ -204,11 +236,14 @@ class SQLAlchemySessionManager(metaclass=SingletonMeta):
         async with self.session_scope() as session:
             await session.execute(text('SELECT 1'))
 
+    def session_scope(self) -> AbstractAsyncContextManager[AsyncSession]:
+        """Provide a transactional scope on the shared plane around a series of operations."""
+        return self.database_scope(self._shared_database())
+
     @asynccontextmanager
-    async def session_scope(self) -> AsyncIterator[AsyncSession]:
-        """Provide a transactional scope around a series of operations."""
-        _, factory = self._get_or_create()
-        session: AsyncSession = factory()
+    async def database_scope(self, database: str) -> AsyncIterator[AsyncSession]:
+        """A transaction on one database of this server: committed on success, rolled back on error."""
+        session: AsyncSession = self._get_or_create(database).factory()
         try:
             yield session
             await session.commit()

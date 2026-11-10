@@ -182,7 +182,7 @@ class TestASweepOverTheWholeSurface:
             'these served somebody who has been deprovisioned:\n  '
             + '\n  '.join(allowed)
             + '\n\nDeactivation is recorded on the account and enforced in '
-            '`app.security.subject.require_existing_user`. A route reaching the handler '
+            '`app.security.subject.Subjects.require_existing_user`. A route reaching the handler '
             'without passing through it is a route an ex-employee keeps.'
         )
 
@@ -219,16 +219,32 @@ class TestSigningInAgain:
 
         assert ok.status_code == 200
 
+    async def test_a_code_sign_in_is_refused(self, client, db):
+        # The code was right, so the answer is the account's, as for a
+        # password: 403 and the reason, and no token.
+        from app.services.auth.otp_service import OTPService
+
+        user = await create_user(db, email=f'code-{uuid.uuid4().hex[:8]}@test.com')
+        await db.commit()
+        _deactivate(str(user.user_id))
+        issued = await OTPService().generate_signin_code(str(user.email))
+
+        response = await client.post('/sign-in-with-code', json={'email': str(user.email), 'code': issued.code})
+
+        assert response.status_code == 403, response.text
+        assert response.json() == {'detail': 'This account has been deactivated.'}
+
     async def test_a_provider_sign_in_is_refused(self, db):
         from fastapi import HTTPException
 
-        from app.services.auth.oauth_service import OAuthService, OAuthUserInfo
+        from app.services.auth.oauth_models import OAuthUserInfo
+        from app.services.auth.oauth_service import OAuthService
 
         user = await create_user(db, email=f'sso-{uuid.uuid4().hex[:8]}@test.com')
         _deactivate(str(user.user_id))
 
         with pytest.raises(HTTPException) as refused:
-            await OAuthService.find_or_create_user_and_get_token(
+            await OAuthService().find_or_create_user_and_get_token(
                 OAuthUserInfo(email=str(user.email), first_name='Departed', last_name='Person', provider='oidc')
             )
 

@@ -32,6 +32,7 @@ import uuid
 import pytest
 
 from app.monitoring import clock_skew
+from app.monitoring.clock_skew import ClockSkew
 from app.monitoring.metrics import CLOCK_SKEW
 
 pytestmark = pytest.mark.anyio
@@ -42,7 +43,7 @@ class TestMeasuringIt:
         """Same host in the test environment, so the honest expectation is
         "near zero" — and a measurement that cannot come back near zero
         would make the alert threshold meaningless."""
-        skew = await clock_skew.measure()
+        skew = await ClockSkew().measure()
         assert skew is not None, 'the skew could not be measured at all'
         assert abs(skew) < 5.0, f'{skew}s against the test database, which shares this clock'
 
@@ -50,7 +51,7 @@ class TestMeasuringIt:
         """The gauge is what an operator sees; measuring without setting
         it would leave the alert permanently absent rather than firing."""
         CLOCK_SKEW.set(9999.0)
-        skew = await clock_skew.sample_once()
+        skew = await ClockSkew().sample_once()
         assert skew is not None
         assert CLOCK_SKEW._value.get() == pytest.approx(skew)  # noqa: SLF001
 
@@ -62,8 +63,8 @@ class TestMeasuringIt:
             raise RuntimeError('no database')
 
         monkeypatch.setattr('app.db.sql.SQLAlchemySessionManager.session_scope', lambda self: explode())
-        assert await clock_skew.measure() is None
-        assert await clock_skew.sample_once() is None
+        assert await ClockSkew().measure() is None
+        assert await ClockSkew().sample_once() is None
 
     async def test_the_threshold_is_the_revocation_margin(self):
         """Not a preference. `withdraw_sessions` rounds the watermark up
@@ -77,10 +78,10 @@ class TestMeasuringIt:
         """The log line is the only thing a single-instance deployment
         without Prometheus will ever see, so it has to name the
         consequence rather than the number alone."""
-        monkeypatch.setattr(clock_skew, 'measure', lambda: _resolved(4.2))
+        monkeypatch.setattr(ClockSkew, 'measure', lambda self: _resolved(4.2))
 
         with caplog.at_level('WARNING'):
-            assert await clock_skew.sample_once() == 4.2
+            assert await ClockSkew().sample_once() == 4.2
 
         messages = ' '.join(r.getMessage() for r in caplog.records)
         assert 'Clock skew' in messages
@@ -101,6 +102,7 @@ class TestTheWatermarkComesFromTheDatabase:
         Postgres stays where the database is. This is the whole reason
         the statement is SQL rather than a Python value bound into it.
         """
+        from app.db.sql.account_sessions import AccountSessionsDB
         from app.db.sql.user import UserDB
 
         user_id = f'skew-{uuid.uuid4().hex[:8]}'
@@ -114,9 +116,9 @@ class TestTheWatermarkComesFromTheDatabase:
                 def now(cls, tz=None):  # type: ignore[override]
                     return real_now + timedelta(hours=1)
 
-            monkeypatch.setattr('app.db.sql.user.datetime', _AheadByAnHour)
+            monkeypatch.setattr('app.db.sql.account_sessions.datetime', _AheadByAnHour)
 
-            watermark = await user_db.withdraw_sessions(user_id)
+            watermark = await AccountSessionsDB().withdraw_sessions(user_id)
 
             drift = abs((watermark - real_now).total_seconds())
             assert drift < 60, (
@@ -130,6 +132,7 @@ class TestTheWatermarkComesFromTheDatabase:
         """The rounding moved into SQL with the clock, and it is what
         closes B5's same-second window. Moving a mechanism is the
         classic way to lose it."""
+        from app.db.sql.account_sessions import AccountSessionsDB
         from app.db.sql.user import UserDB
 
         user_id = f'round-{uuid.uuid4().hex[:8]}'
@@ -137,7 +140,7 @@ class TestTheWatermarkComesFromTheDatabase:
         await user_db.ensure_exists(user_id=user_id, email=f'{user_id}@example.invalid', full_name='Rounded')
         try:
             before = datetime.now(timezone.utc)
-            watermark = await user_db.withdraw_sessions(user_id)
+            watermark = await AccountSessionsDB().withdraw_sessions(user_id)
             assert watermark.microsecond == 0, f'the watermark is sub-second: {watermark!r}'
             assert watermark > before, 'the watermark is not ahead of the request'
         finally:

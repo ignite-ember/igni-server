@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.api.base_v1.schema.retention import ErasureRecord
+from app.services.identity.jwk import SubmittedJwks
 
 
 class RegisterAppRequest(BaseModel):
@@ -18,7 +19,7 @@ class RegisterAppRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     #: A member of the organisation answerable for the app.
     owner_user_id: str = Field(min_length=1)
-    jwks: dict[str, list[dict[str, object]]]
+    jwks: SubmittedJwks
 
 
 class UpdateAppRequest(BaseModel):
@@ -29,7 +30,7 @@ class UpdateAppRequest(BaseModel):
 class ReplaceAppKeysRequest(BaseModel):
     """A key rotation: the app's new public keys, replacing the old ones."""
 
-    jwks: dict[str, list[dict[str, object]]]
+    jwks: SubmittedJwks
 
 
 class OrgAppResponse(BaseModel):

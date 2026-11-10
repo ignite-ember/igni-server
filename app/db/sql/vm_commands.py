@@ -14,6 +14,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.sql.models.vm_command import CANCELLED, FINISHED, HANDED_OUT, QUEUED, RUNNING, VmCommand, VmJob
+from app.db.sql.schemas.vm_command import CommandOutcome
 from app.db.sql.tenancy import TenantData
 
 #: A command handed out and not acknowledged or finished within this is
@@ -174,13 +175,22 @@ class VmCommandsDB(TenantData):
             )
             return bool(result.rowcount)  # type: ignore[attr-defined]
 
-    async def finish(self, org_id: str, command_id: str, values: dict[str, object]) -> bool:
-        async with self.session_scope(org_id) as session:
-            result = await session.execute(
-                update(VmCommand)
-                .where(VmCommand.id == command_id, VmCommand.state.in_((HANDED_OUT, RUNNING)))
-                .values(state=FINISHED, **values)
+    async def finish(self, org_id: str, command_id: str, outcome: CommandOutcome) -> bool:
+        finished = (
+            update(VmCommand)
+            .where(VmCommand.id == command_id, VmCommand.state.in_((HANDED_OUT, RUNNING)))
+            .values(
+                state=FINISHED,
+                exit_code=outcome.exit_code,
+                output=outcome.output,
+                error=outcome.error,
+                finished_at=outcome.finished_at,
             )
+        )
+        if outcome.started_at is not None:
+            finished = finished.values(started_at=outcome.started_at)
+        async with self.session_scope(org_id) as session:
+            result = await session.execute(finished)
             return bool(result.rowcount)  # type: ignore[attr-defined]
 
     async def waiting_to_wake(self, org_id: str) -> list[tuple[str, str]]:

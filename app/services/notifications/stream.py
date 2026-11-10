@@ -4,9 +4,9 @@ The read-side counterpart to :class:`~app.services.notifications.nudge.Nudger`:
 that one wakes whoever is listening, this one *is* the listening.
 
 **It carries no notification.** A frame says "there is something newer
-for you" and the client answers by reading the list, exactly as the
-comment stream does — see :mod:`app.services.comment_notifier` for why
-that bargain is the whole design. A client that misses fifty frames
+for you" and the client answers by reading the list — see
+:mod:`app.services.notifications.listeners` for why that bargain is the
+whole design. A client that misses fifty frames
 reads the list once on reconnect and is as correct as one that
 received every frame. The stream decides how soon, never whether.
 
@@ -21,8 +21,8 @@ from __future__ import annotations
 import asyncio
 import time
 
-from app.services import comment_notifier
-from app.services.comment_notifier import CommentNotifier
+from app.services.notifications import listeners
+from app.services.notifications.listeners import Listeners
 
 #: What an idle stream sends so an intermediary does not close it.
 #: A comment, not an event: EventSource ignores it, and it costs one
@@ -46,11 +46,11 @@ class NotificationStream:
     def __init__(
         self,
         *,
-        notifier: CommentNotifier | None = None,
-        keepalive_seconds: int = comment_notifier.KEEPALIVE_INTERVAL,
-        max_seconds: int = comment_notifier.STREAM_MAX_SECONDS,
+        notifier: Listeners | None = None,
+        keepalive_seconds: int = listeners.KEEPALIVE_INTERVAL,
+        max_seconds: int = listeners.STREAM_MAX_SECONDS,
     ) -> None:
-        self._notifier = notifier or CommentNotifier()
+        self._notifier = notifier or Listeners()
         self._keepalive_seconds = keepalive_seconds
         self._max_seconds = max_seconds
 
@@ -92,7 +92,7 @@ class NotificationChannel:
     def __init__(
         self,
         *,
-        notifier: CommentNotifier,
+        notifier: Listeners,
         user_id: str,
         cursor: str,
         keepalive_seconds: int,

@@ -489,7 +489,7 @@ def render() -> str:
     out.append('')
     out.append('**The model endpoint is the one that matters.** `base_url` accepts any absolute')
     out.append("URL: the product is built for the customer's own vLLM nodes, and the whole")
-    out.append('inference stack — pools, routing, drain — is about GPUs they run. Nothing stops a')
+    out.append('inference stack — routing, drain, health — is about GPUs they run. Nothing stops a')
     out.append('customer pointing it at a third-party API instead, and if they do, that provider')
     out.append("receives their developers' source code and becomes a processor they must assess,")
     out.append('contract with under Article 28, and possibly list as a recipient. The software')

@@ -10,10 +10,10 @@ from app.config import settings
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 from app.security.bypass_identity import BYPASS_EMAIL, BYPASS_FULL_NAME, BYPASS_ORG_ID, BYPASS_USER_ID
 from app.security.membership_sessions import MembershipSessions
-from app.security.subject import require_existing_user
+from app.security.subject import Subjects
 from app.services.auth.jwt_service import JWTService
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ def _attributed(request: Request, user: PortalAccount) -> PortalAccount:
     the mistake F80 and F88 are both records of. Every route behind this
     dependency is audited without doing anything itself.
     """
-    set_audit_actor(request, user_id=user.user_id, email=user.email, org_id=user.org_id)
+    RequestAudit.of(request).attribute_to(user_id=user.user_id, email=user.email, org_id=user.org_id)
     return user
 
 
@@ -117,7 +117,7 @@ async def _resolve(
     """
     if settings.portal_auth_bypass:
         await UserDB().ensure_exists(
-            user_id=_bypass_user().user_id,
+            _bypass_user().user_id,
             email=_bypass_user().email or 'demo@demo.invalid',
             full_name=_bypass_user().full_name,
         )
@@ -163,7 +163,7 @@ async def _resolve(
     # deleted account kept working for the 30 days its token had left,
     # and the org resolution below *created* a fresh organisation for
     # them, with `admin`. F122.
-    local_user = await require_existing_user(user_id, issued_at=claims.issued_at)
+    local_user = await Subjects().require_existing_user(user_id, issued_at=claims.issued_at)
     email = str(local_user.email) if local_user.email else None
     full_name = str(local_user.full_name) if local_user.full_name else None
 

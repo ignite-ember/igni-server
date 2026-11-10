@@ -26,8 +26,6 @@ import asyncio
 from dataclasses import dataclass, field
 import json
 import socket
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
 import httpx
@@ -36,17 +34,14 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 from app.api.base_v1.endpoints.client import chat as chat_module
+from app.api.base_v1.schema.chat import ChatMessage
+from app.services.ai.chat.schemas import UpstreamLine
+from app.services.ai.chat.services import chat_services, ChatServices
+from app.services.ai.token_estimate import TokenEstimator
+from app.services.ai.upstream import UpstreamFailure
+from tests.chat_proxy import context, lease, person, pools, SpyPool, sse, streamer, UsageRows
 
 USAGE = {'prompt_tokens': 23, 'completion_tokens': 69, 'total_tokens': 92}
-
-
-@dataclass
-class _Lease:
-    lease_id: str = 'lease-1'
-    backend_id: str = 'node-1'
-    base_url: str = 'http://node.invalid'
-    model: str = 'fake-model'
-    api_key: str | None = None
 
 
 @dataclass
@@ -55,8 +50,8 @@ class _Pool:
 
     released: list[str] = field(default_factory=list)
 
-    async def acquire(self, user_id, kind, *, model=None, exclude_backend_id=None):
-        return _Lease()
+    async def acquire(self, user_id, *, model=None, exclude_backend_id=None):
+        return lease()
 
     async def release(self, lease):
         await asyncio.sleep(0.05)
@@ -87,16 +82,15 @@ class _Node:
     hangs_after: int | None = None
     closed: bool = False
 
-    async def stream(self, url, headers, body):
+    async def stream(self, *, lease, request):
         try:
             for i, word in enumerate(['one ', 'two ', 'three']):
                 if self.hangs_after is not None and i == self.hangs_after:
                     await asyncio.sleep(60)
-                chunk = _chunk(word)
-                yield f'data: {json.dumps(chunk)}\n\n', chunk
+                yield UpstreamLine.from_sse(f'data: {json.dumps(_chunk(word))}')
             final = {'id': 'c', 'object': 'chat.completion.chunk', 'choices': [], 'usage': USAGE}
-            yield f'data: {json.dumps(final)}\n\n', final
-            yield 'data: [DONE]\n\n', None
+            yield UpstreamLine.from_sse(f'data: {json.dumps(final)}')
+            yield UpstreamLine.from_sse('data: [DONE]')
         finally:
             self.closed = True
 
@@ -113,20 +107,16 @@ class _PassThrough(BaseHTTPMiddleware):
 
 
 @pytest.fixture
-def server(monkeypatch):
+def server():
     """The chat route under uvicorn; yields (base url, pool, usage table, node)."""
     pool, usage, node = _Pool(), _UsageDB(), _Node()
-    monkeypatch.setattr(chat_module.Producers, 'machine', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module.AuthService, 'resolve_user_org', AsyncMock(return_value=('ada', 'org-1')))
-    monkeypatch.setattr(chat_module.GroupsService, 'model_for_user', AsyncMock(return_value=None))
-    monkeypatch.setattr(chat_module, 'PoolManager', lambda: SimpleNamespace(get_chat_pool=lambda: pool))
-    monkeypatch.setattr(chat_module, '_usage_db', usage)
-    monkeypatch.setattr(chat_module, '_stream_upstream', node.stream)
+    services = ChatServices(pools=pools(pool), usage_db=usage, upstream=node, callers=person())
 
     app = FastAPI()
     app.add_middleware(_PassThrough)
     app.add_middleware(_PassThrough)
     app.include_router(chat_module.router)
+    app.dependency_overrides[chat_services] = lambda: services
     return app, pool, usage, node
 
 
@@ -220,11 +210,48 @@ async def test_a_client_that_leaves_mid_stream_is_billed_what_it_used_and_frees_
     await _settled(pool, usage)
 
     assert len(usage.rows) == 1, f'usage written {len(usage.rows)} times'
-    expected = chat_module.TokenEstimator().estimate(body={**_REQUEST}, output_pieces=['one '])
+    expected = TokenEstimator().estimate(
+        messages=[ChatMessage.model_validate(m) for m in _REQUEST['messages']], output_pieces=['one ']
+    )
     row = usage.rows[0]
     assert row['input_tokens'] > 0 and row['output_tokens'] > 0
     assert row['total_tokens'] == row['input_tokens'] + row['output_tokens']
-    assert row['input_tokens'] == pytest.approx(expected[0], abs=8)
+    assert row['input_tokens'] == pytest.approx(expected.prompt_tokens, abs=8)
     assert row['stream'] is True
     assert pool.released == ['lease-1']
     assert node.closed
+
+
+class _NodeThatFailsOnClose:
+    """A node whose connection errors as it is closed, after the client has gone."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def stream(self, *, lease, request):
+        self.calls += 1
+        try:
+            for word in ['one ', 'two ', 'three']:
+                yield UpstreamLine.from_sse(sse(word))
+        finally:
+            raise UpstreamFailure.from_transport(httpx.ReadError('connection reset while closing'))
+
+
+async def test_a_client_that_leaves_while_the_node_fails_to_close_is_still_billed(caplog):
+    """Closing the node's read can fail. That failure, raised into a stream
+    the client already left, is not an attempt to retry: no retry is logged,
+    no second node is asked, and the usage row is still written."""
+    pool, usage, node = SpyPool(), UsageRows(), _NodeThatFailsOnClose()
+    frames = streamer(node).open(context(pool, usage_db=usage)).frames()
+
+    first = await anext(frames)
+    await frames.aclose()
+
+    assert first.startswith('data: ')
+    assert len(usage.rows) == 1, f'usage written {len(usage.rows)} times'
+    assert usage.rows[0]['stream'] is True
+    assert usage.rows[0]['output_tokens'] > 0
+    assert pool.released == ['lease-1']
+    assert node.calls == 1
+    assert 'retrying' not in caplog.text
+    assert 'Closing the upstream stream failed' in caplog.text

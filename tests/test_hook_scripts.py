@@ -87,17 +87,17 @@ class TestTheSeededDefaultIsConsistent:
     def test_every_seeded_hook_reaches_a_seeded_script(self):
         """The Default group is the one every deployment starts from, so
         it must not ship the broken state this module detects."""
-        from app.services.portal.default_group import seed_entries
+        from app.services.portal.default_group_seed import BUNDLED_SEED
 
-        entries = seed_entries()
-        scripts = {name for kind, name, _ in entries if kind == 'scripts'}
-        hooks = [(name, content) for kind, name, content in entries if kind == 'hooks']
+        entries = BUNDLED_SEED.entries()
+        scripts = {entry.entry_name for entry in entries if entry.kind == 'scripts'}
+        hooks = [(entry.entry_name, entry.content) for entry in entries if entry.kind == 'hooks']
         assert hooks, 'the Default group should still seed hooks'
 
         for name, content in hooks:
-            assert (
-                warning_for(content, available_scripts=scripts) is None
-            ), f'seeded hook {name!r} references a script the seed does not ship'
+            assert warning_for(content, available_scripts=scripts) is None, (
+                f'seeded hook {name!r} references a script the seed does not ship'
+            )
 
     def test_the_seeded_hooks_use_the_placeholder(self):
         """Not a machine path: igni ships nothing, so a hook pointing at
@@ -107,20 +107,21 @@ class TestTheSeededDefaultIsConsistent:
         the rename, and a test that names only the retired one passes for
         the wrong reason — it can no longer fail.
         """
-        from app.services.portal.default_group import seed_entries
+        from app.services.portal.default_group_seed import BUNDLED_SEED
 
-        for kind, name, content in seed_entries():
-            if kind != 'hooks':
+        for entry in BUNDLED_SEED.entries():
+            if entry.kind != 'hooks':
                 continue
-            command = json.loads(content).get('command', '')
+            name = entry.entry_name
+            command = json.loads(entry.content).get('command', '')
             assert '{group_scripts}' in command, f'{name!r} does not reach a group-shipped script'
             for machine_path in ('.igni/hooks', '.ember/hooks'):
                 assert machine_path not in command, f'{name!r} points at {machine_path} on the developer machine'
 
     @pytest.mark.parametrize('expected', ['pre-pr-review', 'post-commit-todo'])
     def test_the_scripts_themselves_are_seeded(self, expected):
-        from app.services.portal.default_group import seed_entries
+        from app.services.portal.default_group_seed import BUNDLED_SEED
 
-        scripts = {name: content for kind, name, content in seed_entries() if kind == 'scripts'}
+        scripts = {entry.entry_name: entry.content for entry in BUNDLED_SEED.entries() if entry.kind == 'scripts'}
         assert expected in scripts
         assert scripts[expected].startswith('#!')

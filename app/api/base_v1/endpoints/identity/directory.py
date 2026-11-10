@@ -15,7 +15,7 @@ from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.user import User
 from app.db.sql.org_domains import OrgDomainDB
 from app.db.sql.organizations import OrganizationDB
-from app.db.sql.tenancy import Tenants
+from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.service_caller import require_service, ServiceCaller
 
 router = APIRouter(prefix='/directory')
@@ -72,7 +72,7 @@ async def organisation(caller: ServiceCaller = Depends(require_service)) -> Orga
         org_id=str(found.id),
         name=str(found.display_name),
         slug=str(found.slug),
-        tenant_number=await Tenants().number_of(caller.org_id),
+        tenant_number=await TenantRegistryDB().number_of(caller.org_id),
         domains=await OrgDomainDB().domains_of(caller.org_id),
     )
 

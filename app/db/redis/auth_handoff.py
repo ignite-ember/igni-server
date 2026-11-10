@@ -119,3 +119,8 @@ class AuthHandoffDB:
             # in again; saying so is all that is left to do.
             logger.error('A sign-in handoff code was found but its token will not decrypt; it was discarded')
             return None
+
+
+def auth_handoff() -> AuthHandoffDB:
+    """The FastAPI dependency; tests replace it through `app.dependency_overrides`."""
+    return AuthHandoffDB()

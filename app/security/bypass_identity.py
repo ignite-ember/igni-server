@@ -1,7 +1,7 @@
 """The development bypass identity, named in one place.
 
 `portal_auth` creates these rows when `portal_auth_bypass` is on, and
-`startup_checks` refuses to boot if it finds them in a production
+`database_checks` refuses to boot if it finds them in a production
 database. The two held **separate copies** of the ids:
 
     portal_auth.py:    _BYPASS_ORG_ID = 'demo-org-001'
@@ -31,7 +31,7 @@ BYPASS_ORG_ID = 'demo-org-001'
 #: This only protects rows created from now on. `ensure_exists`
 #: returns early when the user already exists, so databases carrying
 #: the old address keep it; that is what
-#: `check_no_bypass_identity_in_database` is for, and why it keys on
+#: `DatabaseChecks.check_no_bypass_identity_in_database` is for, and why it keys on
 #: the user id rather than the email.
 BYPASS_EMAIL = 'alex@demo.invalid'
 BYPASS_FULL_NAME = 'Alex Chen'

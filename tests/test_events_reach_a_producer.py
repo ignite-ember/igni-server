@@ -223,7 +223,7 @@ async def test_rate_limited_per_service(client, world, monkeypatch):
     # One minute for the whole test, so the count cannot roll over mid-way.
     fixed = datetime.now(timezone.utc).replace(second=1)
     monkeypatch.setattr(
-        'app.services.cloud.producer_events.datetime',
+        'app.services.cloud.event_rate_limit.datetime',
         type('Fixed', (), {'now': staticmethod(lambda tz=None: fixed)}),
     )
     other = await shipped(client, 'igni.artifacts')

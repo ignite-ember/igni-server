@@ -71,7 +71,7 @@ class AuditColumns:
             # are recorded with no actor id at all — so `idx_audit_events_actor`
             # cannot reach exactly the rows an Article 15 answer needs.
             #
-            # `lower(...)` because that is what `subject_access.py` writes and
+            # `lower(...)` because that is what `app/db/sql/subject_access.py` writes and
             # an index on the bare column would sit unused. Without it this
             # was a sequential scan: 288-344 ms at two million rows, growing
             # for the life of a deployment, since audit retention defaults to

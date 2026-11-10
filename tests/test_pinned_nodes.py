@@ -32,7 +32,6 @@ NODE = {
     'base_url': 'http://gpu-hand-01.internal:8000/v1',
     'models': ['igni-1.0-27b'],
     'max_concurrent': 32,
-    'pools': ['chat'],
 }
 
 
@@ -85,7 +84,8 @@ def clean_pool(monkeypatch, tmp_path):
 
     SingletonMeta._instances.pop(PoolManager, None)
     PoolManager(provider=InferenceBackendProvider(path='', inline='', registry=NoRegistry()))
-    monkeypatch.setattr('app.api.base_v1.endpoints.portal.inference.NodeRegistry', NoRegistry)
+    monkeypatch.setattr('app.services.ai.fleet_status.NodeRegistry', NoRegistry)
+    monkeypatch.setattr('app.services.ai.pinned_nodes.NodeRegistry', NoRegistry)
     yield
     SingletonMeta._instances.pop(PoolManager, None)
 
@@ -96,7 +96,7 @@ class TestReadingOneBack:
     The fleet list used to be editable in place, two checkboxes that
     PATCHed on change. Editing moved to a page of its own, and a form
     needs the row **as stored**: `GET /inference` reports what the fleet
-    is *doing* — live pools, load, heartbeats — and carries no `enabled`
+    is *doing* — load, health, heartbeats — and carries no `enabled`
     at all, so a form built from it would drop a field on every save.
     """
 
@@ -111,7 +111,7 @@ class TestReadingOneBack:
         assert body['base_url'] == NODE['base_url']
         assert body['models'] == NODE['models']
         assert body['max_concurrent'] == 32
-        assert body['pools'] == ['chat']
+        assert 'pools' not in body
         # The field the status view does not have, which is the reason
         # this endpoint exists.
         assert body['enabled'] is True
@@ -166,7 +166,7 @@ class TestAdding:
         await client.post('/portal/inference/nodes', json=NODE, headers=admin)
 
         resp = await client.get('/portal/inference', headers=admin)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
+        chat = resp.json()
         assert [n['id'] for n in chat['nodes']] == ['gpu-hand-01']
 
     async def test_it_is_labelled_pinned(self, client, admin):
@@ -175,7 +175,7 @@ class TestAdding:
         await client.post('/portal/inference/nodes', json=NODE, headers=admin)
 
         resp = await client.get('/portal/inference', headers=admin)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
+        chat = resp.json()
         assert chat['nodes'][0]['source'] == 'pinned'
 
     async def test_the_credential_is_never_returned(self, client, admin):
@@ -223,7 +223,7 @@ class TestIdCollisions:
             async def get(self, node_id):
                 return object() if node_id == 'gpu-hand-01' else None
 
-        monkeypatch.setattr('app.api.base_v1.endpoints.portal.inference.NodeRegistry', Registered)
+        monkeypatch.setattr('app.services.ai.pinned_nodes.NodeRegistry', Registered)
         resp = await client.post('/portal/inference/nodes', json=NODE, headers=admin)
         assert resp.status_code == 409
         assert 'cluster automation' in resp.json()['detail']
@@ -265,7 +265,7 @@ class TestEditing:
         await client.patch('/portal/inference/nodes/gpu-hand-01', json={'enabled': False}, headers=admin)
 
         resp = await client.get('/portal/inference', headers=admin)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
+        chat = resp.json()
         assert chat['nodes'] == []
 
     async def test_editing_something_absent_is_a_404(self, client, admin):
@@ -332,7 +332,7 @@ class TestRemoving:
         assert (await client.delete('/portal/inference/nodes/gpu-hand-01', headers=admin)).status_code == 204
 
         resp = await client.get('/portal/inference', headers=admin)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
+        chat = resp.json()
         assert chat['nodes'] == []
 
     async def test_removing_twice_still_succeeds(self, client, admin):
@@ -356,7 +356,7 @@ class TestItNeverDisappears:
         await client.post('/portal/inference/nodes', json=NODE, headers=admin)
 
         resp = await client.get('/portal/inference', headers=admin)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
+        chat = resp.json()
         node = chat['nodes'][0]
 
         assert node['id'] == 'gpu-hand-01'
@@ -454,7 +454,7 @@ class TestModelMismatch:
         await client.post('/portal/inference/nodes', json=NODE, headers=admin)
 
         resp = await client.get('/portal/inference', headers=admin)
-        chat = next(p for p in resp.json()['pools'] if p['pool'] == 'chat')
+        chat = resp.json()
         assert chat['nodes'][0]['health']['state'] == 'degraded'
         assert 'Does not serve' in chat['nodes'][0]['health']['detail']
 
@@ -471,7 +471,7 @@ class TestModelsForTheGroupPicker:
 
     @pytest.fixture(autouse=True)
     def served(self, monkeypatch):
-        async def _list(self, pool):
+        async def _list(self):
             return [
                 ('igni-1.0-27b', 'http://gpu-01:8000/v1'),
                 ('legal-reviewer', 'http://gpu-01:8000/v1'),
@@ -500,7 +500,7 @@ class TestModelsForTheGroupPicker:
         """A deployment that has configured nothing is a state to render."""
         from app.services.ai.backend_provider import BackendConfigError
 
-        async def _boom(self, pool):
+        async def _boom(self):
             raise BackendConfigError('nothing configured')
 
         monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _boom)

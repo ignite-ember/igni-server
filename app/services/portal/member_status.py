@@ -10,15 +10,16 @@ the Team page, which reads the membership.
 Both now go through :class:`MemberStatus`, which sets the membership and
 the account together and, on deactivation, stops the person's VM
 credentials. Deactivating the account withdraws every session the person
-holds in the same statement (:meth:`UserDB.set_deactivated`); bringing
+holds in the same statement (:meth:`AccountSessionsDB.set_deactivated`); bringing
 them back re-admits none of them.
 """
 
 from __future__ import annotations
 
+from app.db.sql.account_sessions import AccountSessionsDB
 from app.db.sql.team import TeamDB
-from app.db.sql.user import UserDB
 from app.services.cloud.vm_credentials import VmCredentials
+from app.services.identity.account_refusals import AccountRefusals
 from app.services.identity.api_keys import ApiKeys
 
 ACTIVE = 'active'
@@ -30,16 +31,16 @@ class MemberStatus:
         self,
         *,
         team: TeamDB | None = None,
-        users: UserDB | None = None,
+        sessions: AccountSessionsDB | None = None,
         vm_credentials: VmCredentials | None = None,
     ) -> None:
         self._team = team or TeamDB()
-        self._users = users or UserDB()
+        self._sessions = sessions or AccountSessionsDB()
         self._vm_credentials = vm_credentials or VmCredentials()
 
     async def set_in_org(self, org_id: str, user_id: str, *, active: bool) -> str:
         """One membership, as an org admin sets it. Answers the status it had."""
-        old_status = await self._team.update_status(org_id, user_id, ACTIVE if active else DEACTIVATED)
+        old_status = await self._team.update_status(org_id, user_id=user_id, status=ACTIVE if active else DEACTIVATED)
         await self._account(user_id, active=active)
         return old_status
 
@@ -58,7 +59,8 @@ class MemberStatus:
 
     async def _account(self, user_id: str, *, active: bool) -> None:
         """The account, which is what actually deprovisions: the membership alone is read by the portal only."""
-        await self._users.set_deactivated(user_id, deactivated=not active)
+        with AccountRefusals():
+            await self._sessions.set_deactivated(user_id, deactivated=not active)
         if not active:
             await self._vm_credentials.revoke_person(user_id)
             await ApiKeys().revoke_person(user_id)

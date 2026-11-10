@@ -12,8 +12,6 @@ export interface UsageDataPoint {
 
 // ─── Inference nodes ────────────────────────────────────────────────
 
-export type PoolType = 'chat' | 'codeindex'
-
 /**
  * Where a node came from. The two are operated differently — a
  * configured node changes by editing config and redeploying, a
@@ -62,7 +60,6 @@ export interface NodeStatus {
   base_url: string
   /** Every id this node answers to: the base model, plus any LoRA adapters. */
   models: string[]
-  pools: PoolType[]
   multimodal: boolean
   source: NodeSource
   in_flight: number
@@ -88,13 +85,6 @@ export interface NodeDrain {
   reason: string | null
 }
 
-export interface PoolStatus {
-  pool: PoolType
-  nodes: NodeStatus[]
-  total_in_flight: number
-  total_capacity: number
-  utilization: number
-}
 
 /** A node an admin added by hand. The api_key is never returned. */
 export interface PinnedNode {
@@ -102,7 +92,6 @@ export interface PinnedNode {
   base_url: string
   models: string[]
   max_concurrent: number
-  pools: PoolType[]
   multimodal: boolean
   enabled: boolean
   has_api_key: boolean
@@ -114,8 +103,13 @@ export interface PinnedNodeInput {
   models: string[]
   api_key?: string
   max_concurrent: number
-  pools: PoolType[]
   multimodal: boolean
+}
+
+/** An address to ask what it serves, before adding it as a node. */
+export interface NodeProbeRequest {
+  base_url: string
+  api_key?: string
 }
 
 /**
@@ -137,7 +131,10 @@ export interface NodeProbeResult {
 }
 
 export interface InferenceStatus {
-  pools: PoolStatus[]
+  nodes: NodeStatus[]
+  total_in_flight: number
+  total_capacity: number
+  utilization: number
   /**
    * Whether this deployment accepts self-registration at all. Without
    * it, "nothing has registered" and "registration is switched off" look
@@ -147,11 +144,39 @@ export interface InferenceStatus {
   heartbeat_interval_seconds: number
 }
 
+/** GET /portal/inference/models: every model id the nodes serve, for choosing one. */
+export interface AvailableModels {
+  models: string[]
+}
+
 export interface OrgSummary {
   id: string
   slug: string
   display_name: string
   role: 'admin' | 'member'
+}
+
+/** POST /portal/organizations. */
+export interface CreateOrgRequest {
+  display_name: string
+  domains: string[]
+}
+
+/** POST and PATCH /portal/organizations: the organisation as it now is. */
+export interface OrgChanged {
+  id: string
+  slug: string
+  display_name: string
+}
+
+/** DELETE /portal/organizations/{id}. */
+export interface DeleteOrgResponse {
+  message: string
+}
+
+/** DELETE /portal/me. */
+export interface DeleteAccountResponse {
+  message: string
 }
 
 export interface UserMe {
@@ -168,6 +193,12 @@ export interface UserMe {
   organizations?: OrgSummary[]
   /** Owns the install: creates organisations, makes other super admins. */
   is_super_admin?: boolean
+}
+
+/** POST /v1/cli/token. The page forwards only `handoff_code`; the CLI redeems it. */
+export interface CLITokenResponse {
+  access_token: string
+  handoff_code: string
 }
 
 // ─── Super admins ───────────────────────────────────────────────────
@@ -496,8 +527,26 @@ export interface TeamMemberList {
 
 // ─── Groups ─────────────────────────────────────────────────────────
 
-export type EntryKind = 'agents' | 'mcps' | 'plugins' | 'settings'
-export type ContentType = 'markdown' | 'yaml' | 'json'
+/** What a group can hold. Mirrors app/services/portal/entry_kinds.py; lib/entryKinds.ts describes each. */
+export type EntryKind =
+  | 'agents'
+  | 'skills'
+  | 'commands'
+  | 'workflows'
+  | 'rules'
+  | 'output-styles'
+  | 'hooks'
+  | 'tools'
+  | 'mcps'
+  | 'plugins'
+  | 'scripts'
+  | 'settings'
+
+/**
+ * The format an entry's content is in. Not a choice: igni's loaders honour
+ * exactly one per kind, and anything else is dropped rather than rejected.
+ */
+export type ContentType = 'markdown' | 'json' | 'yaml' | 'javascript' | 'python' | 'shell'
 
 /**
  * Brand overrides a group's people see in the igni client.
@@ -592,9 +641,32 @@ export interface OrgGroupEntry {
   model: string | null
 }
 
+/**
+ * POST /portal/groups/{id}/entries.
+ *
+ * The server tells an absent key from a null one, so the source fields
+ * ride along only for plugins and `model` only for an agent that names one.
+ */
+export interface CreateOrgGroupEntryRequest {
+  kind: EntryKind
+  entry_name: string
+  content: string
+  content_type: ContentType
+  enabled: boolean
+  source_url?: string | null
+  source_ref?: string | null
+  source_subdir?: string | null
+  model?: string
+}
+
 export interface OrgGroupEntryList {
   entries: OrgGroupEntry[]
   total: number
+  /**
+   * After a create or update: anything worth saying about what was just
+   * written, such as a mistyped tool name. The write still succeeded.
+   */
+  warnings?: string[]
 }
 
 /** One approved extension, and whether this group's people get it (off by default). */
@@ -841,6 +913,30 @@ export interface AppHold {
   placed_at: string
 }
 
+/** One removed incarnation of a held person, and when it is erased (null while held). */
+export interface HeldIncarnation {
+  incarnation: string
+  removed_at: string | null
+  erase_at: string | null
+}
+
+/** A legal hold on a person in an organisation. */
+export interface PersonHold {
+  org_id: string
+  user_id: string
+  reason: string
+  placed_by_user_id: string
+  placed_at: string
+  /** Their removed incarnations in this organisation not yet erased. */
+  incarnations: HeldIncarnation[]
+}
+
+/** An organisation's legal holds: on people, and on apps. */
+export interface LegalHoldList {
+  holds: PersonHold[]
+  apps: AppHold[]
+}
+
 export type ErasureState = 'scheduled' | 'held' | 'erasing' | 'erased'
 
 /** A removed producer's VM on its way to erasure: a former member, a discarded app or space. */
@@ -862,4 +958,82 @@ export interface Erasure {
 export interface ErasureList {
   org_id: string
   erasures: Erasure[]
+}
+
+/** An app discarded: gone at once, its VM erased in the background. */
+export interface DiscardedApp {
+  /** Where its erasure stands; null for an app whose VM never existed. */
+  discarded: Erasure | null
+  /** The new app, when a fresh start was asked for. */
+  fresh_app: OrgApp | null
+}
+
+// ─── Compliance ─────────────────────────────────────────────────────
+
+/** How the server classified an audited request: `denied` is a refusal, `error` a failure. */
+export type AuditOutcome = 'success' | 'denied' | 'error'
+
+/** One privileged action, as GET /portal/audit-events returns it. */
+export interface AuditEvent {
+  id: string
+  occurred_at: string
+  actor_email: string | null
+  actor_user_id: string | null
+  method: string
+  route: string
+  target_type: string | null
+  target_id: string | null
+  status_code: number
+  outcome: AuditOutcome
+  client_host: string | null
+  detail: Record<string, unknown> | null
+}
+
+/** A page of audit events, newest first; `next_before` is the cursor for the next one. */
+export interface AuditEventPage {
+  events: AuditEvent[]
+  next_before: string | null
+}
+
+/** Why an access review row is worth a second look. */
+export type AccessFlag = 'invitation_pending' | 'never_signed_in' | 'dormant' | 'suspended'
+
+/** One person's access to the organisation. */
+export interface AccessReviewRow {
+  user_id: string | null
+  email: string | null
+  full_name: string | null
+  auth_provider: string | null
+  role: TeamRole
+  status: TeamMemberStatus
+  granted_at: string | null
+  granted_by: string | null
+  last_sign_in_at: string | null
+  days_since_sign_in: number | null
+  flags: AccessFlag[]
+}
+
+/** The access review report, plus the counts an auditor writes down. */
+export interface AccessReview {
+  generated_at: string
+  dormant_after_days: number
+  total: number
+  active: number
+  needs_review: number
+  rows: AccessReviewRow[]
+}
+
+/**
+ * The subject access report, kept as the whole JSON document.
+ *
+ * It is a legal artefact shown and downloaded verbatim, so the portal
+ * deliberately does not model its parts.
+ */
+export type SubjectAccessReport = Record<string, unknown>
+
+/** What POST /portal/erasure redacted. */
+export interface ErasureResult {
+  email: string
+  events_redacted: number
+  logins_included: number
 }

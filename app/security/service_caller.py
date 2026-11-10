@@ -17,7 +17,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 
-from app.middlewares.audit import set_audit_actor
+from app.middlewares.request_audit import RequestAudit
 from app.services.auth.jwt_service import JWTService, TokenUse
 from app.services.identity.registry import ClientRegistry
 
@@ -48,19 +48,19 @@ class ServiceFollower(BaseModel):
 async def require_service(request: Request, token: str | None = Depends(_bearer)) -> ServiceCaller:
     tokens = JWTService()
     payload = tokens.verify(token or '', audience=tokens.issuer, use=TokenUse.SERVICE)
-    if payload is None or not payload.get('org'):
+    if payload is None or not payload.org:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=_REFUSAL, headers={'WWW-Authenticate': 'Bearer'}
         )
-    client = await ClientRegistry().approved(str(payload['sub']))
+    client = await ClientRegistry().approved(payload.sub)
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='This client is not approved',
             headers={'WWW-Authenticate': 'Bearer'},
         )
-    caller = ServiceCaller(client_id=client.client_id, name=client.name, org_id=str(payload['org']))
-    set_audit_actor(request, user_id=f'client:{client.client_id}', org_id=caller.org_id)
+    caller = ServiceCaller(client_id=client.client_id, name=client.name, org_id=payload.org)
+    RequestAudit.of(request).attribute_to(user_id=f'client:{client.client_id}', org_id=caller.org_id)
     return caller
 
 
@@ -73,17 +73,17 @@ async def require_service_follower(request: Request, token: str | None = Depends
     """
     tokens = JWTService()
     payload = tokens.verify(token or '', audience=tokens.issuer, use=TokenUse.SERVICE)
-    if payload is None or not (payload.get('org') or payload.get('scope') == REVOCATIONS_SCOPE):
+    if payload is None or not (payload.org or payload.scope == REVOCATIONS_SCOPE):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=_REFUSAL, headers={'WWW-Authenticate': 'Bearer'}
         )
-    client = await ClientRegistry().approved(str(payload['sub']))
+    client = await ClientRegistry().approved(payload.sub)
     if client is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='This client is not approved',
             headers={'WWW-Authenticate': 'Bearer'},
         )
-    org_id = str(payload['org']) if payload.get('org') else None
-    set_audit_actor(request, user_id=f'client:{client.client_id}', org_id=org_id)
+    org_id = payload.org or None
+    RequestAudit.of(request).attribute_to(user_id=f'client:{client.client_id}', org_id=org_id)
     return ServiceFollower(client_id=client.client_id, name=client.name, org_id=org_id)

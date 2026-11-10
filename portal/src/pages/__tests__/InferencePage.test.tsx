@@ -3,7 +3,7 @@
  *
  * The page exists to answer "do we need another GPU", so the tests that
  * matter are the ones where a wrong answer costs something: a stale node
- * that looks healthy, a pool nothing serves, and an empty registered
+ * that looks healthy, a fleet with no nodes, and an empty registered
  * list that could mean either "nobody registered" or "registration is
  * switched off".
  */
@@ -20,7 +20,6 @@ function node(overrides: Record<string, unknown> = {}) {
     id: 'gpu-01',
     base_url: 'http://gpu-01.internal:8000/v1',
     models: ['igni-1.0-27b'],
-    pools: ['chat'],
     multimodal: false,
     source: 'static',
     in_flight: 0,
@@ -37,10 +36,7 @@ function node(overrides: Record<string, unknown> = {}) {
 
 function status(overrides: Record<string, unknown> = {}) {
   return {
-    pools: [
-      { pool: 'chat', nodes: [node()], total_in_flight: 0, total_capacity: 64, utilization: 0 },
-      { pool: 'codeindex', nodes: [], total_in_flight: 0, total_capacity: 0, utilization: 0 },
-    ],
+    nodes: [node()], total_in_flight: 0, total_capacity: 64, utilization: 0,
     registration_enabled: true,
     heartbeat_interval_seconds: 60,
     ...overrides,
@@ -84,15 +80,10 @@ describe('The node list', () => {
   test('a collapsed row shows the name and the load, and nothing else', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ in_flight: 12 })],
+        nodes: [node({ in_flight: 12 })],
             total_in_flight: 12,
             total_capacity: 64,
             utilization: 12 / 64,
-          },
-        ],
       }),
     )
 
@@ -109,7 +100,7 @@ describe('The node list', () => {
   })
 
   test('expanding reveals the address and the model list', async () => {
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node({ models: ['base-27b', 'sql-expert'] })], total_in_flight: 0, total_capacity: 64, utilization: 0 }] }))
+    respondWith(status({ nodes: [node({ models: ['base-27b', 'sql-expert'] })], total_in_flight: 0, total_capacity: 64, utilization: 0 }))
 
     renderWithProviders(<InferencePage />)
     await expand('gpu-01')
@@ -126,10 +117,7 @@ describe('The node list', () => {
     // would defeat the point of scraping it.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [
+        nodes: [
               node({
                 in_flight: 4,
                 metrics: { running: 64, waiting: 5, kv_cache_percent: 97.2, prefix_cache_hit_percent: 81.2, preemptions: 4 },
@@ -139,8 +127,6 @@ describe('The node list', () => {
             total_in_flight: 4,
             total_capacity: 64,
             utilization: 0.06,
-          },
-        ],
       }),
     )
 
@@ -158,15 +144,10 @@ describe('The node list', () => {
     // and every bar renders grey with no error anywhere.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ in_flight: 8, metrics: { running: 8, waiting: 0, kv_cache_percent: 95, prefix_cache_hit_percent: 90, preemptions: 0 } })],
+        nodes: [node({ in_flight: 8, metrics: { running: 8, waiting: 0, kv_cache_percent: 95, prefix_cache_hit_percent: 90, preemptions: 0 } })],
             total_in_flight: 8,
             total_capacity: 64,
             utilization: 0.125,
-          },
-        ],
       }),
     )
 
@@ -188,15 +169,10 @@ describe('The node list', () => {
   test('expanding shows every gauge the node reported', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ in_flight: 4, metrics: { running: 64, waiting: 5, kv_cache_percent: 97.2, prefix_cache_hit_percent: 81.2, preemptions: 4 } })],
+        nodes: [node({ in_flight: 4, metrics: { running: 64, waiting: 5, kv_cache_percent: 97.2, prefix_cache_hit_percent: 81.2, preemptions: 4 } })],
             total_in_flight: 4,
             total_capacity: 64,
             utilization: 0.06,
-          },
-        ],
       }),
     )
 
@@ -218,15 +194,10 @@ describe('The node list', () => {
     // is using this GPU, and only the node knows.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ in_flight: 4, metrics: { running: 64, waiting: 0, kv_cache_percent: 80, prefix_cache_hit_percent: 40, preemptions: 0 } })],
+        nodes: [node({ in_flight: 4, metrics: { running: 64, waiting: 0, kv_cache_percent: 80, prefix_cache_hit_percent: 40, preemptions: 0 } })],
             total_in_flight: 4,
             total_capacity: 64,
             utilization: 0.06,
-          },
-        ],
       }),
     )
 
@@ -248,15 +219,10 @@ describe('The node list', () => {
     // and `EditNodePage.test.tsx` covers the writing of it.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ id: 'gpu-hand', source: 'pinned', pools: ['chat'] })],
+        nodes: [node({ id: 'gpu-hand', source: 'pinned' })],
             total_in_flight: 0,
             total_capacity: 64,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -271,15 +237,13 @@ describe('The node list', () => {
 
   test('a node defined elsewhere says where to change it', async () => {
     // A configured node changes by redeploy and a registered one by
-    // whatever started the cluster, so offering a checkbox would be a
-    // lie.
-    respondWith(status())
+    // whatever started the cluster, so offering a form would be a lie.
+    respondWith(status({ nodes: [node({ source: 'static' })] }))
 
     renderWithProviders(<InferencePage />)
     await expand('gpu-01')
 
-    expect(await screen.findByText(/set where this node is defined/i)).toBeInTheDocument()
-    expect(screen.queryByRole('checkbox', { name: 'CodeIndex' })).not.toBeInTheDocument()
+    expect(await screen.findByText(/change it there and redeploy/i)).toBeInTheDocument()
   })
 
   test('removing a node asks first', async () => {
@@ -295,15 +259,10 @@ describe('The node list', () => {
     )
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ id: 'gpu-hand', source: 'pinned', in_flight: 3 })],
+        nodes: [node({ id: 'gpu-hand', source: 'pinned', in_flight: 3 })],
             total_in_flight: 3,
             total_capacity: 64,
             utilization: 0.05,
-          },
-        ],
       }),
     )
 
@@ -324,6 +283,22 @@ describe('The node list', () => {
     await waitFor(() => expect(deleted).toBe(true))
   })
 
+  test('a refused removal says why instead of failing silently', async () => {
+    server.use(
+      http.delete('/v1/portal/inference/nodes/gpu-hand', () =>
+        HttpResponse.json({ detail: 'That node is still being edited.' }, { status: 409 }),
+      ),
+    )
+    respondWith(status({ nodes: [node({ id: 'gpu-hand', source: 'pinned' })] }))
+
+    renderWithProviders(<InferencePage />)
+    const user = await expand('gpu-hand')
+    await user.click(await screen.findByRole('button', { name: /remove node/i }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: /^Remove node$/ }))
+
+    expect(await screen.findByText('That node is still being edited.')).toBeInTheDocument()
+  })
+
   test('cancelling leaves the node alone', async () => {
     let deleted = false
     server.use(
@@ -334,15 +309,10 @@ describe('The node list', () => {
     )
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ id: 'gpu-hand', source: 'pinned' })],
+        nodes: [node({ id: 'gpu-hand', source: 'pinned' })],
             total_in_flight: 0,
             total_capacity: 64,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -369,10 +339,7 @@ describe('The node list', () => {
     // The property that made pinned nodes a table rather than a TTL key.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [
+        nodes: [
               node({
                 id: 'gpu-hand-01',
                 source: 'pinned',
@@ -382,8 +349,6 @@ describe('The node list', () => {
             total_in_flight: 0,
             total_capacity: 64,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -401,17 +366,12 @@ describe('The node list', () => {
     // only signal.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [
+        nodes: [
               node({ health: { state: 'unreachable', detail: 'No response within 3s', latency_ms: null } }),
             ],
             total_in_flight: 0,
             total_capacity: 64,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -423,15 +383,10 @@ describe('The node list', () => {
   test('how a node was added is detail, not row', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ id: 'gpu-fixed' }), node({ id: 'gpu-hand', source: 'pinned' })],
+        nodes: [node({ id: 'gpu-fixed' }), node({ id: 'gpu-hand', source: 'pinned' })],
             total_in_flight: 0,
             total_capacity: 128,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -461,15 +416,10 @@ describe('The node list', () => {
     // lie.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ id: 'gpu-fixed' }), node({ id: 'gpu-hand', source: 'pinned' })],
+        nodes: [node({ id: 'gpu-fixed' }), node({ id: 'gpu-hand', source: 'pinned' })],
             total_in_flight: 0,
             total_capacity: 128,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -487,15 +437,10 @@ describe('The node list', () => {
   test('a heartbeat age appears only for registered nodes', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ source: 'registered', last_seen_seconds_ago: 900 })],
+        nodes: [node({ source: 'registered', last_seen_seconds_ago: 900 })],
             total_in_flight: 0,
             total_capacity: 64,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -517,18 +462,13 @@ describe('The node list', () => {
     expect(screen.queryByText(/Last heartbeat/i)).not.toBeInTheDocument()
   })
 
-  test('pool utilization is a headline number, not a footnote', async () => {
+  test('utilization is a headline number, not a footnote', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ in_flight: 48 })],
+        nodes: [node({ in_flight: 48 })],
             total_in_flight: 48,
             total_capacity: 64,
             utilization: 0.75,
-          },
-        ],
       }),
     )
 
@@ -536,54 +476,27 @@ describe('The node list', () => {
 
     // A stat card, in the idiom the rest of the portal uses for numbers.
     // The row shows a percentage too, so this is scoped to the card.
-    const card = (await screen.findByText('Chat capacity')).closest('.stat-card')!
+    const card = (await screen.findByText('Capacity in use')).closest('.stat-card')!
     expect(within(card as HTMLElement).getByText('75%')).toBeInTheDocument()
     expect(screen.getByText('48 of 64 concurrent')).toBeInTheDocument()
   })
 
-  test('a pool nothing serves says so', async () => {
-    // The list is the fleet now, so a pool with no nodes shows up in its
-    // capacity card rather than as a second empty list.
+  test('no nodes says so in the capacity card', async () => {
+    respondWith(status({ nodes: [], total_capacity: 0 }))
+
+    renderWithProviders(<InferencePage />)
+
+    expect(await screen.findByText('Capacity in use')).toBeInTheDocument()
+    expect(screen.getByText('no nodes')).toBeInTheDocument()
+  })
+
+  test('the row names the model a node serves', async () => {
     respondWith(status())
 
     renderWithProviders(<InferencePage />)
 
-    expect(await screen.findByText('CodeIndex capacity')).toBeInTheDocument()
-    expect(screen.getByText('no nodes')).toBeInTheDocument()
-  })
-
-  test('one GPU serving both pools is one row, not two', async () => {
-    // The API answers per pool because routing is per pool. This page is
-    // about hardware: a node serving chat and indexing is one machine
-    // with one concurrency limit and one KV cache.
-    respondWith(
-      status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ in_flight: 2, pools: ['chat', 'codeindex'] })],
-            total_in_flight: 2,
-            total_capacity: 64,
-            utilization: 0.03,
-          },
-          {
-            pool: 'codeindex',
-            nodes: [node({ in_flight: 3, pools: ['chat', 'codeindex'] })],
-            total_in_flight: 3,
-            total_capacity: 64,
-            utilization: 0.05,
-          },
-        ],
-      }),
-    )
-
-    renderWithProviders(<InferencePage />)
-
     await waitFor(() => expect(document.querySelectorAll('.inference-node-summary')).toHaveLength(1))
-    // Each pool keeps its own lease gauge, so the node's real occupancy
-    // is the total.
-    expect(screen.getByRole('progressbar', { name: '5 of 64 in flight' })).toBeInTheDocument()
-    expect(screen.getByText('Chat · CodeIndex')).toBeInTheDocument()
+    expect(document.querySelector('.inference-node-models')).toHaveTextContent('igni-1.0-27b')
   })
 
   test('says when registration is switched off', async () => {
@@ -727,8 +640,8 @@ describe('Row alignment', () => {
   /**
    * Each row is its own <summary>, so its own grid container. With
    * `auto` or `minmax()` tracks every row sized its columns to its own
-   * content — a node called gpu-lora-01 serving "Chat · CodeIndex"
-   * resolved differently from gpu-offline-04 serving "Chat" — and the
+   * content — a node called gpu-lora-01 serving three models resolved
+   * differently from gpu-offline-04 serving one — and the
    * columns visibly stepped in and out down the list.
    *
    * Fixed tracks resolve identically in every row. Asserted on the
@@ -737,18 +650,13 @@ describe('Row alignment', () => {
   test('every row declares the same fixed column tracks', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [
-              node({ id: 'gpu-lora-01', pools: ['chat', 'codeindex'] }),
-              node({ id: 'gpu-offline-04', pools: ['chat'] }),
+        nodes: [
+              node({ id: 'gpu-lora-01' }),
+              node({ id: 'gpu-offline-04' }),
             ],
             total_in_flight: 0,
             total_capacity: 128,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -764,29 +672,24 @@ describe('Row alignment', () => {
 
 describe('Column alignment', () => {
   /**
-   * The pools text used to trail the node name inside a flex, so it
-   * started wherever that row's name happened to end — "Chat" landed at
-   * a different x on every row and never formed a readable column.
+   * The models text used to trail the node name inside a flex, so it
+   * started wherever that row's name happened to end — it landed at a
+   * different x on every row and never formed a readable column.
    *
    * jsdom does not lay out, so this asserts the structure that produces
-   * the alignment: name and pools are siblings in the row's own grid,
+   * the alignment: name and models are siblings in the row's own grid,
    * not nested one inside the other.
    */
-  test('pools is a sibling column of the name, not nested inside it', async () => {
+  test('models is a sibling column of the name, not nested inside it', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [
-              node({ id: 'gpu-busy-02', pools: ['chat'] }),
-              node({ id: 'gpu-offline-04', pools: ['chat'] }),
+        nodes: [
+              node({ id: 'gpu-busy-02' }),
+              node({ id: 'gpu-offline-04' }),
             ],
             total_in_flight: 0,
             total_capacity: 72,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -795,10 +698,10 @@ describe('Column alignment', () => {
 
     for (const row of document.querySelectorAll('.inference-node-summary')) {
       const name = row.querySelector('.inference-node-name')!
-      const pools = row.querySelector('.inference-node-pools')!
+      const models = row.querySelector('.inference-node-models')!
       // Same parent — the grid — so both sit in their own fixed track.
-      expect(pools.parentElement).toBe(name.parentElement)
-      expect(name.contains(pools)).toBe(false)
+      expect(models.parentElement).toBe(name.parentElement)
+      expect(name.contains(models)).toBe(false)
     }
   })
 
@@ -806,10 +709,7 @@ describe('Column alignment', () => {
     // A row with a queue and a row without must still line their bars up.
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [
+        nodes: [
               node({ id: 'quiet' }),
               node({
                 id: 'queued',
@@ -819,8 +719,6 @@ describe('Column alignment', () => {
             total_in_flight: 0,
             total_capacity: 128,
             utilization: 0,
-          },
-        ],
       }),
     )
 
@@ -853,23 +751,10 @@ describe('Changing what a node serves', () => {
     return user
   }
 
-  const pinned = { pools: ['chat', 'codeindex'], source: 'pinned' }
-
-  test('the row offers no way to change what a node serves', async () => {
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node(pinned)], total_in_flight: 0, total_capacity: 64, utilization: 0 }] }))
-
-    renderWithProviders(<InferencePage />)
-    await expand('gpu-01')
-
-    // The pools are shown...
-    expect(await screen.findByText('Chat, CodeIndex')).toBeInTheDocument()
-    // ...and not as controls.
-    expect(screen.queryByRole('checkbox', { name: 'Chat' })).toBeNull()
-    expect(screen.queryByRole('checkbox', { name: 'CodeIndex' })).toBeNull()
-  })
+  const pinned = { source: 'pinned' }
 
   test('Edit links to the node page', async () => {
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node(pinned)], total_in_flight: 0, total_capacity: 64, utilization: 0 }] }))
+    respondWith(status({ nodes: [node(pinned)], total_in_flight: 0, total_capacity: 64, utilization: 0 }))
 
     renderWithProviders(<InferencePage />)
     await expand('gpu-01')
@@ -881,20 +766,20 @@ describe('Changing what a node serves', () => {
   test('a node defined elsewhere offers no Edit', async () => {
     // Its definition lives in the cluster or the config file, so a form
     // here could not save. Stop serving still applies to it.
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node({ source: 'registered' })], total_in_flight: 0, total_capacity: 64, utilization: 0 }] }))
+    respondWith(status({ nodes: [node({ source: 'registered' })], total_in_flight: 0, total_capacity: 64, utilization: 0 }))
 
     renderWithProviders(<InferencePage />)
     await expand('gpu-01')
 
-    expect(await screen.findByText(/set where this node is defined/i)).toBeInTheDocument()
+    expect(await screen.findByText(/change it in whatever starts the cluster/i)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Edit/i })).toBeNull()
   })
 })
 
 describe('Taking a node out of rotation', () => {
   /**
-   * The switch a self-registered node never had. Its "Serves" field read
-   * "set where this node is defined", because a registration is
+   * The switch a self-registered node never had. Its source read
+   * "change it in whatever starts the cluster", because a registration is
    * idempotent and the cluster re-announces itself every 60 seconds — so
    * anything written here would be overwritten inside three minutes. The
    * drain is stored separately and outlives that, which is what makes a
@@ -921,7 +806,7 @@ describe('Taking a node out of rotation', () => {
   }
 
   test('a registered node can be switched off, which it could not before', async () => {
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node({ source: 'registered' })], total_in_flight: 0, total_capacity: 64, utilization: 0 }] }))
+    respondWith(status({ nodes: [node({ source: 'registered' })], total_in_flight: 0, total_capacity: 64, utilization: 0 }))
 
     let drainedWith: unknown = null
     server.use(
@@ -939,8 +824,21 @@ describe('Taking a node out of rotation', () => {
     await waitFor(() => expect(drainedWith).not.toBeNull())
   })
 
+  test('a failed stop says so instead of failing silently', async () => {
+    respondWith(status({ nodes: [node({ source: 'registered' })] }))
+    server.use(
+      http.post('/v1/portal/inference/nodes/gpu-01/drain', () => new HttpResponse(null, { status: 500 })),
+    )
+
+    renderWithProviders(<InferencePage />)
+    const user = await expand('gpu-01')
+    await user.click(await screen.findByRole('button', { name: /Stop serving gpu-01/i }))
+
+    expect(await screen.findByText('Could not stop the node serving.')).toBeInTheDocument()
+  })
+
   test('a drained node says who stopped it, and why', async () => {
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }] }))
+    respondWith(status({ nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }))
 
     renderWithProviders(<InferencePage />)
     await expand('gpu-01')
@@ -956,7 +854,7 @@ describe('Taking a node out of rotation', () => {
   test('a drained node is visible while collapsed', async () => {
     // Otherwise you have to open every row to find the GPU somebody
     // stopped last week.
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }] }))
+    respondWith(status({ nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }))
 
     renderWithProviders(<InferencePage />)
 
@@ -964,7 +862,7 @@ describe('Taking a node out of rotation', () => {
   })
 
   test('switching it back on clears the drain rather than writing a flag', async () => {
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }] }))
+    respondWith(status({ nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }))
 
     let resumed = false
     server.use(
@@ -984,7 +882,7 @@ describe('Taking a node out of rotation', () => {
 
   test('the node stays listed while drained', async () => {
     // A switch whose subject disappears cannot be switched back.
-    respondWith(status({ pools: [{ pool: 'chat', nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }] }))
+    respondWith(status({ nodes: [node({ drain: drained })], total_in_flight: 0, total_capacity: 0, utilization: 0 }))
 
     renderWithProviders(<InferencePage />)
 
@@ -998,15 +896,10 @@ describe('An org admin who is not a super admin', () => {
   test('sees the fleet but no controls to change it', async () => {
     respondWith(
       status({
-        pools: [
-          {
-            pool: 'chat',
-            nodes: [node({ id: 'gpu-hand', source: 'pinned' })],
+        nodes: [node({ id: 'gpu-hand', source: 'pinned' })],
             total_in_flight: 0,
             total_capacity: 64,
             utilization: 0,
-          },
-        ],
       }),
       undefined,
       { is_super_admin: false },

@@ -3,7 +3,8 @@ import { useDropzone } from 'react-dropzone'
 import { Button, FormControl, Stack, Text } from '@primer/react'
 import { ScreenFullIcon, ScreenNormalIcon, UploadIcon } from '@primer/octicons-react'
 
-import { CONTENT_EXTENSION, EDITOR_LANGUAGE, type ContentType } from '../lib/entryKinds'
+import { CONTENT_EXTENSION, EDITOR_LANGUAGE } from '../lib/entryKinds'
+import type { ContentType } from '../types'
 import './ContentEditor.css'
 
 // Monaco is bundled rather than fetched from a CDN (see lib/monaco.ts),

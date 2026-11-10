@@ -19,9 +19,16 @@ would do:
   default, not the request.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
-from app.services.portal.groups_service import GroupsService
+from app.db.sql.schemas.group import GroupSummary
+from app.db.sql.schemas.tenancy import OrganisationDetached
+from app.services.ai.chat.callers import ChatCallerResolver
+from app.services.ai.chat.schemas import ChatCaller
+from app.services.ai.schemas import ModelNotAvailableError
+from app.services.portal.group_model_service import GroupModelService
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 MODELS = [('igni-1.0-27b', 'http://gpu-01:8000/v1'), ('legal-reviewer', 'http://gpu-01:8000/v1')]
@@ -31,7 +38,7 @@ MODELS = [('igni-1.0-27b', 'http://gpu-01:8000/v1'), ('legal-reviewer', 'http://
 def served_models(monkeypatch):
     """A pool serving a base model and one adapter."""
 
-    async def _list(self, pool):
+    async def _list(self):
         return MODELS
 
     monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _list)
@@ -112,7 +119,7 @@ class TestRefusingWhatNothingServes:
     async def test_a_broken_pool_does_not_block_group_edits(self, client, admin, monkeypatch):
         """Group administration should not require the GPUs to be up."""
 
-        async def _boom(self, pool):
+        async def _boom(self):
             raise ConnectionError('redis is down')
 
         monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _boom)
@@ -121,6 +128,24 @@ class TestRefusingWhatNothingServes:
             '/portal/groups', json={'name': 'Legal', 'default_model': 'legal-reviewer'}, headers=headers
         )
         assert resp.status_code in (200, 201)
+
+    async def test_a_pool_that_cannot_be_read_does_not_block_the_edit(self, client, admin, monkeypatch):
+        """However the pool fails to answer — not only a socket or Redis —
+        the served check is skipped and the group is still saved. Group
+        administration must not require the GPUs to be up."""
+
+        async def _broken(self):
+            raise RuntimeError('the node registry returned something unreadable')
+
+        monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _broken)
+        headers, _ = admin
+
+        resp = await client.post(
+            '/portal/groups', json={'name': 'Legal', 'default_model': 'legal-reviewer'}, headers=headers
+        )
+
+        assert resp.status_code == 201, resp.text
+        assert resp.json()['default_model'] == 'legal-reviewer'
 
 
 class TestRouting:
@@ -136,13 +161,13 @@ class TestRouting:
         ).json()
         await client.post(f'/portal/groups/{group["id"]}/members', json={'user_id': 'lawyer-1'}, headers=headers)
 
-        assert await GroupsService.model_for_user('lawyer-1') == 'legal-reviewer'
+        assert await GroupModelService().model_for_user('lawyer-1') == 'legal-reviewer'
 
     async def test_someone_in_no_group_gets_nothing(self, client, admin, db):
         """Which leaves the deployment default — whatever the chosen node
         advertises first."""
         await create_user(db, user_id='nomad-1', email='nomad@test.com')
-        assert await GroupsService.model_for_user('nomad-1') is None
+        assert await GroupModelService().model_for_user('nomad-1') is None
 
     async def test_a_group_with_no_model_changes_nothing(self, client, admin, db):
         headers, org_id = admin
@@ -152,17 +177,149 @@ class TestRouting:
         group = (await client.post('/portal/groups', json={'name': 'Eng'}, headers=headers)).json()
         await client.post(f'/portal/groups/{group["id"]}/members', json={'user_id': 'dev-1'}, headers=headers)
 
-        assert await GroupsService.model_for_user('dev-1') is None
+        assert await GroupModelService().model_for_user('dev-1') is None
 
     async def test_a_failed_lookup_costs_the_default_not_the_request(self, monkeypatch):
         """Consulted on every chat request that names no model, so it must
         never be the thing that fails one."""
 
-        async def _boom(self, user_id):
+        async def _boom(self, *args, **kwargs):
             raise ConnectionError('database is down')
 
-        monkeypatch.setattr('app.db.sql.groups.GroupsDB.get_user_group_summary', _boom)
-        assert await GroupsService.model_for_user('anyone') is None
+        # The *active* variant is what `model_for_user` calls (B8);
+        # patching the other left this passing without exercising anything.
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _boom)
+        assert await GroupModelService().model_for_user('anyone') is None
+
+    async def test_any_failed_lookup_costs_the_default_not_the_request(self, monkeypatch):
+        """Not only a database that is down: an organisation detached
+        between the membership read and the group read fails the lookup
+        with an error of its own, and chat still goes ahead."""
+
+        async def _detached(self, *args, **kwargs):
+            raise OrganisationDetached('org-gone')
+
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _detached)
+        assert await GroupModelService().model_for_user('anyone') is None
+
+    async def test_a_deactivated_member_falls_back_to_the_default(self, client, admin, db):
+        """The pin is the organisation's configuration, and somebody whose
+        membership no longer holds is served like any other stranger."""
+        headers, org_id = admin
+        await create_user(db, user_id='lawyer-1', email='lawyer@test.com')
+        await add_member(db, org_id=org_id, user_id='lawyer-1', role='member')
+        group = (
+            await client.post(
+                '/portal/groups', json={'name': 'Legal', 'default_model': 'legal-reviewer'}, headers=headers
+            )
+        ).json()
+        await client.post(f'/portal/groups/{group["id"]}/members', json={'user_id': 'lawyer-1'}, headers=headers)
+
+        await add_member(db, org_id=org_id, user_id='lawyer-1', role='member', status='deactivated')
+
+        assert await GroupModelService().model_for_user('lawyer-1') is None
+
+    async def test_a_group_that_is_gone_changes_nothing(self):
+        """The membership names a group the store no longer has."""
+
+        class _Summaries:
+            async def get_active_user_group_summary(self, user_id):
+                return GroupSummary(id='g-gone', org_id='org-1', name='Gone')
+
+        class _Groups:
+            async def get_group(self, org_id, *, group_id):
+                return None
+
+        service = GroupModelService(groups=_Groups(), summaries=_Summaries())  # type: ignore[arg-type]
+        assert await service.model_for_user('anyone') is None
+
+    async def test_a_group_read_that_fails_costs_the_default_too(self, monkeypatch):
+        """The second lookup, not only the first, is covered."""
+
+        class _Summaries:
+            async def get_active_user_group_summary(self, user_id):
+                return GroupSummary(id='g-legal', org_id='org-1', name='Legal')
+
+        class _Groups:
+            async def get_group(self, org_id, *, group_id):
+                raise OrganisationDetached('org-1')
+
+        service = GroupModelService(groups=_Groups(), summaries=_Summaries())  # type: ignore[arg-type]
+        assert await service.model_for_user('anyone') is None
+
+
+class TestWhatTheChatProxyAsksFor:
+    """`ChatCallerResolver.preferred_model`: where the chat path consults the group."""
+
+    @staticmethod
+    def _resolver() -> ChatCallerResolver:
+        return ChatCallerResolver(producers=None, orgs=None, group_models=GroupModelService())  # type: ignore[arg-type]
+
+    @pytest.fixture
+    async def lawyer(self, client, admin, db):
+        headers, org_id = admin
+        await create_user(db, user_id='lawyer-1', email='lawyer@test.com')
+        await add_member(db, org_id=org_id, user_id='lawyer-1', role='member')
+        group = (
+            await client.post(
+                '/portal/groups', json={'name': 'Legal', 'default_model': 'legal-reviewer'}, headers=headers
+            )
+        ).json()
+        await client.post(f'/portal/groups/{group["id"]}/members', json={'user_id': 'lawyer-1'}, headers=headers)
+        return ChatCaller(user_id='lawyer-1', org_id=org_id)
+
+    async def test_a_person_naming_no_model_gets_their_groups(self, lawyer):
+        assert await self._resolver().preferred_model(caller=lawyer, requested=None) == 'legal-reviewer'
+
+    async def test_a_model_they_name_wins(self, lawyer):
+        assert await self._resolver().preferred_model(caller=lawyer, requested='igni-1.0-27b') == 'igni-1.0-27b'
+
+    async def test_an_app_is_never_given_a_groups_model(self, lawyer):
+        app = lawyer.model_copy(update={'is_machine': True, 'app_id': 'app-1'})
+        assert await self._resolver().preferred_model(caller=app, requested=None) is None
+
+    async def test_a_lookup_that_fails_however_it_fails_leaves_the_deployment_default(self, lawyer, monkeypatch):
+        async def _detached(self, user_id):
+            raise OrganisationDetached('org-gone')
+
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _detached)
+
+        assert await self._resolver().preferred_model(caller=lawyer, requested=None) is None
+
+    @staticmethod
+    async def _chat(client, caller: ChatCaller, body: dict) -> AsyncMock:
+        """POST /chat/completions as *caller*; the pool's acquire, which refuses so nothing goes upstream."""
+        pool = AsyncMock()
+        pool.acquire = AsyncMock(side_effect=ModelNotAvailableError(model='any', available=[]))
+        with patch('app.services.ai.pool_manager.PoolManager.get_pool', new=lambda _self: pool):
+            await client.post(
+                '/chat/completions',
+                headers=auth_header(make_token(caller.user_id, org_id=caller.org_id)),
+                json={'messages': [{'role': 'user', 'content': 'hi'}], **body},
+            )
+        return pool.acquire
+
+    async def test_the_chat_route_asks_the_pool_for_the_groups_model(self, client, lawyer):
+        acquire = await self._chat(client, lawyer, {})
+
+        acquire.assert_awaited_once()
+        assert acquire.await_args.kwargs['model'] == 'legal-reviewer'
+
+    async def test_the_chat_route_asks_for_the_model_named_over_the_groups(self, client, lawyer):
+        acquire = await self._chat(client, lawyer, {'model': 'igni-1.0-27b'})
+
+        assert acquire.await_args.kwargs['model'] == 'igni-1.0-27b'
+
+    async def test_the_chat_route_still_reaches_a_node_when_the_lookup_fails(self, client, lawyer, monkeypatch):
+        async def _detached(self, user_id):
+            raise OrganisationDetached('org-gone')
+
+        monkeypatch.setattr('app.db.sql.group_summaries.GroupSummariesDB.get_active_user_group_summary', _detached)
+
+        acquire = await self._chat(client, lawyer, {})
+
+        acquire.assert_awaited_once()
+        assert acquire.await_args.kwargs['model'] is None
 
 
 class TestPerAgentModel:
@@ -274,6 +431,28 @@ class TestPerAgentModel:
         )
         assert resp.status_code == 409
 
+    async def test_a_pool_that_cannot_be_read_does_not_block_an_agent(self, client, admin, monkeypatch):
+        """However the pool fails to answer, an agent's model is saved
+        unchecked, on create and on edit alike."""
+
+        async def _broken(self):
+            raise RuntimeError('the node registry returned something unreadable')
+
+        monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _broken)
+        headers, _ = admin
+        group_id = await self._group(client, headers)
+
+        created = await self._agent(client, headers, group_id, model='legal-reviewer')
+        assert created.status_code == 201, created.text
+        edited = await client.patch(
+            f'/portal/groups/{group_id}/entries/{self._entry(created)["id"]}',
+            json={'model': 'contracts-reviewer'},
+            headers=headers,
+        )
+
+        assert edited.status_code == 200, edited.text
+        assert self._entry(edited)['model'] == 'contracts-reviewer'
+
     async def test_only_agents_may_name_one(self, client, admin):
         """An MCP server or a settings file has no model to run against,
         so accepting one would store something nothing ever reads."""
@@ -293,6 +472,26 @@ class TestPerAgentModel:
         )
         assert resp.status_code == 422
         assert 'mcps' in resp.json()['detail']
+
+    async def test_nor_may_an_edit_give_one_to_anything_else(self, client, admin):
+        """The kind is the stored row's, since an edit does not resend it,
+        and the row is left as it was."""
+        headers, _ = admin
+        group_id = await self._group(client, headers)
+        created = await client.post(
+            f'/portal/groups/{group_id}/entries',
+            json={'kind': 'mcps', 'entry_name': 'filesystem', 'content': '{}', 'content_type': 'json'},
+            headers=headers,
+        )
+        entry_id = self._entry(created, name='filesystem')['id']
+
+        resp = await client.patch(
+            f'/portal/groups/{group_id}/entries/{entry_id}', json={'model': 'legal-reviewer'}, headers=headers
+        )
+
+        assert (resp.status_code, resp.json()['detail']) == (422, "Only agents can name a model; 'mcps' cannot.")
+        listed = await client.get(f'/portal/groups/{group_id}/entries', headers=headers)
+        assert self._entry(listed, name='filesystem')['model'] is None
 
     async def test_the_pack_carries_it(self, client, admin, db):
         """The client resolves per-agent routing, so the pack has to say

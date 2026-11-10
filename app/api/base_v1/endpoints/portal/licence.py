@@ -21,6 +21,7 @@ from app.api.base_v1.schema.portal.user import PortalAccount
 from app.security.portal_auth import get_current_account
 from app.security.super_admin import require_super_admin
 from app.services.deployment_licence import (
+    deployment_licence,
     DeploymentLicence,
     LicenceNotice,
     LicenceOverview,
@@ -33,22 +34,29 @@ router = APIRouter()
 
 
 @router.get('/licence/notice', response_model=LicenceNotice)
-async def licence_notice(_account: PortalAccount = Depends(get_current_account)) -> LicenceNotice:
-    return DeploymentLicence.current().notice()
+async def licence_notice(
+    _account: PortalAccount = Depends(get_current_account),
+    licence: DeploymentLicence = Depends(deployment_licence),
+) -> LicenceNotice:
+    return licence.notice()
 
 
 @router.get('/licence', response_model=LicenceOverview)
-async def licence_overview(_account: PortalAccount = Depends(require_super_admin)) -> LicenceOverview:
-    return DeploymentLicence.current().overview()
+async def licence_overview(
+    _account: PortalAccount = Depends(require_super_admin),
+    licence: DeploymentLicence = Depends(deployment_licence),
+) -> LicenceOverview:
+    return licence.overview()
 
 
 @router.put('/licence', response_model=LicenceOverview)
 async def install_licence(
     envelope: LicenceEnvelope,
     _account: PortalAccount = Depends(require_super_admin),
+    licence: DeploymentLicence = Depends(deployment_licence),
 ) -> LicenceOverview:
     try:
-        return DeploymentLicence.current().install(envelope)
+        return licence.install(envelope)
     except LicenceRejected as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

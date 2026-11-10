@@ -10,7 +10,7 @@ At most two per client, by `stage`. `live` is what is distributed once
 the service is approved: a pending service's latest upload, and an
 approved service's latest upload that asks for no more than the live one
 did. `held` is an approved service's upload that asks for more
-(`app.services.identity.grants`): it waits there, while `live` keeps
+(`app.services.identity.grants_comparison`): it waits there, while `live` keeps
 reaching machines, until a super admin approves it — then it becomes
 `live` — or rejects it. A newer upload replaces a held one. A collision
 with another extension never holds anything back — the super admin's
@@ -54,7 +54,7 @@ class ServiceExtension(Base):
     manifest: Mapped[dict[str, object]] = Column(JSONB, nullable=False)
     #: The plugin's agents and skills, summarised. See `ExtensionBundle`.
     plugin: Mapped[dict[str, object]] = Column(JSONB, nullable=False)
-    #: What it changes in igni. See `app.services.identity.impact.ExtensionImpact`.
+    #: What it changes in igni. See `app.services.identity.impact.extension_impact.ExtensionImpact`.
     impact: Mapped[dict[str, object]] = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     #: The bundle, a gzipped tar with `manifest.json` at its root.
     archive: Mapped[bytes] = Column(LargeBinary, nullable=False)

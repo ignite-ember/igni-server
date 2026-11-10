@@ -51,8 +51,7 @@ curl -fsS -X POST https://igni.acme.internal/v1/nodes \
         "id": "gpu-burst-01",
         "base_url": "http://gpu-burst-01.internal:8000/v1",
         "model": "igni-1.0-27b",
-        "max_concurrent": 64,
-        "pools": ["chat"]
+        "max_concurrent": 64
       }'
 ```
 
@@ -65,7 +64,6 @@ between those two moments the node is in rotation and cannot serve.
 | `base_url` | The OpenAI-compatible endpoint. Must be absolute. |
 | `model` | The model this node serves. |
 | `max_concurrent` | Roughly the vLLM instance's `--max-num-seqs`. Going over does not fail — it queues inside the node, where igni can no longer see or balance it. |
-| `pools` | `chat`, `codeindex`, or both. See below. |
 | `api_key` | The node's own token, if it has one. vLLM sets this with `--api-key <token>` or `VLLM_API_KEY`. |
 | `multimodal` | Whether the model accepts image input. Chat only. |
 
@@ -137,25 +135,9 @@ defence.
 
 ---
 
-## Which pool
-
-`chat` serves developers waiting on a completion. `codeindex` serves
-batch indexing.
-
-Keeping them separate is the lever that stops a 5,000-file indexing run
-from saturating every GPU a developer is waiting on. A node can serve
-both, and on a single-node install it should. When you have hardware to
-spare, pointing them at different nodes means neither can monopolise the
-other's GPUs.
-
-Burst capacity added for an indexing backlog belongs in `codeindex`.
-Burst capacity added because developers are queueing belongs in `chat`.
-
----
-
 ## Watching it
 
-**Portal → Inference** (admin only) shows every node in both pools: where
+**Portal → Inference** (admin only) shows every node: where
 it is, what it serves, how many requests are in flight against it, its
 capacity, and — for registered nodes — how long ago it last checked in.
 

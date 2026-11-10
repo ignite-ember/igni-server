@@ -14,6 +14,10 @@ MAX_RETENTION_DAYS = 3650
 #: The largest erasure summary kept in the audit trail, in characters of JSON.
 MAX_SUMMARY = 8192
 
+#: `scheduled` (erased at `erase_at`), `held` (a legal hold: nothing is
+#: erased), `erasing` (due: the gateway is erasing it), `erased`.
+ErasureState = Literal['scheduled', 'held', 'erasing', 'erased']
+
 
 class RetentionCapsBody(BaseModel):
     #: The longest an organisation may keep a removed member's VM.
@@ -88,9 +92,7 @@ class ErasureRecord(BaseModel):
     incarnation: str
     removed_at: datetime | None
     erase_at: datetime | None
-    #: `scheduled` (erased at `erase_at`), `held` (a legal hold: nothing is
-    #: erased), `erasing` (due: the gateway is erasing it), `erased`.
-    state: Literal['scheduled', 'held', 'erasing', 'erased']
+    state: ErasureState
     #: When the gateway reported the erasure done.
     erased_at: datetime | None
     legal_hold: bool

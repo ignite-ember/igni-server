@@ -26,7 +26,6 @@ const STORED = {
   base_url: 'http://gpu-01.internal:8000/v1',
   models: ['igni-1.0-27b', 'legal-review'],
   max_concurrent: 64,
-  pools: ['chat'],
   multimodal: false,
   enabled: true,
   has_api_key: true,
@@ -59,8 +58,6 @@ describe('The node edit page', () => {
     expect(await screen.findByDisplayValue('http://gpu-01.internal:8000/v1')).toBeInTheDocument()
     expect(screen.getByDisplayValue('igni-1.0-27b, legal-review')).toBeInTheDocument()
     expect(screen.getByDisplayValue('64')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: 'Chat' })).toBeChecked()
-    expect(screen.getByRole('checkbox', { name: 'CodeIndex' })).not.toBeChecked()
   })
 
   test('nothing is written until Save is pressed', async () => {
@@ -77,8 +74,7 @@ describe('The node edit page', () => {
     renderPage()
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('checkbox', { name: 'CodeIndex' }))
-    await user.clear(screen.getByDisplayValue('64'))
+    await user.clear(await screen.findByDisplayValue('64'))
     await user.type(screen.getByRole('spinbutton'), '8')
 
     expect(patched).toBe(false)
@@ -97,8 +93,7 @@ describe('The node edit page', () => {
     renderPage()
     const user = userEvent.setup()
 
-    await user.click(await screen.findByRole('checkbox', { name: 'CodeIndex' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Accepts images' }))
+    await user.click(await screen.findByRole('checkbox', { name: 'Accepts images' }))
     await user.click(screen.getByRole('button', { name: /Save node/i }))
 
     await waitFor(() => expect(body).not.toBeNull())
@@ -106,7 +101,6 @@ describe('The node edit page', () => {
       base_url: 'http://gpu-01.internal:8000/v1',
       models: ['igni-1.0-27b', 'legal-review'],
       max_concurrent: 64,
-      pools: ['chat', 'codeindex'],
       multimodal: true,
       enabled: true,
     })
@@ -152,31 +146,6 @@ describe('The node edit page', () => {
 
     await waitFor(() => expect(body).not.toBeNull())
     expect(body).toMatchObject({ api_key: 'a-new-key' })
-  })
-
-  test('a node serving nothing is refused before the round trip', async () => {
-    // A node in no pool sits in the list taking no traffic, which looks
-    // like a broken GPU rather than a choice. Stop serving is the thing
-    // that expresses it, and the message says so.
-    serveStored()
-    let patched = false
-    server.use(
-      http.patch('/v1/portal/inference/nodes/gpu-01', () => {
-        patched = true
-        return HttpResponse.json({})
-      }),
-    )
-
-    renderPage()
-    const user = userEvent.setup()
-
-    await user.click(await screen.findByRole('checkbox', { name: 'Chat' }))
-    await user.click(screen.getByRole('button', { name: /Save node/i }))
-
-    // Asserted on the sentence, not on "Stop serving" — the Enabled
-    // caption points at the same control, so that phrase matches twice.
-    expect(await screen.findByText(/serving no pool takes no traffic/i)).toBeInTheDocument()
-    expect(patched).toBe(false)
   })
 
   test('an address without a scheme is refused before the round trip', async () => {

@@ -15,11 +15,14 @@ from datetime import datetime, timedelta, timezone
 from cryptography.fernet import Fernet
 import jwt
 import pytest
+from sqlalchemy import select, text
 
 from app.config import settings
-from app.services.cloud.vm_credentials import VM_CREDENTIAL, VM_SIGN_IN
-from tests.cloud_world import CloudOrg, platform
-from tests.conftest import audit_rows, auth_header, make_token
+from app.db.sql.models.vm_credential import SIGNED_OUT, VmCredential
+from app.db.sql.tenancy import TenantSessions
+from app.services.cloud.vm_credential_grants import VM_CREDENTIAL, VM_SIGN_IN
+from tests.cloud_world import CloudOrg, platform, shared_plane
+from tests.conftest import add_member, audit_rows, auth_header, make_token
 
 pytestmark = pytest.mark.anyio
 
@@ -41,6 +44,13 @@ async def _sign_in(client, session: str, **extra):
 
 async def _exchange(client, credential: str):
     return await client.post('/oauth/token', data={'grant_type': VM_CREDENTIAL, 'vm_credential': credential})
+
+
+async def _revoked_reasons(org_id: str, user_id: str) -> list[str | None]:
+    """Why each of a person's VM credentials in one organisation stopped; None for one still working."""
+    async with TenantSessions().session_scope(org_id) as session:
+        rows = await session.execute(select(VmCredential.revoked_reason).where(VmCredential.producer_id == user_id))
+        return list(rows.scalars().all())
 
 
 async def _person(client, acme: CloudOrg, email: str = 'ada@acme.com') -> tuple[str, str, str]:
@@ -187,11 +197,31 @@ class TestALostReply:
         assert response.status_code == 200, response.text
         assert (await _exchange(client, credential)).json()['error'] == 'invalid_grant'
 
+    async def test_signing_out_reaches_an_organisation_they_have_since_left(self, client, acme):
+        """Every organisation the person was ever a member of, not only the current one."""
+        user_id, _, _ = await _person(client, acme)
+        async with shared_plane() as db:
+            await db.execute(
+                text("UPDATE org_memberships SET status = 'removed' WHERE user_id = :u AND org_id = :o"),
+                {'u': user_id, 'o': acme.org_id},
+            )
+            await db.commit()
+        globex = await CloudOrg(client, slug='globex').create()
+        async with shared_plane() as db:
+            await add_member(db, globex.org_id, user_id)
+        session = make_token(user_id, org_id=globex.org_id)
+        assert (await _sign_in(client, session)).status_code == 200
+
+        await client.post('/portal/me/revoke-sessions', headers=auth_header(session))
+
+        assert await _revoked_reasons(acme.org_id, user_id) == [SIGNED_OUT]
+        assert await _revoked_reasons(globex.org_id, user_id) == [SIGNED_OUT]
+
     async def test_ninety_days_unused_expires_it(self, client, acme, monkeypatch):
         _, _, credential = await _person(client, acme)
         later = datetime.now(timezone.utc) + timedelta(days=91)
         monkeypatch.setattr(
-            'app.services.cloud.vm_credentials.datetime',
+            'app.services.cloud.vm_credential_grants.datetime',
             type('Later', (), {'now': staticmethod(lambda tz=None: later)}),
         )
 

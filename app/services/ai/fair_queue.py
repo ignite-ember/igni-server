@@ -26,10 +26,8 @@ from __future__ import annotations
 import asyncio
 from collections import deque, OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+import contextlib
 import time
-from typing import ClassVar
-import weakref
 
 from app.monitoring import CHAT_QUEUE_DEPTH, CHAT_QUEUE_WAIT
 from app.services.ai.schemas import BackendLease, ModelNotAvailableError, NoBackendAvailableError
@@ -46,42 +44,71 @@ class QueueTimeout(Exception):
     """Waited the longest a request may."""
 
 
-#: Takes a lease for one waiter: `pool.acquire(user_id, 'chat', model=...)`.
+#: Takes a lease for one waiter: `pool.acquire(user_id, model=...)`.
 Acquire = Callable[[str, str | None], Awaitable[BackendLease]]
 
+#: Gives a lease back: `pool.release(lease)`.
+Release = Callable[[BackendLease], Awaitable[None]]
 
-@dataclass(eq=False)
+
 class Waiter:
-    org: str
-    producer: str
-    user_id: str
-    model: str | None
-    acquire: Acquire
-    future: asyncio.Future[BackendLease]
-    queued_at: float = field(default_factory=time.monotonic)
+    """One queued request: who it is for, how to lease for it, and the lease or refusal it is given."""
+
+    def __init__(self, *, org: str, producer: str, user_id: str, model: str | None, acquire: Acquire) -> None:
+        self.org = org
+        self.producer = producer
+        self._user_id = user_id
+        self._model = model
+        self._acquire = acquire
+        self._outcome: asyncio.Future[BackendLease] = asyncio.get_running_loop().create_future()
+        self.queued_at = time.monotonic()
+
+    @property
+    def settled(self) -> bool:
+        """Given its lease or refusal, or abandoned."""
+        return self._outcome.done()
+
+    async def try_lease(self) -> BackendLease | None:
+        """A lease for this waiter if a node has room now; None when every node is full."""
+        try:
+            return await self._acquire(self._user_id, self._model)
+        except NoBackendAvailableError:
+            return None
+
+    def grant(self, lease: BackendLease) -> None:
+        if not self._outcome.done():
+            self._outcome.set_result(lease)
+
+    def refuse(self, error: Exception) -> None:
+        if not self._outcome.done():
+            self._outcome.set_exception(error)
+
+    async def wait(self, *, max_wait: float) -> BackendLease:
+        """The lease once granted; QueueTimeout *max_wait* after it joined."""
+        remaining = self.queued_at + max_wait - time.monotonic()
+        try:
+            return await asyncio.wait_for(asyncio.shield(self._outcome), max(remaining, 0))
+        except TimeoutError:
+            raise QueueTimeout() from None
+
+    async def abandon(self, release: Release) -> None:
+        """It gave up: a lease granted just as it did goes back through *release*; otherwise none comes."""
+        if not self._outcome.done():
+            self._outcome.cancel()
+        elif not self._outcome.cancelled() and self._outcome.exception() is None:
+            await release(self._outcome.result())
 
 
 class FairQueue:
-    """One per event loop: the replica's waiting model requests."""
-
-    _queues: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, FairQueue]] = weakref.WeakKeyDictionary()
+    """The replica's waiting model requests; one per app, owned by its composition root."""
 
     def __init__(self, *, max_length: int) -> None:
         self._max_length = max_length
         #: org → producer → its waiters, oldest first. Insertion order is the turn order.
         self._orgs: OrderedDict[str, OrderedDict[str, deque[Waiter]]] = OrderedDict()
         self._length = 0
-        self._wake = asyncio.Event()
+        self._wake: asyncio.Event | None = None
         self._dispatcher: asyncio.Task[None] | None = None
-
-    @classmethod
-    def of_loop(cls, *, max_length: int) -> FairQueue:
-        loop = asyncio.get_running_loop()
-        queue = cls._queues.get(loop)
-        if queue is None:
-            queue = cls._queues[loop] = cls(max_length=max_length)
-        queue._max_length = max_length
-        return queue
 
     @property
     def waiting(self) -> int:
@@ -92,7 +119,8 @@ class FairQueue:
 
     def kick(self) -> None:
         """A slot may have come free."""
-        self._wake.set()
+        if self._wake is not None:
+            self._wake.set()
 
     async def take(
         self,
@@ -102,7 +130,7 @@ class FairQueue:
         user_id: str,
         model: str | None,
         acquire: Acquire,
-        release: Callable[[BackendLease], Awaitable[None]],
+        release: Release,
         max_wait: float,
     ) -> BackendLease:
         """A lease now if there is room and nobody waits; otherwise one in turn.
@@ -113,41 +141,22 @@ class FairQueue:
         the queue, and a slot granted just as it gave up goes back
         through *release*.
         """
+        waiter = Waiter(org=org, producer=producer, user_id=user_id, model=model, acquire=acquire)
         if self._length == 0:
-            try:
-                return await acquire(user_id, model)
-            except NoBackendAvailableError:
-                pass
+            lease = await waiter.try_lease()
+            if lease is not None:
+                return lease
         if self._length >= self._max_length:
             raise QueueFull()
-        waiter = Waiter(
-            org=org,
-            producer=producer,
-            user_id=user_id,
-            model=model,
-            acquire=acquire,
-            future=asyncio.get_running_loop().create_future(),
-        )
         self._join(waiter)
         try:
-            return await self._await(waiter, max_wait=max_wait)
+            return await waiter.wait(max_wait=max_wait)
         except BaseException:
             self._leave(waiter)
-            if waiter.future.done() and not waiter.future.cancelled() and waiter.future.exception() is None:
-                await release(waiter.future.result())
-            elif not waiter.future.done():
-                waiter.future.cancel()
+            await waiter.abandon(release)
             raise
         finally:
             CHAT_QUEUE_WAIT.labels(org=org).observe(time.monotonic() - waiter.queued_at)
-
-    @staticmethod
-    async def _await(waiter: Waiter, *, max_wait: float) -> BackendLease:
-        remaining = waiter.queued_at + max_wait - time.monotonic()
-        try:
-            return await asyncio.wait_for(asyncio.shield(waiter.future), max(remaining, 0))
-        except TimeoutError:
-            raise QueueTimeout() from None
 
     def _join(self, waiter: Waiter) -> None:
         producers = self._orgs.setdefault(waiter.org, OrderedDict())
@@ -177,17 +186,17 @@ class FairQueue:
         CHAT_QUEUE_DEPTH.labels(org=org).set(self.depth(org))
 
     def _ensure_dispatcher(self) -> None:
+        """A dispatcher running on this loop; its wake-up event is its own, so it never outlives its loop."""
         if self._dispatcher is None or self._dispatcher.done():
-            self._dispatcher = asyncio.get_running_loop().create_task(self._run())
+            self._wake = asyncio.Event()
+            self._dispatcher = asyncio.get_running_loop().create_task(self._run(self._wake))
 
-    async def _run(self) -> None:
+    async def _run(self, wake: asyncio.Event) -> None:
         while self._length:
             await self.dispatch()
-            self._wake.clear()
-            try:
-                await asyncio.wait_for(self._wake.wait(), TICK_S)
-            except TimeoutError:
-                pass
+            wake.clear()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(wake.wait(), TICK_S)
 
     def _rotation(self) -> list[Waiter]:
         """The next waiter of every producer, in turn order: one org's first producer, the next org's, …"""
@@ -203,38 +212,34 @@ class FairQueue:
         """Hand out slots in turn until none is free (or nobody waits). Returns how many."""
         granted = 0
         while self._length:
-            progressed = False
-            for waiter in self._rotation():
-                if waiter.future.done():
-                    self._leave(waiter)
-                    continue
-                try:
-                    lease = await waiter.acquire(waiter.user_id, waiter.model)
-                except NoBackendAvailableError:
-                    continue
-                except ModelNotAvailableError as exc:
-                    self._grant(waiter, exc)
-                    continue
-                self._grant(waiter, lease)
-                granted += 1
-                progressed = True
-                # One turn each: start the rotation again from the next in line.
-                break
-            if not progressed:
+            if not await self._serve_one_turn():
                 return granted
+            granted += 1
         return granted
 
-    def _grant(self, waiter: Waiter, outcome: BackendLease | Exception) -> None:
-        self._leave(waiter)
-        self._take_turn(waiter)
-        if not waiter.future.done():
-            if isinstance(outcome, Exception):
-                waiter.future.set_exception(outcome)
-            else:
-                waiter.future.set_result(outcome)
+    async def _serve_one_turn(self) -> bool:
+        """Grant the first waiter in rotation a node has room for; False when none could be served."""
+        for waiter in self._rotation():
+            if waiter.settled:
+                self._leave(waiter)
+                continue
+            try:
+                lease = await waiter.try_lease()
+            except ModelNotAvailableError as exc:
+                self._served(waiter)
+                waiter.refuse(exc)
+                continue
+            if lease is None:
+                continue
+            self._served(waiter)
+            waiter.grant(lease)
+            # One turn each: the next call starts the rotation again from the next in line.
+            return True
+        return False
 
-    def _take_turn(self, waiter: Waiter) -> None:
-        """The served org and producer go to the back of their lines."""
+    def _served(self, waiter: Waiter) -> None:
+        """Out of the queue; its org and producer go to the back of their lines."""
+        self._leave(waiter)
         producers = self._orgs.get(waiter.org)
         if producers is None:
             return

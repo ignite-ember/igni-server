@@ -178,19 +178,18 @@ class TestTheBodyLimitIsWiredIn:
         Getting as far as the inference-backend lookup is the proof: the
         middleware passed the body on, FastAPI parsed it, and the endpoint
         ran. The test environment configures no backend, so that is where
-        it stops — and stopping *there* rather than at a 413 is the result
-        being asserted.
+        it stops — a 503 saying so, rather than a 413, is the result being
+        asserted.
         """
-        from app.services.ai.backend_provider import BackendConfigError
-
         content = 'A' * (settings.max_request_body_bytes - 4096)
 
-        with pytest.raises(BackendConfigError):
-            await client.post(
-                _CHAT,
-                content=json.dumps(_body(content)),
-                headers={**caller, 'Content-Type': 'application/json'},
-            )
+        response = await client.post(
+            _CHAT,
+            content=json.dumps(_body(content)),
+            headers={**caller, 'Content-Type': 'application/json'},
+        )
+
+        assert response.status_code == 503, response.text
 
 
 class TestTheProxyAgreesWithTheApi:
@@ -207,9 +206,9 @@ class TestTheProxyAgreesWithTheApi:
         assert match, 'nginx does not cap the body, so its 1 MB default applies'
 
         size = int(match.group(1)) * {'': 1, 'k': 1024, 'm': 1024**2, 'g': 1024**3}[match.group(2).lower()]
-        assert (
-            size == settings.max_request_body_bytes
-        ), f'nginx allows {size} bytes but the API allows {settings.max_request_body_bytes}; the two must agree'
+        assert size == settings.max_request_body_bytes, (
+            f'nginx allows {size} bytes but the API allows {settings.max_request_body_bytes}; the two must agree'
+        )
 
 
 class TestTheTwoLimitsAreOrdered:
@@ -227,7 +226,7 @@ class TestTheTwoLimitsAreOrdered:
     """
 
     def test_the_entry_bound_sits_below_the_body_bound(self):
-        from app.api.base_v1.schema.portal.groups import MAX_ENTRY_CONTENT_BYTES
+        from app.api.base_v1.schema.portal.group_entries import MAX_ENTRY_CONTENT_BYTES
 
         assert MAX_ENTRY_CONTENT_BYTES < settings.max_request_body_bytes, (
             f'the entry limit ({MAX_ENTRY_CONTENT_BYTES}) is not below the body limit '
@@ -238,6 +237,6 @@ class TestTheTwoLimitsAreOrdered:
     def test_there_is_room_between_them_to_test_the_inner_one(self):
         """Not just ordered, but far enough apart that a test can target
         the inner bound without tripping the outer one."""
-        from app.api.base_v1.schema.portal.groups import MAX_ENTRY_CONTENT_BYTES
+        from app.api.base_v1.schema.portal.group_entries import MAX_ENTRY_CONTENT_BYTES
 
         assert MAX_ENTRY_CONTENT_BYTES * 4 < settings.max_request_body_bytes

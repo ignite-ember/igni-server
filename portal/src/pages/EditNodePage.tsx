@@ -42,23 +42,16 @@ import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 
 import client from "../api/client";
 import "./EditNodePage.css";
-import type { PoolType } from "../types";
 
 interface StoredNode {
   node_id: string;
   base_url: string;
   models: string[];
   max_concurrent: number;
-  pools: string[];
   multimodal: boolean;
   enabled: boolean;
   has_api_key: boolean;
 }
-
-const POOL_TITLES: Record<PoolType, string> = {
-  chat: "Chat",
-  codeindex: "CodeIndex",
-};
 
 export function EditNodePage() {
   const { nodeId = "" } = useParams<{ nodeId: string }>();
@@ -124,9 +117,6 @@ function NodeForm({ node }: { node: StoredNode }) {
   const [maxConcurrent, setMaxConcurrent] = useState(
     String(node.max_concurrent),
   );
-  const [pools, setPools] = useState<PoolType[]>(() =>
-    node.pools.filter((p): p is PoolType => p === "chat" || p === "codeindex"),
-  );
   const [multimodal, setMultimodal] = useState(node.multimodal);
   const [enabled, setEnabled] = useState(node.enabled);
   const [apiKey, setApiKey] = useState("");
@@ -141,7 +131,6 @@ function NodeForm({ node }: { node: StoredNode }) {
           .map((m) => m.trim())
           .filter(Boolean),
         max_concurrent: Number(maxConcurrent),
-        pools,
         multimodal,
         enabled,
         // Absent leaves the stored key alone — the API treats an empty
@@ -184,12 +173,6 @@ function NodeForm({ node }: { node: StoredNode }) {
     }
     if (!(Number(maxConcurrent) > 0)) {
       setError("Concurrency has to be at least 1.");
-      return;
-    }
-    if (pools.length === 0) {
-      setError(
-        "A node serving no pool takes no traffic. Use Stop serving on the list instead.",
-      );
       return;
     }
     save.mutate();
@@ -266,37 +249,6 @@ function NodeForm({ node }: { node: StoredNode }) {
             </FormControl.Caption>
           </FormControl>
 
-          <Stack gap="condensed" padding="none">
-            <Text size="small" weight="semibold">
-              Serves
-            </Text>
-            <Stack
-              direction="horizontal"
-              gap="normal"
-              wrap="wrap"
-              padding="none"
-            >
-              {(["chat", "codeindex"] as PoolType[]).map((pool) => (
-                <FormControl key={pool}>
-                  <Checkbox
-                    checked={pools.includes(pool)}
-                    onChange={() =>
-                      setPools((current) =>
-                        current.includes(pool)
-                          ? current.filter((p) => p !== pool)
-                          : [...current, pool],
-                      )
-                    }
-                  />
-                  <FormControl.Label>{POOL_TITLES[pool]}</FormControl.Label>
-                </FormControl>
-              ))}
-            </Stack>
-            <Text size="small" className="node-form-muted">
-              Interactive chat and batch indexing are separated so a large
-              indexing run cannot starve developers waiting on a completion.
-            </Text>
-          </Stack>
 
           <FormControl>
             <Checkbox

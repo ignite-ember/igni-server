@@ -88,6 +88,16 @@ class Scheduled(BaseModel):
     why: str
 
 
+class FeedChanges(BaseModel):
+    """What numbering a set of producers did: how many rows it numbered, and the erasures it scheduled."""
+
+    numbered: int = 0
+    scheduled: list[Scheduled] = Field(default_factory=list)
+
+    def plus(self, other: FeedChanges) -> FeedChanges:
+        return FeedChanges(numbered=self.numbered + other.numbered, scheduled=[*self.scheduled, *other.scheduled])
+
+
 class RevocationEntry(BaseModel):
     """Tokens for a subject issued at or before `not_before_ms` (Unix milliseconds) stop being accepted."""
 

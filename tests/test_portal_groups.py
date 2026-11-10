@@ -1,5 +1,8 @@
 """Integration tests for portal group endpoints."""
 
+from datetime import datetime, timezone
+
+from app.api.base_v1.schema.portal.group_pack import OrgGroupPack
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
 
@@ -867,10 +870,6 @@ class TestThePackKnowsItsOwnIdentity:
     """
 
     def _pack(self, **overrides):
-        from datetime import datetime, timezone
-
-        from app.api.base_v1.schema.portal.groups import OrgGroupPack
-
         fields = {
             'group_id': 'g-1',
             'group_name': 'Engineering',
@@ -892,6 +891,20 @@ class TestThePackKnowsItsOwnIdentity:
         """The other half: a tag that ignored everything would also be
         stable, and wrong in the dangerous direction."""
         assert self._pack().etag() != self._pack(group_name='Design').etag()
+
+    def test_the_tag_changes_with_whom_it_is_bound_to(self):
+        """A 304 must not hand one person, or one signing key, another's signature."""
+        pack = self._pack()
+
+        assert pack.etag(bound_to='alice') == self._pack().etag(bound_to='alice')
+        assert len({pack.etag(), pack.etag(bound_to='alice'), pack.etag(bound_to='bob')}) == 3
+
+    def test_the_organisation_stays_out_of_the_payload_and_the_tag(self):
+        """Carried for the signed form only; the served pack and its tag are what they were."""
+        named = self._pack(org_id='org-1')
+
+        assert 'org_id' not in named.as_payload()
+        assert named.etag() == self._pack().etag()
 
     def test_the_payload_is_json_ready(self):
         """`mode='json'`. Python mode hands `JSONResponse`'s encoder a

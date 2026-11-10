@@ -20,7 +20,7 @@ class TestEmailService:
         with patch('app.services.email.transports.smtp.aiosmtplib.send', new_callable=AsyncMock) as mock_send:
             transport = SmtpTransport(host='relay.test', port=2525)
             result = await EmailService(transport=transport).send_email(
-                'recipient@test.com', 'Test Subject', '<p>Hello</p>', 'Hello'
+                to_email='recipient@test.com', subject='Test Subject', html_body='<p>Hello</p>', text_body='Hello'
             )
 
         assert result is True
@@ -38,7 +38,7 @@ class TestEmailService:
             side_effect=aiosmtplib.SMTPAuthenticationError(535, 'Authentication failed'),
         ):
             svc = EmailService(transport=SmtpTransport(host='relay.test'))
-            result = await svc.send_email('recipient@test.com', 'Subject', '<p>body</p>')
+            result = await svc.send_email(to_email='recipient@test.com', subject='Subject', html_body='<p>body</p>')
 
         assert result is False
 
@@ -49,7 +49,7 @@ class TestEmailService:
 
         with patch('app.services.email.transports.smtp.aiosmtplib.send', new_callable=AsyncMock) as mock_send:
             svc = EmailService(transport=SmtpTransport(host='relay.test'))
-            await svc.send_email('to@test.com', 'My Subject', '<p>hi</p>')
+            await svc.send_email(to_email='to@test.com', subject='My Subject', html_body='<p>hi</p>')
 
         msg = mock_send.call_args[0][0]
         assert msg['Subject'].startswith('[STAGE]')
@@ -62,7 +62,7 @@ class TestEmailService:
 
         with patch('app.services.email.transports.smtp.aiosmtplib.send', new_callable=AsyncMock) as mock_send:
             svc = EmailService(transport=SmtpTransport(host='relay.test'))
-            await svc.send_email('to@test.com', 'My Subject', '<p>hi</p>')
+            await svc.send_email(to_email='to@test.com', subject='My Subject', html_body='<p>hi</p>')
 
         msg = mock_send.call_args[0][0]
         assert msg['Subject'] == 'My Subject'

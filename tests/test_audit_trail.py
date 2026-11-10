@@ -26,7 +26,8 @@ import pytest
 from sqlalchemy import text
 
 from app.db.sql.audit_events import AuditEventDB, AuditRecord, classify
-from app.middlewares.audit import is_auditable, resolve_target
+from app.middlewares.audit_policy import _AUDITED_READS, is_auditable
+from app.middlewares.request_audit import AuditTarget
 from tests.conftest import add_member, audit_rows, auth_header, create_org, create_user, make_token
 
 pytestmark = pytest.mark.anyio
@@ -142,8 +143,6 @@ class TestTheRuleItself:
         access review, because performing it *is* the control. A third
         should have to argue for itself here.
         """
-        from app.middlewares.audit import _AUDITED_READS
-
         assert set(_AUDITED_READS) == {
             '/v1/portal/audit-events/export',
             '/v1/portal/access-review',
@@ -152,11 +151,13 @@ class TestTheRuleItself:
     def test_the_target_is_the_innermost_entity(self):
         """Removing a member from a group is an action on the member, so a
         nested route must not attribute to the container."""
-        assert resolve_target({'group_id': 'g1', 'user_id': 'u1'}) == ('user', 'u1')
-        assert resolve_target({'group_id': 'g1'}) == ('group', 'g1')
-        assert resolve_target({'org_id': 'o1'}) == ('organization', 'o1')
-        assert resolve_target({}) == (None, None)
-        assert resolve_target(None) == (None, None)
+        assert AuditTarget.from_path_params({'group_id': 'g1', 'user_id': 'u1'}) == AuditTarget(
+            target_type='user', target_id='u1'
+        )
+        assert AuditTarget.from_path_params({'group_id': 'g1'}) == AuditTarget(target_type='group', target_id='g1')
+        assert AuditTarget.from_path_params({'org_id': 'o1'}) == AuditTarget(target_type='organization', target_id='o1')
+        assert AuditTarget.from_path_params({}) is None
+        assert AuditTarget.from_path_params(None) is None
 
     def test_denied_is_distinguished_from_error(self):
         """A run of refusals against one actor is the pattern worth
@@ -214,9 +215,9 @@ class TestARealRequestIsRecorded:
         event = rows[0]
         assert event['method'] == 'GET'
         assert event['actor_user_id'] == admin['user_id']
-        assert (
-            event['org_id'] == admin['org_id']
-        ), 'a review is scoped to one organisation, so the record has to say which'
+        assert event['org_id'] == admin['org_id'], (
+            'a review is scoped to one organisation, so the record has to say which'
+        )
         assert event['outcome'] == 'success'
 
     async def test_an_ordinary_portal_read_is_still_not_recorded(self, client, admin, db):
@@ -356,7 +357,7 @@ class TestCoverageIsStructural:
             f'{unattributed} — a return path of the auth dependency does not go through '
             '_attributed, so requests resolved on that branch are recorded with no actor'
         )
-        assert 'set_audit_actor' in source
+        assert 'attribute_to' in source
 
 
 class TestTheRecordCannotBeRewritten:

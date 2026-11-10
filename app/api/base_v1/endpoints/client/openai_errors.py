@@ -38,57 +38,8 @@ from typing import Any
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
 
-#: Status → the ``type`` OpenAI puts on the error. Clients branch on
-#: this (``openai.AuthenticationError`` vs ``RateLimitError`` vs
-#: ``APIStatusError``), so an approximate mapping produces the wrong
-#: exception class and the wrong retry behaviour.
-_TYPES = {
-    400: 'invalid_request_error',
-    401: 'authentication_error',
-    403: 'permission_error',
-    404: 'invalid_request_error',
-    409: 'invalid_request_error',
-    413: 'invalid_request_error',
-    429: 'rate_limit_error',
-}
-
-
-class OpenAIError(BaseModel):
-    """The `error` object an OpenAI SDK parses.
-
-    Four keys, fixed by somebody else's published API, built as a
-    literal in a function returning `dict[str, Any]` — and the whole
-    point of the function is that two transports must agree about this
-    shape, which is the case for naming it rather than describing it.
-    """
-
-    message: str
-    type: str
-    #: Null rather than invented. A client that branches on a code
-    #: wants the provider's own vocabulary, and this server does not
-    #: have one to offer yet.
-    code: str | None = None
-    param: str | None = None
-
-
-class OpenAIErrorBody(BaseModel):
-    """The whole response body: the envelope, plus what we used to send.
-
-    `detail` is FastAPI's own key, kept so nothing that reads it today
-    has to change. It is `Any` because it is whatever was raised —
-    that is the one field here with no knowable shape.
-    """
-
-    error: OpenAIError
-    detail: Any = None
-
-
-def _type_for(*, status_code: int) -> str:
-    if status_code in _TYPES:
-        return _TYPES[status_code]
-    return 'server_error' if status_code >= 500 else 'invalid_request_error'
+from app.api.base_v1.schema.openai_error import error_envelope, OpenAIErrorBody
 
 
 def _message_of(detail: Any) -> str:
@@ -102,18 +53,6 @@ def _message_of(detail: Any) -> str:
     if isinstance(detail, str):
         return detail
     return str(detail) if detail is not None else ''
-
-
-def error_envelope(*, message: str, status_code: int) -> OpenAIError:
-    """The ``error`` object itself.
-
-    Shared so the two ways this API fails cannot drift apart. A
-    streaming request that dies mid-answer sends its reason as an SSE
-    frame rather than a status line — different transport, same
-    envelope, because the SDK on the other end parses them with the
-    same code.
-    """
-    return OpenAIError(message=message, type=_type_for(status_code=status_code))
 
 
 def openai_error(exc: HTTPException) -> JSONResponse:

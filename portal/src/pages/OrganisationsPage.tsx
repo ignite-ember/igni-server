@@ -1,13 +1,13 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Banner, Button, IconButton, Label, Link, PageHeader, Stack, Text, TextInput } from '@primer/react'
+import { Banner, Button, IconButton, Label, PageHeader, Stack, Text, TextInput } from '@primer/react'
 import { Blankslate } from '@primer/react/experimental'
 import { OrganizationIcon, XIcon } from '@primer/octicons-react'
 import client from '../api/client'
 import { refusalOf } from '../api/refusal'
-import { CreateOrgDialog } from '../components/layout/Sidebar'
+import { CreateOrgDialog } from '../components/org/CreateOrgDialog'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import type { DeploymentOrg, RegisteredClient, UserMe } from '../types'
+import type { DeploymentOrg, UserMe } from '../types'
 
 function Domains({ org }: { org: DeploymentOrg }) {
   const queryClient = useQueryClient()
@@ -66,36 +66,6 @@ function Domains({ org }: { org: DeploymentOrg }) {
   )
 }
 
-/** The extension id Artifacts ships, which names it among registered services. */
-const ARTIFACTS_EXTENSION = 'igni.artifacts'
-
-/**
- * Where each organisation's document settings are now: on Artifacts' own
- * site. A service's screens live on its own hostname, so this page holds
- * none of them; it only says where to go, once an approved Artifacts is
- * registered here.
- */
-function DocumentSettings({ enabled }: { enabled: boolean }) {
-  const clients = useQuery({
-    queryKey: ['registered-clients'],
-    queryFn: () => client.get<RegisteredClient[]>('/portal/clients').then((r) => r.data),
-    enabled,
-  })
-  const artifacts = (clients.data ?? []).find(
-    (c) => c.state === 'approved' && c.extension?.extension_id === ARTIFACTS_EXTENSION,
-  )
-  if (!artifacts) return null
-
-  return (
-    <Text as="p" size="small">
-      Where each organisation&apos;s documents are kept is set on Artifacts, not here.{' '}
-      <Link href={artifacts.base_url} target="_blank" rel="noopener noreferrer">
-        Document settings are on Artifacts&apos; own site
-      </Link>
-    </Text>
-  )
-}
-
 /**
  * Every organisation on the install, for the people who own it.
  *
@@ -147,7 +117,6 @@ export function OrganisationsPage() {
         </PageHeader.Actions>
       </PageHeader>
 
-      <DocumentSettings enabled={me.data?.is_super_admin === true} />
 
       <Stack gap="spacious" role="list" aria-label="Organisations">
         {(orgs.data ?? []).map((org) => (

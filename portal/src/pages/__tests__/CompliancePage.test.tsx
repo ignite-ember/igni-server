@@ -109,10 +109,8 @@ describe('the audit trail', () => {
   })
 
   it('filters on the target id when the id is clicked', async () => {
-    // The cell used to render `inference_node gpu-secure-03` as one
-    // string, and the filter is an exact match on `target_id` — so the
-    // text an admin could see was not a value the filter accepts, and
-    // pasting it returned nothing. The id is a button now.
+    // The filter is an exact match on `target_id`, so the cell shows the
+    // id alone, as a button that applies it.
     const get = vi.spyOn(client, 'get').mockResolvedValue({
       data: {
         events: [
@@ -181,6 +179,16 @@ describe('the audit trail', () => {
     expect(screen.getByText('—')).toBeTruthy()
   })
 
+  it("shows the server's reason when the trail cannot be read", async () => {
+    vi.spyOn(client, 'get').mockRejectedValue({
+      response: { status: 403, data: { detail: 'Only an admin can read the audit trail.' } },
+    })
+
+    renderAt('#audit')
+
+    await waitFor(() => expect(screen.getByText('Only an admin can read the audit trail.')).toBeTruthy())
+  })
+
   it('cannot page older when the server offered no cursor', async () => {
     vi.spyOn(client, 'get').mockResolvedValue({ data: EMPTY_AUDIT } as never)
 
@@ -197,10 +205,8 @@ describe('the audit trail', () => {
     } as never)
 
     renderAt('#audit')
-    // Waiting for the button, not for the request. `toHaveBeenCalled`
-    // resolves the moment the fetch starts, so the first version of this
-    // test clicked while the spinner was still up and failed with
-    // "unable to find a button named Older" — a fact about the test.
+    // Wait for the button, not the request: the request starts while the
+    // spinner is still up.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Older' })).toBeEnabled())
 
     await userEvent.click(screen.getByRole('button', { name: 'Older' }))
@@ -264,6 +270,22 @@ describe('erasure', () => {
 
     await waitFor(() => expect(screen.getByText('Nothing to redact')).toBeTruthy())
     expect(screen.getByText(/Check the spelling/i)).toBeTruthy()
+  })
+
+  it("shows the server's reason when the redaction is refused", async () => {
+    vi.spyOn(client, 'get').mockResolvedValue({ data: EMPTY_AUDIT } as never)
+    vi.spyOn(client, 'post').mockRejectedValue({
+      response: { status: 422, data: { detail: 'That is not an email address.' } },
+    })
+
+    renderAt('#erasure')
+
+    await userEvent.type(screen.getByLabelText('Email address to redact'), 'jane@example.com')
+    await userEvent.type(screen.getByLabelText('Type it again to confirm'), 'jane@example.com')
+    await userEvent.click(screen.getByRole('button', { name: /Redact/i }))
+
+    await waitFor(() => expect(screen.getByText('The redaction did not run')).toBeTruthy())
+    expect(screen.getByText('That is not an email address.')).toBeTruthy()
   })
 })
 

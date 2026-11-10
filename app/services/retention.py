@@ -97,121 +97,123 @@ _INTERVAL_SECONDS = 24 * 60 * 60
 _FIRST_RUN_DELAY_SECONDS = 60
 
 
-async def _claim() -> bool:
-    """True when this instance may prune this round."""
-    return await AdvisoryLockDB().try_acquire(_RETENTION_LOCK_KEY)
+class Retention:
+    """The retention window: one round on demand, or a daily loop that applies it."""
 
+    def __init__(
+        self,
+        *,
+        locks: AdvisoryLockDB | None = None,
+        first_run_delay_seconds: float = _FIRST_RUN_DELAY_SECONDS,
+        interval_seconds: float = _INTERVAL_SECONDS,
+    ) -> None:
+        self._locks = locks or AdvisoryLockDB()
+        self._first_run_delay_seconds = first_run_delay_seconds
+        self._interval_seconds = interval_seconds
+        self._task: asyncio.Task[None] | None = None
 
-async def _release() -> None:
-    await AdvisoryLockDB().release(_RETENTION_LOCK_KEY)
+    @staticmethod
+    def is_configured() -> bool:
+        """Whether any window is set. The loop is not started otherwise."""
+        return (
+            settings.audit_retention_days > 0
+            or settings.service_event_retention_days > 0
+            or settings.producer_feed_retention_days > 0
+        )
 
+    @property
+    def running(self) -> bool:
+        return self._task is not None
 
-async def run_once() -> RetentionRun:
-    """Apply the window once. Returns what was removed.
+    async def run_once(self) -> RetentionRun:
+        """Apply the window once. Returns what was removed.
 
-    Separated from the loop so it is callable directly — by a test, or by
-    an operator who would rather drive this from cron than trust a
-    background task.
-    """
-    removed = RetentionRun()
+        Separated from the loop so it is callable directly — by a test, or by
+        an operator who would rather drive this from cron than trust a
+        background task.
+        """
+        removed = RetentionRun()
 
-    if not await _claim():
-        logger.debug('Retention: another instance holds the lock, skipping this round')
+        if not await self._locks.try_acquire(_RETENTION_LOCK_KEY):
+            logger.debug('Retention: another instance holds the lock, skipping this round')
+            return removed
+
+        try:
+            if settings.audit_retention_days > 0:
+                removed.audit_events = await AuditEventDB().prune(older_than_days=settings.audit_retention_days)
+            if settings.service_event_retention_days > 0:
+                removed.producer_events = await ProducerEvents().close_out()
+            if settings.producer_feed_retention_days > 0:
+                removed.producer_feed = await ProducerFeed().close_out()
+            removed.producer_exports = await ProducerExports().close_out()
+            removed.revocations = await Revocations().close_out()
+        finally:
+            # Released even on failure, and logged when the release fails:
+            # holding it would silently stop every other instance from ever
+            # pruning, which is the failure mode hardest to notice.
+            try:
+                await self._locks.release(_RETENTION_LOCK_KEY)
+            except Exception:
+                logger.exception(
+                    'Retention could not release the advisory lock. '
+                    'Until the holding session ends, no replica will prune.'
+                )
+
         return removed
 
-    try:
-        if settings.audit_retention_days > 0:
-            removed.audit_events = await AuditEventDB().prune(older_than_days=settings.audit_retention_days)
-        if settings.service_event_retention_days > 0:
-            removed.producer_events = await ProducerEvents().close_out()
-        if settings.producer_feed_retention_days > 0:
-            removed.producer_feed = await ProducerFeed().close_out()
-        removed.producer_exports = await ProducerExports().close_out()
-        removed.revocations = await Revocations().close_out()
-    finally:
-        # Released even on failure: holding it would silently stop every
-        # other instance from ever pruning, which is the failure mode
-        # hardest to notice.
-        #
-        # Which is also why this logs. Suppressing the release failure
-        # without a word is the exact outcome the paragraph above is
-        # afraid of, and it used to do that.
-        try:
-            await _release()
-        except Exception:
-            logger.exception(
-                'Retention could not release the advisory lock. Until the holding session ends, no replica will prune.'
+    def start(self) -> None:
+        """Start the loop if any window is configured."""
+        if not self.is_configured():
+            logger.info(
+                'Retention: no window configured (AUDIT_RETENTION_DAYS and SERVICE_EVENT_RETENTION_DAYS are 0) '
+                '— nothing will be deleted'
             )
+            return
 
-    return removed
-
-
-def is_configured() -> bool:
-    """Whether any window is set. The loop is not started otherwise."""
-    return (
-        settings.audit_retention_days > 0
-        or settings.service_event_retention_days > 0
-        or settings.producer_feed_retention_days > 0
-    )
-
-
-async def _loop() -> None:
-    await asyncio.sleep(_FIRST_RUN_DELAY_SECONDS)
-    while True:
-        try:
-            removed = await run_once()
-            # A timestamp rather than a counter, and set here rather than
-            # inside `run_once`: what an alert needs to know is "when did
-            # this last finish", so that a runner which stopped a week
-            # ago is visible without anybody having recorded a rate.
-            note_retention_success()
-            if removed.removed_anything():
-                logger.info('Retention removed %s', removed.model_dump())
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            # Never let one bad round end the loop: the next one is a day
-            # away and a deployment that stopped pruning silently is
-            # exactly the gap this exists to close.
-            RETENTION_FAILURES.inc()
-            logger.exception('Retention round failed; will try again')
-        await asyncio.sleep(_INTERVAL_SECONDS)
-
-
-def start(app_state: dict[str, asyncio.Task[None]]) -> None:
-    """Start the loop if any window is configured."""
-    if not is_configured():
+        self._task = asyncio.create_task(self._loop(), name='retention')
         logger.info(
-            'Retention: no window configured (AUDIT_RETENTION_DAYS and SERVICE_EVENT_RETENTION_DAYS are 0) '
-            '— nothing will be deleted'
+            'Retention active: audit=%sd producer events=%sd',
+            settings.audit_retention_days,
+            settings.service_event_retention_days,
         )
-        return
 
-    app_state['retention_task'] = asyncio.create_task(_loop())
-    logger.info(
-        'Retention active: audit=%sd producer events=%sd',
-        settings.audit_retention_days,
-        settings.service_event_retention_days,
-    )
+    async def stop(self) -> None:
+        """Cancel the loop on shutdown, and wait for it to notice.
 
+        Without the await, the task is cancelled and the event loop closes
+        before it unwinds, which surfaces as "Task was destroyed but it is
+        pending" and an unreleased advisory lock.
+        """
+        task, self._task = self._task, None
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            try:
+                await task
+            except Exception:
+                # Shutdown proceeds regardless, but a loop that ended of
+                # something other than our cancel took the advisory lock's
+                # session with it, and this is the only place that says so.
+                logger.exception('Retention loop did not unwind cleanly')
 
-async def stop(app_state: dict[str, asyncio.Task[None]]) -> None:
-    """Cancel the loop on shutdown, and wait for it to notice.
-
-    Without the await, the task is cancelled and the event loop closes
-    before it unwinds, which surfaces as "Task was destroyed but it is
-    pending" and an unreleased advisory lock.
-    """
-    task = app_state.pop('retention_task', None)
-    if task is None:
-        return
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        try:
-            await task
-        except Exception:
-            # Shutdown proceeds regardless, but a loop that ended of
-            # something other than our cancel took the advisory lock's
-            # session with it, and this is the only place that would
-            # ever say so.
-            logger.exception('Retention loop did not unwind cleanly')
+    async def _loop(self) -> None:
+        await asyncio.sleep(self._first_run_delay_seconds)
+        while True:
+            try:
+                removed = await self.run_once()
+                # A timestamp rather than a counter, and set here rather than
+                # inside `run_once`: what an alert needs to know is "when did
+                # the runner last finish", which a manual round must not stamp.
+                note_retention_success()
+                if removed.removed_anything():
+                    logger.info('Retention removed %s', removed.model_dump())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Never let one bad round end the loop: the next one is a day
+                # away and a deployment that stopped pruning silently is
+                # exactly the gap this exists to close.
+                RETENTION_FAILURES.inc()
+                logger.exception('Retention round failed; will try again')
+            await asyncio.sleep(self._interval_seconds)

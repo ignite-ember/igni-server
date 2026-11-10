@@ -1,8 +1,7 @@
 /**
  * Every organisation on the install, for super admins: what each owns,
  * adding a domain, and the server's refusal to remove one in use shown
- * as it is. Document settings are not here: they are on Artifacts' own
- * site, which this page links to.
+ * as it is.
  */
 import { describe, expect, test } from 'vitest'
 import { http, HttpResponse } from 'msw'
@@ -23,31 +22,11 @@ const ME = {
 
 const ACME = { id: 'o1', slug: 'acme', display_name: 'Acme', domains: ['acmecorp.io'], members: 3 }
 
-const ARTIFACTS = {
-  client_id: 'svc-artifacts',
-  kind: 'service',
-  name: 'Artifacts',
-  base_url: 'https://artifacts.acmecorp.io',
-  redirect_uris: ['https://artifacts.acmecorp.io/auth/callback'],
-  thumbprint: 'abc',
-  state: 'approved',
-  created_at: '2026-01-01T00:00:00Z',
-  decided_at: '2026-01-02T00:00:00Z',
-  extension: {
-    extension_id: 'igni.artifacts',
-    version: '1.0.0',
-    name: 'Artifacts',
-    description: 'Documents',
-    published_at: '2026-01-02T00:00:00Z',
-  },
-}
-
 describe('OrganisationsPage', () => {
   test('lists each organisation with its domains and members', async () => {
     server.use(
       http.get('/v1/portal/me', () => HttpResponse.json(ME)),
       http.get('/v1/portal/deployment/organizations', () => HttpResponse.json([ACME])),
-      http.get('/v1/portal/clients', () => HttpResponse.json([])),
     )
 
     renderWithProviders(<OrganisationsPage />)
@@ -62,7 +41,6 @@ describe('OrganisationsPage', () => {
     server.use(
       http.get('/v1/portal/me', () => HttpResponse.json(ME)),
       http.get('/v1/portal/deployment/organizations', () => HttpResponse.json([ACME])),
-      http.get('/v1/portal/clients', () => HttpResponse.json([])),
       http.post('/v1/portal/organizations/o1/domains', async ({ request }) => {
         added = await request.json()
         return HttpResponse.json({ org_id: 'o1', domains: ['acme-uk.io', 'acmecorp.io'] })
@@ -80,7 +58,6 @@ describe('OrganisationsPage', () => {
     server.use(
       http.get('/v1/portal/me', () => HttpResponse.json(ME)),
       http.get('/v1/portal/deployment/organizations', () => HttpResponse.json([ACME])),
-      http.get('/v1/portal/clients', () => HttpResponse.json([])),
       http.delete('/v1/portal/organizations/o1/domains/:domain', () =>
         HttpResponse.json({ detail: 'Members of this organisation use acmecorp.io. Remove them first.' }, { status: 409 }),
       ),
@@ -90,39 +67,6 @@ describe('OrganisationsPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Remove acmecorp.io from Acme' }))
 
     expect(await screen.findByText('Members of this organisation use acmecorp.io. Remove them first.')).toBeInTheDocument()
-  })
-
-  test("links to Artifacts' own site for document settings, and edits none here", async () => {
-    server.use(
-      http.get('/v1/portal/me', () => HttpResponse.json(ME)),
-      http.get('/v1/portal/deployment/organizations', () => HttpResponse.json([ACME])),
-      http.get('/v1/portal/clients', () => HttpResponse.json([ARTIFACTS])),
-    )
-
-    renderWithProviders(<OrganisationsPage />)
-
-    const link = await screen.findByRole('link', { name: "Document settings are on Artifacts' own site" })
-    expect(link).toHaveAttribute('href', 'https://artifacts.acmecorp.io')
-    expect(screen.queryByLabelText('Graph address')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Graph password')).not.toBeInTheDocument()
-  })
-
-  test('says nothing of document settings until an approved Artifacts is registered', async () => {
-    server.use(
-      http.get('/v1/portal/me', () => HttpResponse.json(ME)),
-      http.get('/v1/portal/deployment/organizations', () => HttpResponse.json([ACME])),
-      http.get('/v1/portal/clients', () =>
-        HttpResponse.json([
-          { ...ARTIFACTS, state: 'pending' },
-          { ...ARTIFACTS, client_id: 'svc-other', extension: { ...ARTIFACTS.extension, extension_id: 'acme.other' } },
-        ]),
-      ),
-    )
-
-    renderWithProviders(<OrganisationsPage />)
-
-    expect(await screen.findByText('Acme')).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Artifacts' own site/ })).not.toBeInTheDocument()
   })
 
   test('is not for anybody else', async () => {

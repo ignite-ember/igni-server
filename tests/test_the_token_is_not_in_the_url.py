@@ -129,7 +129,7 @@ class TestTheWindowIsShort:
     def test_it_is_shorter_than_the_oauth_state_window(self):
         """State has to survive a person taking their time at the
         provider's consent screen. This does not."""
-        from app.db.redis.oauth_state import _TTL_SECONDS as state_ttl
+        from app.db.redis.oauth_state import STATE_TTL_SECONDS as state_ttl
 
         assert _TTL_SECONDS < state_ttl
 
@@ -305,10 +305,10 @@ class TestNoRedirectCarriesAToken:
     def test_the_callback_redirects_with_a_code(self, endpoint):
         source = (_ROOT / endpoint).read_text()
 
-        assert '_handoff.issue(' in source, f'{endpoint} does not issue a one-time code'
-        assert (
-            "'token': result.token.access_token" not in source
-        ), f'{endpoint} still puts the token in the redirect query'
+        assert 'handoff.issue(' in source, f'{endpoint} does not issue a one-time code'
+        assert "'token': result.token.access_token" not in source, (
+            f'{endpoint} still puts the token in the redirect query'
+        )
 
     def test_nothing_anywhere_builds_a_token_query_parameter(self):
         """Swept across the endpoints rather than the two known files.
@@ -346,6 +346,8 @@ class TestNoRedirectCarriesAToken:
 
     def test_the_portal_exchanges_rather_than_reading_a_token(self):
         source = (_ROOT / 'portal/src/auth/LoginPage.tsx').read_text()
+        exchange = (_ROOT / 'portal/src/auth/useSignInCodeExchange.ts').read_text()
 
-        assert "'/auth/exchange'" in source
+        assert 'useSignInCodeExchange(' in source
+        assert "'/auth/exchange'" in exchange
         assert "searchParams.get('token')" not in source, 'the portal still reads a token from the URL'

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.api.base_v1.schema.portal.user import PortalAccount
-from app.security.startup_checks import deployment_notices
+from app.security.startup_checks import SettingsChecks
 from app.security.super_admin import require_super_admin
 
 router = APIRouter()
@@ -27,4 +27,4 @@ class DeploymentNotices(BaseModel):
 
 @router.get('/deployment/notices', response_model=DeploymentNotices)
 async def notices(_account: PortalAccount = Depends(require_super_admin)) -> DeploymentNotices:
-    return DeploymentNotices(notices=deployment_notices())
+    return DeploymentNotices(notices=SettingsChecks().notices())

@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.sql.groups import GroupsDB
+from app.db.sql.group_person_erasure import GroupPersonErasureDB
+from app.db.sql.group_summaries import GroupSummariesDB
 from app.db.sql.models.org_group_extension import OrgGroupExtension
+from app.db.sql.schemas.group import GroupSummary
 from app.db.sql.tenancy import TenantSessions
 from app.services.auth.jwt_service import JWTService
+from app.services.portal.default_group import DefaultGroup
+from app.services.portal.group_extensions import Entitlement, GroupExtensions
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 from tests.registered_service import ExtensionBundle, RegisteredService
 
@@ -167,7 +171,7 @@ class TestOffUntilAnAdminSwitchesItOn:
         user_id, person = await org.person('newcomer@example.com')
 
         assert _ids(await _listed(client, person)) == []
-        default = await GroupsDB().get_user_group_summary(user_id)
+        default = await GroupSummariesDB().get_user_group_summary(user_id)
         assert default is not None
         assert await org.switch(str(default.id), EXTENSION, True) == 204
         assert _ids(await _listed(client, person)) == [EXTENSION]
@@ -221,6 +225,17 @@ class TestTheGroupPage:
 
         assert await org.switch(str(theirs.json()['id']), EXTENSION, True) == 404
 
+    async def test_a_group_that_does_not_exist_is_not_found(self, client, db):
+        await _shipped(client)
+        org = await Org(client, db).create()
+
+        listed = await client.get('/portal/groups/no-such-group/extensions', headers=org.admin)
+        switched = await client.put(
+            f'/portal/groups/no-such-group/extensions/{EXTENSION}', json={'enabled': True}, headers=org.admin
+        )
+
+        assert [(r.status_code, r.json()['detail']) for r in (listed, switched)] == [(404, 'Group not found')] * 2
+
 
 class TestOneGroupDecides:
     async def test_moving_them_changes_what_they_get(self, client, db):
@@ -250,7 +265,7 @@ class TestOneGroupDecides:
         assert removed.status_code == 204, removed.text
 
         listing = await _listed(client, person)
-        default = await GroupsDB().get_user_group_summary(user_id)
+        default = await GroupSummariesDB().get_user_group_summary(user_id)
         assert default is not None
         assert listing['group'] == str(default.id) != legal
         assert _ids(listing) == []
@@ -276,9 +291,41 @@ class TestTheSessionTokenCarriesTheirGroup:
         response = await client.post('/cli/token', headers=person, json={'org_id': org.org_id})
 
         claims = JWTService().decode_token(response.json()['access_token'])
-        default = await GroupsDB().get_user_group_summary(user_id)
+        default = await GroupSummariesDB().get_user_group_summary(user_id)
         assert default is not None
         assert claims.group == str(default.id)
+
+
+class _Answers(DefaultGroup):
+    """A default group that answers with a fixed summary, recording who asked."""
+
+    def __init__(self, summary: GroupSummary | None) -> None:
+        self._summary = summary
+        self.asked: list[tuple[str, str | None]] = []
+
+    async def ensure_for_user(self, user_id: str, org_id: str | None = None) -> GroupSummary | None:
+        self.asked.append((user_id, org_id))
+        return self._summary
+
+
+class TestWhichGroupIsTheirs:
+    async def test_their_group_in_the_organisation_they_are_signed_in_to(self):
+        default = _Answers(GroupSummary(id='g-1', org_id='org-1', name='Legal'))
+
+        assert await GroupExtensions(default_group=default).group_of('u-1', 'org-1') == 'g-1'
+        assert default.asked == [('u-1', 'org-1')]
+
+    async def test_a_group_in_another_organisation_is_none_of_theirs_here(self):
+        default = _Answers(GroupSummary(id='g-9', org_id='org-2', name='Theirs'))
+
+        assert await GroupExtensions(default_group=default).group_of('u-1', 'org-1') is None
+        assert await GroupExtensions(default_group=default).of_person('u-1', 'org-1') == Entitlement()
+
+    async def test_no_organisation_asks_for_no_group(self):
+        default = _Answers(GroupSummary(id='g-1', org_id='org-1', name='Legal'))
+
+        assert await GroupExtensions(default_group=default).group_of('u-1', None) is None
+        assert default.asked == []
 
 
 class TestForgettingAnAdmin:
@@ -291,7 +338,7 @@ class TestForgettingAnAdmin:
         helper = auth_header(make_token(user_id, org_id=org.org_id))
         await client.put(f'/portal/groups/{legal}/extensions/{EXTENSION}', json={'enabled': True}, headers=helper)
 
-        await GroupsDB().forget_person(org.org_id, user_id)
+        await GroupPersonErasureDB().forget_person(org.org_id, user_id=user_id)
 
         async with TenantSessions().session_scope(org.org_id) as session:
             row = await session.get(OrgGroupExtension, await _row_id(org.org_id, legal))

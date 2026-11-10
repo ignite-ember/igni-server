@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.db.sql.models.inference_node import InferenceNode
 from app.db.sql.schemas.inference_node import NodeChanges
-from app.services.ai.schemas import BackendStatus, InferenceBackend, pools_from_storage, PoolType
+from app.services.ai.fleet_schemas import FleetSnapshot
+from app.services.ai.schemas import BackendStatus, InferenceBackend
 
 
 class NodeRegistration(BaseModel):
@@ -36,7 +37,6 @@ class NodeRegistration(BaseModel):
     models: list[str] = Field(min_length=1, description='Model ids this node serves, base plus any LoRA adapters')
     api_key: str | None = Field(default=None, description='Only if the node is behind an auth proxy')
     max_concurrent: int = Field(default=64, gt=0, description="Roughly the vLLM instance's --max-num-seqs")
-    pools: list[PoolType] = Field(default=['chat'], min_length=1)
     multimodal: bool = Field(default=False, description='Whether the model accepts image input')
 
     @model_validator(mode='before')
@@ -81,7 +81,6 @@ class NodeRegistration(BaseModel):
             models=list(self.models),
             api_key=self.api_key,
             max_concurrent=self.max_concurrent,
-            pools=self.pools,
             multimodal=self.multimodal,
         )
 
@@ -131,7 +130,6 @@ class PinnedNodeCreate(BaseModel):
     models: list[str] = Field(min_length=1, description='Model ids to route here, base plus any LoRA adapters')
     api_key: str | None = Field(default=None, description='Only if the node is behind an auth proxy')
     max_concurrent: int = Field(default=64, gt=0, description="Roughly the vLLM instance's --max-num-seqs")
-    pools: list[PoolType] = Field(default=['chat'], min_length=1)
     multimodal: bool = False
 
     @model_validator(mode='after')
@@ -153,7 +151,6 @@ class PinnedNodeUpdate(BaseModel):
     # as "clear" would wipe it on every edit of anything else.
     api_key: str | None = None
     max_concurrent: int | None = Field(default=None, gt=0)
-    pools: list[PoolType] | None = Field(default=None, min_length=1)
     multimodal: bool | None = None
     enabled: bool | None = None
 
@@ -189,30 +186,18 @@ class PinnedNodeView(BaseModel):
     base_url: str
     models: list[str]
     max_concurrent: int
-    #: `list[PoolType]`, matching `NodeStatusView`. It was `list[str]`,
-    #: so the admin view of a node lost the enum validation the status
-    #: view of the same node kept — one concept, two types, one file.
-    pools: list[PoolType]
     multimodal: bool
     enabled: bool
     has_api_key: bool
 
     @classmethod
     def of(cls, node: InferenceNode) -> 'PinnedNodeView':
-        """Project a stored node for the portal.
-
-        `node` was unannotated, and the body read the persistence
-        format directly — `str(node.pools).split(',')` — so an API
-        schema knew that the column is comma-joined. That decision
-        belongs to the storage layer and `pools_from_storage` is where
-        it now lives, shared with the registry that had its own copy.
-        """
+        """Project a stored node for the portal."""
         return cls(
             node_id=str(node.node_id),
             base_url=str(node.base_url),
             models=list(node.models or []),
             max_concurrent=int(node.max_concurrent),
-            pools=pools_from_storage(node.pools),
             multimodal=bool(node.multimodal),
             enabled=bool(node.enabled),
             has_api_key=bool(node.api_key),
@@ -273,7 +258,6 @@ class NodeStatusView(BaseModel):
     id: str
     base_url: str
     models: list[str]
-    pools: list[PoolType]
     multimodal: bool
     source: str
     in_flight: int
@@ -294,23 +278,12 @@ class NodeStatusView(BaseModel):
         return cls(**status.model_dump(), utilization=status.utilization)
 
 
-class PoolStatusView(BaseModel):
-    """One pool's nodes and its totals.
+class InferenceStatusView(BaseModel):
+    """Every node, its totals, and whether registration is available at all.
 
     The totals are what answers "do we need another GPU?", which is the
     question this page exists for. Per-node rows answer the follow-up:
     which one.
-    """
-
-    pool: PoolType
-    nodes: list[NodeStatusView]
-    total_in_flight: int
-    total_capacity: int
-    utilization: float
-
-
-class InferenceStatusView(BaseModel):
-    """Both pools, plus whether registration is available at all.
 
     ``registration_enabled`` lets the portal explain an empty registered
     list correctly: "nothing has registered" and "this deployment does
@@ -318,9 +291,26 @@ class InferenceStatusView(BaseModel):
     completely different fixes.
     """
 
-    pools: list[PoolStatusView]
+    nodes: list[NodeStatusView]
+    total_in_flight: int
+    total_capacity: int
+    utilization: float
     registration_enabled: bool
     heartbeat_interval_seconds: int
+
+    @classmethod
+    def of(
+        cls, snapshot: FleetSnapshot, *, registration_enabled: bool, heartbeat_interval_seconds: int
+    ) -> 'InferenceStatusView':
+        """Project a fleet snapshot for the portal."""
+        return cls(
+            nodes=[NodeStatusView.of(s) for s in snapshot.nodes],
+            total_in_flight=snapshot.total_in_flight,
+            total_capacity=snapshot.total_capacity,
+            utilization=snapshot.utilization,
+            registration_enabled=registration_enabled,
+            heartbeat_interval_seconds=heartbeat_interval_seconds,
+        )
 
 
 class NodeProbeRequest(BaseModel):

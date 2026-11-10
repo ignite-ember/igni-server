@@ -173,26 +173,6 @@ describes a server run on the host, where they are `localhost`. Source
 is volume-mounted for reload and `PORTAL_AUTH_BYPASS=1` is set. That is
 the whole open server; nothing in it needs a paid module.
 
-If you also have the Artifacts module's source (a separate, licensed
-repository) checked out beside this one, as `../igni__artifacts`, add
-`containers/docker-compose.artifacts.yml` (or run `make up ARTIFACTS=1`).
-It builds and runs Artifacts on **its own name**,
-`http://artifacts.localhost:8100`, not as a path on `:7777`.
-
-Every service has its own hostname, here and in production
-(`artifacts.example.com`, never `igni.example.com/v1/artifacts`). A
-service's URL is its identity: the audience of the tokens people get for
-it, and where igni calls it to erase or export a person's data — see
-[service-identity.md](docs/service-identity.md#a-service-has-its-own-hostname).
-`*.localhost` is loopback on the laptop with no hosts entry (browsers,
-curl, macOS; on Linux add `127.0.0.1 artifacts.localhost` to your hosts file
-if yours does not resolve it), and a network alias gives the same name to
-the container inside the stack, so igni reaches the service at exactly the
-URL it registered. Its settings — including a **dev-only**
-`GRAPH_CREDENTIALS_KEY` — are in that compose file, each overridable from
-`.env` as `ARTIFACTS_<NAME>`. In the chart, the service's host is
-`artifacts.host`; see [charts/igni/README.md](charts/igni/README.md).
-
 Production:
 
 ```bash

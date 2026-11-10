@@ -94,7 +94,7 @@ igni-server/
 
 `app/services/` is the layer worth knowing: `auth`, `ai`, `portal`,
 `scim`, `notifications`, `email`, `secrets`, `identity`,
-`subject_access.py`, `retention.py`, `readiness.py`.
+`subject_access/`, `retention.py`, `readiness.py`.
 
 ---
 
@@ -240,7 +240,7 @@ subset needed to run the thing.
 | `pyproject.toml` | Dependencies and metadata |
 | `app/config.py` | `Settings`, and the reasoning for each default |
 | `dist.env` | The operator-facing template |
-| `app/security/startup_checks.py` | What the server refuses to start without |
+| `app/security/startup_checks.py` | What the server refuses to start without (settings; secrets in `secret_checks.py`, the database in `database_checks.py`) |
 | `alembic/versions/` | Migrations: the shared plane |
 | `app/db/sql/tenancy.py` | Each organisation's own database |
 

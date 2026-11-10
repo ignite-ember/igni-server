@@ -34,9 +34,11 @@ import weakref
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import TimeoutError as PoolTimeout
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine
 
 from app.config import settings
 from app.db.sql import SQLAlchemySessionManager
+from app.security.database_checks import DatabaseChecks
 
 pytestmark = pytest.mark.anyio
 
@@ -277,13 +279,11 @@ class TestTheConnectionBudgetIsStated:
         """The failure this replaces is a deployment that boots, passes
         every check, and then refuses connections when the second replica
         starts taking load."""
-        from app.security.startup_checks import check_pool_fits_the_server
-
         monkeypatch.setattr(settings, 'db_pool_size', 5)
         monkeypatch.setattr(settings, 'db_max_overflow', 15)
         monkeypatch.setattr(SQLAlchemySessionManager, 'session_scope', _fake_server(max_connections=25))
 
-        findings = await check_pool_fits_the_server()
+        findings = await DatabaseChecks().check_pool_fits_the_server()
 
         assert len(findings) == 1, findings
         assert 'max_connections' in findings[0]
@@ -292,40 +292,35 @@ class TestTheConnectionBudgetIsStated:
         assert '20' in findings[0] and '22' in findings[0]
 
     async def test_it_is_quiet_when_they_do(self, monkeypatch):
-        from app.security.startup_checks import check_pool_fits_the_server
-
         monkeypatch.setattr(settings, 'db_pool_size', 5)
         monkeypatch.setattr(settings, 'db_max_overflow', 15)
         monkeypatch.setattr(SQLAlchemySessionManager, 'session_scope', _fake_server(max_connections=100))
 
-        assert await check_pool_fits_the_server() == []
+        assert await DatabaseChecks().check_pool_fits_the_server() == []
 
     async def test_it_never_refuses_to_start(self, monkeypatch):
         """A warning, deliberately. How many replicas share the server is
         not something one process can know, so an exact answer is not
         available and refusing on a guess would stop a deployment that is
         fine."""
-        from app.security.startup_checks import check_pool_fits_the_server
-
         monkeypatch.setattr(settings, 'db_pool_size', 500)
         monkeypatch.setattr(settings, 'db_max_overflow', 500)
         monkeypatch.setattr(SQLAlchemySessionManager, 'session_scope', _fake_server(max_connections=10))
 
-        findings = await check_pool_fits_the_server()
+        findings = await DatabaseChecks().check_pool_fits_the_server()
         assert findings, 'the impossible case has to be reported'
 
     async def test_a_database_it_cannot_ask_is_not_a_finding(self, monkeypatch):
         """ "Cannot tell" is not "is wrong". Failing startup on a
         transient connection error would turn a blip into an outage, which
-        is the same rule `check_no_bypass_identity_in_database` follows."""
-        from app.security.startup_checks import check_pool_fits_the_server
+        is the same rule `DatabaseChecks.check_no_bypass_identity_in_database` follows."""
 
         def explode(self):
             raise OSError('connection refused')
 
         monkeypatch.setattr(SQLAlchemySessionManager, 'session_scope', explode)
 
-        assert await check_pool_fits_the_server() == []
+        assert await DatabaseChecks().check_pool_fits_the_server() == []
 
 
 def _fake_server(*, max_connections: int, reserved: int = 3):
@@ -390,12 +385,12 @@ class TestTheRegistryIsKeyedOnTheLoopItself:
         made: list[object] = []
 
         def _engine(*_a, **_kw):
-            engine = MagicMock()
+            engine = MagicMock(spec=AsyncEngine)
             made.append(engine)
             return engine
 
         monkeypatch.setattr(db_module, 'create_async_engine', _engine)
-        monkeypatch.setattr(db_module, 'async_sessionmaker', lambda **_kw: MagicMock())
+        monkeypatch.setattr(db_module, 'async_sessionmaker', lambda **_kw: MagicMock(spec=async_sessionmaker))
         monkeypatch.setattr(SQLAlchemySessionManager, '_engines', weakref.WeakKeyDictionary())
         return made
 

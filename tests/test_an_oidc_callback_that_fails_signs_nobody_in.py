@@ -29,7 +29,7 @@ def configured(monkeypatch):
 
 
 async def _state() -> str:
-    return await OAuthService.generate_state(OidcSignInState(nonce='n-1', pkce='v' * 43).as_metadata())
+    return await OAuthService().generate_state(OidcSignInState(nonce='n-1', pkce='v' * 43))
 
 
 def _exchange_answers(monkeypatch, outcome):

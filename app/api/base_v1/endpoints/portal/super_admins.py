@@ -20,7 +20,9 @@ from pydantic import BaseModel, EmailStr
 from app.api.base_v1.schema.portal.user import PortalAccount
 from app.db.sql.models.user import User
 from app.db.sql.org_domains import OrgDomainDB
-from app.db.sql.user import LastSuperAdmin, UserDB
+from app.db.sql.schemas.account_errors import LastSuperAdmin
+from app.db.sql.super_admins import SuperAdminDB
+from app.db.sql.user import UserDB
 from app.security.super_admin import require_super_admin
 
 router = APIRouter()
@@ -43,7 +45,7 @@ class MakeSuperAdmin(BaseModel):
 @router.get('/super-admins', response_model=list[SuperAdmin])
 async def list_super_admins(_account: PortalAccount = Depends(require_super_admin)) -> list[SuperAdmin]:
     """Everyone who owns this install, oldest account first."""
-    return [SuperAdmin.of(user) for user in await UserDB().super_admins()]
+    return [SuperAdmin.of(user) for user in await SuperAdminDB().super_admins()]
 
 
 @router.post('/super-admins', response_model=SuperAdmin, status_code=status.HTTP_200_OK)
@@ -71,7 +73,7 @@ async def make_super_admin(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="That account isn't on any organisation's domain, so it can't be a super admin.",
         )
-    made = await UserDB().set_super_admin(str(found.user_id), super_admin=True)
+    made = await SuperAdminDB().set_super_admin(str(found.user_id), super_admin=True)
     if made is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No such account.')
     return SuperAdmin.of(made)
@@ -84,7 +86,7 @@ async def unmake_super_admin(
 ) -> Response:
     """Stop an account being a super admin. 409 for the last one."""
     try:
-        unmade = await UserDB().set_super_admin(user_id, super_admin=False)
+        unmade = await SuperAdminDB().set_super_admin(user_id, super_admin=False)
     except LastSuperAdmin as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

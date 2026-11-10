@@ -47,7 +47,7 @@ from tests.conftest import TEST_DB_URL_SYNC
 
 pytestmark = pytest.mark.anyio
 
-#: The statements `app/services/subject_access.py` runs against
+#: The statements `app/db/sql/subject_access.py` runs against
 #: `audit_events`, copied here so the plan is checked for what the
 #: application asks and not for a paraphrase of it.
 _BY_EMAIL = (

@@ -50,12 +50,12 @@ class TestModelNotAvailableReturns404:
             )
         )
 
-        def fake_get_chat_pool(_self):
+        def fake_get_pool(_self):
             return pool
 
         with patch(
-            'app.services.ai.pool_manager.PoolManager.get_chat_pool',
-            new=fake_get_chat_pool,
+            'app.services.ai.pool_manager.PoolManager.get_pool',
+            new=fake_get_pool,
         ):
             resp = await client.post(
                 '/chat/completions',
@@ -79,12 +79,12 @@ class TestAcquireKeyReceivesModel:
         # have captured the model argument before raising.
         pool = _make_pool(acquire_side_effect=ModelNotAvailableError(model='claude-opus-4-7', available=[]))
 
-        def fake_get_chat_pool(_self):
+        def fake_get_pool(_self):
             return pool
 
         with patch(
-            'app.services.ai.pool_manager.PoolManager.get_chat_pool',
-            new=fake_get_chat_pool,
+            'app.services.ai.pool_manager.PoolManager.get_pool',
+            new=fake_get_pool,
         ):
             await client.post(
                 '/chat/completions',
@@ -103,12 +103,12 @@ class TestAcquireKeyReceivesModel:
         client, token = authed
         pool = _make_pool(acquire_side_effect=ModelNotAvailableError(model='', available=[]))
 
-        def fake_get_chat_pool(_self):
+        def fake_get_pool(_self):
             return pool
 
         with patch(
-            'app.services.ai.pool_manager.PoolManager.get_chat_pool',
-            new=fake_get_chat_pool,
+            'app.services.ai.pool_manager.PoolManager.get_pool',
+            new=fake_get_pool,
         ):
             # Send no model field at all.
             await client.post(

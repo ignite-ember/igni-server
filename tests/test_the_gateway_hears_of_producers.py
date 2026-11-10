@@ -21,10 +21,10 @@ from app.config import settings
 from app.db.sql.models.producer_feed import ProducerFeedEntry
 from app.db.sql.producer_feed import ProducerFeedDB
 from app.security.producer import ProducerRef
-from app.services import retention
 from app.services.cloud.producer_feed import ProducerFeed
 from app.services.cloud.producer_states import ProducerStates
 from app.services.cloud.vm_profiles import VmProfiles
+from app.services.retention import Retention
 from tests.cloud_world import CloudOrg, make_super_admin, platform, shared_plane
 from tests.conftest import add_member
 
@@ -452,7 +452,7 @@ class TestRetention:
         await ProducerFeed().close_out()
         kept = await _rows()
         _later(monkeypatch, 31)
-        removed = await retention.run_once()
+        removed = await Retention().run_once()
 
         assert (app.client_id, False, True) in kept
         assert removed.producer_feed == 1
@@ -466,7 +466,7 @@ class TestRetention:
         await ProducerFeed().drain()
 
         _later(monkeypatch, 60)
-        await retention.run_once()
+        await Retention().run_once()
 
         assert (app.client_id, False, True) in await _rows()
 
@@ -479,7 +479,7 @@ class TestRetention:
         await feed.poll()
 
         _later(monkeypatch, 400)
-        await retention.run_once()
+        await Retention().run_once()
 
         assert (ada, False, False) in await _rows()
 
@@ -491,7 +491,7 @@ class TestRetention:
         erased = await client.post('/portal/erasure', json={'email': 'ada@acme.com'}, headers=acme.admin)
         before = await _rows()
         told = await feed.poll()
-        await retention.run_once()
+        await Retention().run_once()
 
         assert erased.status_code == 200, erased.text
         assert (ada, False, True) in before
@@ -507,7 +507,7 @@ class TestRetention:
 
         await client.post('/portal/erasure', json={'email': 'ada@acme.com'}, headers=acme.admin)
         [now] = await feed.poll()
-        await retention.run_once()
+        await Retention().run_once()
 
         assert datetime.fromisoformat(scheduled['erase_at']) > datetime.now(timezone.utc) + timedelta(days=29)
         assert datetime.fromisoformat(now['erase_at']) <= datetime.now(timezone.utc)

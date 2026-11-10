@@ -19,7 +19,8 @@ from cryptography.fernet import Fernet
 import pytest
 
 from app.config import settings
-from app.security.startup_checks import check_deployment, UnsafeDeployment
+from app.security.deployment_findings import UnsafeDeployment
+from app.security.startup_checks import SettingsChecks
 
 #: A real Fernet key: the check parses it.
 GOOD_KEY = Fernet.generate_key().decode()
@@ -96,7 +97,7 @@ class TestTheEncryptionKey:
     def test_an_empty_key_refuses_to_start_everywhere(self, env: str):
         with _settings(**_clean(app_env=env, secret_encryption_key='')):
             with pytest.raises(UnsafeDeployment) as caught:
-                check_deployment()
+                SettingsChecks().check()
 
         message = str(caught.value)
         assert 'SECRET_ENCRYPTION_KEY' in message
@@ -109,11 +110,11 @@ class TestTheEncryptionKey:
         """``changeme`` passes a non-empty check and decrypts nothing."""
         with _settings(**_clean(secret_encryption_key='changeme')):
             with pytest.raises(UnsafeDeployment, match='not a valid Fernet key'):
-                check_deployment()
+                SettingsChecks().check()
 
     def test_a_real_key_starts_clean(self):
         with _settings(**_clean()):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
 
 class TestTheIssuer:
@@ -122,11 +123,11 @@ class TestTheIssuer:
     def test_plain_http_refuses_outside_dev(self):
         with _settings(**_clean(public_base_url='http://api.igni.example.com')):
             with pytest.raises(UnsafeDeployment, match='PUBLIC_BASE_URL'):
-                check_deployment()
+                SettingsChecks().check()
 
     def test_dev_may_use_plain_http(self):
         with _settings(**_clean(app_env='dev', public_base_url='http://localhost:8000')):
-            assert not any('PUBLIC_BASE_URL' in problem for problem in check_deployment())
+            assert not any('PUBLIC_BASE_URL' in problem for problem in SettingsChecks().check())
 
 
 class TestThePortalBypass:
@@ -140,7 +141,7 @@ class TestThePortalBypass:
             )
         ):
             with pytest.raises(UnsafeDeployment) as caught:
-                check_deployment()
+                SettingsChecks().check()
 
         message = str(caught.value)
         assert 'PORTAL_AUTH_BYPASS' in message
@@ -155,7 +156,7 @@ class TestThePortalBypass:
                 )
             )
         ):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
 
 class TestTheDefaultsThemselves:
@@ -179,7 +180,7 @@ class TestTheDefaultsThemselves:
         spend an afternoon."""
         with _settings(**_clean(secret_encryption_key='', public_base_url='http://x', portal_auth_bypass=True)):
             with pytest.raises(UnsafeDeployment) as caught:
-                check_deployment()
+                SettingsChecks().check()
 
         message = str(caught.value)
         assert 'SECRET_ENCRYPTION_KEY' in message
@@ -206,7 +207,7 @@ class TestPublicUrls:
                 ),
             )
         ):
-            problems = check_deployment()
+            problems = SettingsChecks().check()
 
         assert len(problems) == 3
         joined = ' '.join(problems)
@@ -219,11 +220,11 @@ class TestPublicUrls:
 
     def test_real_urls_are_quiet(self):
         with _settings(**_clean()):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
     def test_dev_is_not_nagged(self):
         with _settings(**_clean(app_env='dev')):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
 
 class TestSharedSecretsThatAreTooShort:
@@ -242,7 +243,7 @@ class TestSharedSecretsThatAreTooShort:
                 **_clean(node_registration_token='test'),
             )
         ):
-            problems = check_deployment()
+            problems = SettingsChecks().check()
 
         assert len(problems) == 1
         assert 'NODE_REGISTRATION_TOKEN' in problems[0]
@@ -260,7 +261,7 @@ class TestSharedSecretsThatAreTooShort:
                 **_clean(node_registration_token=''),
             )
         ):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
     def test_a_long_token_is_quiet(self):
         with _settings(
@@ -268,7 +269,7 @@ class TestSharedSecretsThatAreTooShort:
                 **_clean(node_registration_token='n' * 48),
             )
         ):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
 
 class TestWhereOneTimeCodesGoWithNoRelay:
@@ -288,7 +289,7 @@ class TestWhereOneTimeCodesGoWithNoRelay:
 
     def test_off_with_no_relay_says_codes_reach_nobody_and_how_to_get_in(self):
         with _settings(**_clean(email_enabled=False, smtp_host='')):
-            problems = check_deployment()
+            problems = SettingsChecks().check()
 
         assert len(problems) == 1
         assert 'reach nobody' in problems[0]
@@ -297,14 +298,14 @@ class TestWhereOneTimeCodesGoWithNoRelay:
 
     def test_a_configured_relay_is_quiet(self):
         with _settings(**_clean()):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
     @pytest.mark.parametrize('env', ['prod', 'stage', 'dev'])
     def test_opting_in_is_warned_on_every_boot_everywhere(self, env: str):
         """Dev included: it is a deliberate exposure, and the kind that
         outlives the first setup it was turned on for."""
         with _settings(**_clean(app_env=env, email_enabled=False, smtp_host='', log_sign_in_codes=True)):
-            problems = check_deployment()
+            problems = SettingsChecks().check()
 
         (warning,) = [p for p in problems if 'LOG_SIGN_IN_CODES' in p]
         # Names the consequence, not just the setting: an operator has to
@@ -315,7 +316,7 @@ class TestWhereOneTimeCodesGoWithNoRelay:
     def test_the_warning_reaches_the_log(self, caplog):
         with _settings(**_clean(email_enabled=False, smtp_host='', log_sign_in_codes=True)):
             with caplog.at_level(logging.WARNING):
-                check_deployment()
+                SettingsChecks().check()
 
         assert any(r.levelno == logging.WARNING and 'LOG_SIGN_IN_CODES is on' in r.getMessage() for r in caplog.records)
 
@@ -323,7 +324,7 @@ class TestWhereOneTimeCodesGoWithNoRelay:
         """Inert today; but remove the relay and codes go back to the log
         without anybody choosing it again."""
         with _settings(**_clean(log_sign_in_codes=True)):
-            problems = check_deployment()
+            problems = SettingsChecks().check()
 
         assert len(problems) == 1
         assert 'Unset it' in problems[0]
@@ -334,20 +335,20 @@ class TestWhereOneTimeCodesGoWithNoRelay:
         nobody is watching — ``delivery.py`` says so, and this check has
         to agree with it."""
         with _settings(**_clean(email_enabled=True, smtp_host='')):
-            problems = check_deployment()
+            problems = SettingsChecks().check()
 
         assert len(problems) == 1
         assert 'reach nobody' in problems[0]
 
     def test_ses_is_a_relay_without_an_smtp_host(self):
         with _settings(**_clean(email_enabled=True, email_backend='ses', smtp_host='')):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
     def test_dev_with_it_off_is_not_nagged(self):
         """The local compose file turns it on; a dev run without it is a
         developer's choice, not a deployment's surprise."""
         with _settings(**_clean(app_env='dev', email_enabled=False, smtp_host='')):
-            assert check_deployment() == []
+            assert SettingsChecks().check() == []
 
     def test_the_code_is_never_returned_to_the_caller(self):
         """The part that was already right, pinned so it stays right.

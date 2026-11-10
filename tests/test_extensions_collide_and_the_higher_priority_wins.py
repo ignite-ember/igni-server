@@ -16,34 +16,36 @@ from typing import Any
 
 import pytest
 
-from app.services.identity.impact import (
-    DECIDING_HOOKS,
-    ExtensionImpact,
-    HOOK_EVENTS,
+from app.services.identity.extension_manifest import Manifest
+from app.services.identity.impact.errors import ImpactRefused
+from app.services.identity.impact.extension_impact import ExtensionImpact
+from app.services.identity.impact.grants import DECIDING_HOOKS, HOOK_EVENTS
+from app.services.identity.impact.igni_catalogues import (
     IGNI_COMMANDS_FILE,
     IgniCommands,
-    ImpactRefused,
-    ImpactResolver,
     PROMPT_TARGETS_FILE,
     PromptTargets,
 )
+from app.services.identity.impact.resolver import ImpactResolver
 
 FIXTURE = Path(__file__).parent / 'fixtures' / 'extension_impact_cases.json'
 CASES: dict[str, Any] = json.loads(FIXTURE.read_text())
 IGNI = Path(__file__).resolve().parents[2] / 'igni'
 
 
+def _impact(manifest: dict[str, Any]) -> ExtensionImpact:
+    return ExtensionImpact.of(Manifest.model_validate(manifest))
+
+
 def _resolver(case: dict[str, Any]) -> ImpactResolver:
-    return ImpactResolver(
-        [ExtensionImpact.of(m) for m in case['manifests']], case['priority'], reserved=case.get('reserved', [])
-    )
+    return ImpactResolver([_impact(m) for m in case['manifests']], case['priority'], reserved=case.get('reserved', []))
 
 
 def test_an_extensions_impact_is_read_off_its_manifest():
     expected = dict(CASES['impact']['expected'])
     claims = expected.pop('claims')
     items = expected.pop('items')
-    impact = ExtensionImpact.of(CASES['impact']['manifest'])
+    impact = _impact(CASES['impact']['manifest'])
     assert impact.model_dump(mode='json') == expected
     assert impact.claims() == claims
     assert impact.items() == items
@@ -71,13 +73,13 @@ def test_hooks_without_a_process_are_refused():
         'permissions': {'hooks': ['PreToolUse']},
     }
     with pytest.raises(ImpactRefused, match='needs a process igni starts'):
-        ExtensionImpact.of(manifest)
+        _impact(manifest)
 
 
 def test_an_event_igni_does_not_have_is_refused():
     manifest = {'id': 'acme.a', 'version': '1.0.0', 'permissions': {'hooks': ['tools.calling']}}
     with pytest.raises(ImpactRefused, match='not a hook event of igni'):
-        ExtensionImpact.of(manifest)
+        _impact(manifest)
 
 
 def test_the_hook_events_are_igni_s():
@@ -94,21 +96,21 @@ def test_the_hook_events_are_igni_s():
 def test_a_malformed_prompt_contribution_is_refused():
     manifest = {'id': 'acme.a', 'version': '1.0.0', 'contributes': {'prompt': {'overrides': [{'target': 'system'}]}}}
     with pytest.raises(ImpactRefused):
-        ExtensionImpact.of(manifest)
+        _impact(manifest)
 
 
 def test_a_prompt_key_igni_does_not_have_is_refused():
     """The old spelling, or a typo: igni would refuse it at install, so it is refused at upload."""
     manifest = {'id': 'acme.a', 'version': '1.0.0', 'contributes': {'prompt': {'slots': []}}}
     with pytest.raises(ImpactRefused):
-        ExtensionImpact.of(manifest)
+        _impact(manifest)
 
 
 def test_an_edit_is_exactly_one_change():
     edit = {'target': 'main', 'replace': 'workflow', 'append': 'x', 'source': 'file', 'from': 'x.md'}
     manifest = {'id': 'acme.a', 'version': '1.0.0', 'contributes': {'prompt': {'edits': [edit]}}}
     with pytest.raises(ImpactRefused):
-        ExtensionImpact.of(manifest)
+        _impact(manifest)
 
 
 def test_overriding_and_editing_one_prompt_is_refused():
@@ -120,7 +122,7 @@ def test_overriding_and_editing_one_prompt_is_refused():
         'contributes': {'prompt': {'overrides': [override], 'edits': [edit]}},
     }
     with pytest.raises(ImpactRefused, match='both overrides and edits'):
-        ExtensionImpact.of(manifest)
+        _impact(manifest)
 
 
 def test_a_target_this_igni_does_not_have_is_named():
@@ -140,7 +142,7 @@ def test_a_target_this_igni_does_not_have_is_named():
             }
         },
     }
-    assert ExtensionImpact.of(manifest).unknown_targets(PromptTargets.igni()) == ['main#nonesuch']
+    assert PromptTargets.igni().unknown_in(_impact(manifest)) == ['main#nonesuch']
 
 
 @pytest.mark.skipif(not (IGNI / 'tests' / 'fixtures').is_dir(), reason='no igni checkout beside this one')
@@ -159,7 +161,7 @@ def test_an_extension_declaring_one_of_igni_s_commands_clashes_with_igni():
         'version': '1.0.0',
         'contributes': {'commands': [{'command': '/clear', 'desc': 'x'}, {'command': '/tidy', 'desc': 'y'}]},
     }
-    assert IgniCommands.igni().clashes(ExtensionImpact.of(manifest)) == ['/clear']
+    assert IgniCommands.igni().clashes(_impact(manifest)) == ['/clear']
 
 
 @pytest.mark.skipif(not (IGNI / 'docs').is_dir(), reason='no igni checkout beside this one')

@@ -10,6 +10,7 @@ every replica has it before any replica signs with it.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
 
@@ -17,6 +18,7 @@ from app.db.sql.models.signing_key import SigningKey
 from app.db.sql.signing_keys import SigningKeyDB
 from app.services.identity.jwk import JwkSet, PublicJwk, RsaKeyPair
 from app.services.secrets import decrypt_secret
+from app.utils.singleton import SingletonMeta
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +36,14 @@ class KeyRingNotLoaded(RuntimeError):
     """A token was signed or checked before start-up loaded the keys."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class KeyRing:
-    """One signing key and every key still published."""
+    """One signing key and every key still published. Immutable: a reload
+    builds a new ring rather than changing the one being signed with."""
 
-    def __init__(self, *, kid: str, signer: RsaKeyPair, published: JwkSet) -> None:
-        self.kid = kid
-        self.signer = signer
-        self.published = published
+    kid: str
+    signer: RsaKeyPair
+    published: JwkSet
 
     @classmethod
     def from_rows(cls, rows: list[SigningKey], *, now: datetime | None = None) -> KeyRing:
@@ -70,40 +73,48 @@ class KeyRing:
 
 
 class SigningKeys:
-    """The process's ring: loaded once, refreshed in the background."""
+    """A ring loaded from the store and refreshed in the background."""
 
-    _ring: KeyRing | None = None
+    def __init__(self, *, store: SigningKeyDB | None = None, reload_every: timedelta = RELOAD_EVERY) -> None:
+        self._store = store or SigningKeyDB()
+        self._reload_every = reload_every
+        self._ring: KeyRing | None = None
 
-    @classmethod
-    def ring(cls) -> KeyRing:
-        if cls._ring is None:
+    def ring(self) -> KeyRing:
+        if self._ring is None:
             raise KeyRingNotLoaded('the signing keys are loaded at start-up; this ran before that')
-        return cls._ring
+        return self._ring
 
-    @classmethod
-    def install(cls, ring: KeyRing | None) -> None:
-        cls._ring = ring
+    def install(self, ring: KeyRing | None) -> None:
+        self._ring = ring
 
-    @classmethod
-    async def load(cls) -> KeyRing:
+    async def load(self) -> KeyRing:
         """Generate the first key if there is none, then read them all."""
-        store = SigningKeyDB()
-        await store.ensure()
-        cls._ring = KeyRing.from_rows(await store.all())
-        return cls._ring
+        await self._store.ensure()
+        self._ring = KeyRing.from_rows(await self._store.all())
+        return self._ring
 
-    @classmethod
-    async def reload_forever(cls) -> None:
-        """Re-read the keys every `RELOAD_EVERY`, and prune old ones.
+    async def reload_forever(self) -> None:
+        """Re-read the keys every `reload_every`, and prune old ones.
 
         A failed reload keeps the ring it had: the keys it holds were
         valid a few minutes ago, and refusing to sign because the
         database blinked would take sign-in down with it.
         """
         while True:
-            await asyncio.sleep(RELOAD_EVERY.total_seconds())
+            await asyncio.sleep(self._reload_every.total_seconds())
             try:
-                await SigningKeyDB().prune(outlived_by=KEEP_SUPERSEDED_FOR)
-                cls._ring = KeyRing.from_rows(await SigningKeyDB().all())
+                await self._store.prune(outlived_by=KEEP_SUPERSEDED_FOR)
+                self._ring = KeyRing.from_rows(await self._store.all())
             except Exception:  # noqa: BLE001 — a background loop must survive one bad pass
                 logger.exception('Could not reload the signing keys; keeping the ones already loaded')
+
+
+class ProcessSigningKeys(SigningKeys, metaclass=SingletonMeta):
+    """The process's one :class:`SigningKeys`.
+
+    A singleton, like `ProcessTelemetry` and for the same reason: every
+    token minted or checked anywhere in the process must use the ring
+    start-up loaded, and token checks run deep in dependencies that have
+    no app in hand to carry an instance.
+    """

@@ -8,6 +8,7 @@
 import { Button, Stack, Text } from '@primer/react'
 import { ShieldLockIcon } from '@primer/octicons-react'
 import type { AuthMethods } from './useAuthMethods'
+import { oauthStartUrl, ssoStartUrl, type OAuthProvider } from './providerStart'
 
 /* ── Inline SVG icons for providers not in Octicons ── */
 
@@ -21,8 +22,6 @@ function GoogleIcon() {
     </svg>
   )
 }
-
-export type OAuthProvider = 'google'
 
 const PROVIDER_BUTTONS: Record<OAuthProvider, { label: string; icon: typeof GoogleIcon }> = {
   google: { label: 'Google', icon: GoogleIcon },
@@ -47,12 +46,11 @@ const PROVIDER_BUTTONS: Record<OAuthProvider, { label: string; icon: typeof Goog
  */
 export function OtherWaysIn({
   methods,
-  onOAuth,
-  onSso,
+  returnTo,
 }: {
   methods: AuthMethods | undefined
-  onOAuth: (provider: OAuthProvider) => void
-  onSso: () => void
+  /** Where the provider round trip should land once signed in. */
+  returnTo: string
 }) {
   // Nothing at all until the answer arrives. A button that appears and
   // then vanishes is worse than one that appears a moment late, and this
@@ -74,7 +72,7 @@ export function OtherWaysIn({
 
       <Stack gap="condensed">
         {methods.sso.enabled && (
-          <Button block variant="primary" leadingVisual={ShieldLockIcon} onClick={onSso}>
+          <Button block variant="primary" leadingVisual={ShieldLockIcon} onClick={() => { window.location.href = ssoStartUrl(methods, returnTo) }}>
             {methods.sso.label}
           </Button>
         )}
@@ -82,7 +80,7 @@ export function OtherWaysIn({
         {providers.map((name) => {
           const button = PROVIDER_BUTTONS[name]
           return (
-            <Button key={name} block leadingVisual={button.icon} onClick={() => onOAuth(name)}>
+            <Button key={name} block leadingVisual={button.icon} onClick={() => { window.location.href = oauthStartUrl(name, returnTo) }}>
               {button.label}
             </Button>
           )

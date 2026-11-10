@@ -89,6 +89,22 @@ describe('GroupsPage', () => {
     expect(screen.getByRole('menuitem', { name: /delete/i })).toBeInTheDocument()
   })
 
+  test('a refused delete tells the admin why', async () => {
+    server.use(
+      http.get('/v1/portal/groups', () => HttpResponse.json(GROUPS_DATA)),
+      http.delete('/v1/portal/groups/g-1', () =>
+        HttpResponse.json({ detail: 'This group still owns entries in use.' }, { status: 409 }),
+      ),
+    )
+    renderWithProviders(<GroupsPage />, { route: '/groups' })
+    await screen.findByText('Engineering')
+    await userEvent.click(screen.getByRole('button', { name: /Actions for Engineering/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /delete/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
+
+    expect(await screen.findByText('This group still owns entries in use.')).toBeInTheDocument()
+  })
+
   test('admin sees Create first group button in empty state', async () => {
     server.use(
       http.get('/v1/portal/me', () =>
