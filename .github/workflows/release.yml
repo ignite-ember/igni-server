@@ -350,9 +350,17 @@ jobs:
       - name: Build and push
         run: |
           IMAGE="${{ env.REGISTRY }}/igni-portal"
-          docker build -t "${IMAGE}:${{ steps.meta.outputs.tag }}" \
-                       -t "${IMAGE}:latest" \
-                       -f portal/Dockerfile portal/
+          # The version tag as well, and for the same reason the backend
+          # has one: the chart's `portalImage.tag` defaults to its
+          # `appVersion`, and `latest` is refused there deliberately — so
+          # without this tag `helm install` with no `--set portalImage.tag`
+          # asks for an image nothing ever pushed and the portal pod sits
+          # in ImagePullBackOff while the API's pulls fine. The two
+          # images are resolved the same way, so they are tagged the same
+          # way; the notes name both as `:0.7.0`.
+          TAGS=(-t "${IMAGE}:${{ steps.meta.outputs.tag }}" -t "${IMAGE}:latest"
+                -t "${IMAGE}:${{ steps.meta.outputs.version }}")
+          docker build "${TAGS[@]}" -f portal/Dockerfile portal/
           docker push "${IMAGE}" --all-tags
 
       # Signed and attested as the backend is; see the comment there.

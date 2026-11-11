@@ -33,6 +33,8 @@ import pathlib
 import re
 import tomllib
 
+import yaml
+
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
@@ -53,6 +55,25 @@ def _chart_app_version() -> str:
     match = re.search(r'^appVersion: "([^"]+)"', source, re.M)
     assert match, 'could not find `appVersion` in charts/igni/Chart.yaml'
     return match.group(1)
+
+
+def _image_builds() -> list[tuple[str, str]]:
+    """Every step of the release workflow that builds an image, with the
+    job it is in and the script it runs.
+
+    The workflow builds two images — the API and the portal — and each is
+    one `docker build`. The list is what the rule below is about: an
+    image built without the version tag is an image the chart's default
+    cannot resolve.
+    """
+    workflow = yaml.safe_load((_ROOT / '.github/workflows/release.yml').read_text())
+    builds: list[tuple[str, str]] = []
+    for job_name, job in workflow['jobs'].items():
+        for step in job.get('steps') or []:
+            run = step.get('run') or ''
+            if 'docker build' in run:
+                builds.append((job_name, run))
+    return builds
 
 
 def test_the_three_versions_agree():
@@ -93,8 +114,20 @@ def test_the_release_publishes_a_tag_the_chart_can_default_to():
     ), 'the release should read the version from pyproject.toml; a literal here would be a fourth copy of the number'
     # Both images: an API published with a version tag and a portal
     # without one would leave `portalImage.tag` in the same state this
-    # finding was about.
-    assert release.count('steps.meta.outputs.version') >= 1
+    # finding was about. The rule is per build, not per workflow: the
+    # workflow holds the version in two places (the API's and the
+    # portal's) and the portal's was missing, which a count over the
+    # whole file cannot see.
+    builds = _image_builds()
+    assert len(builds) >= 2, (
+        'the release workflow should build the API and the portal images; '
+        f'found {len(builds)} docker build step(s)'
+    )
+    for job_name, run in builds:
+        assert 'steps.meta.outputs.version' in run, (
+            f'the image built in job {job_name!r} is not tagged with the application version, '
+            "so the chart's default tag for it resolves to an image nothing ever pushed"
+        )
 
 
 def test_the_chart_still_refuses_latest():
