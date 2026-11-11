@@ -76,6 +76,33 @@ def _image_builds() -> list[tuple[str, str]]:
     return builds
 
 
+def _jobs_building_images() -> dict[str, dict[str, str]]:
+    """The jobs that build an image, with the script of their `meta` step
+    and of their build steps.
+
+    The `meta` step is the one that decides what the build is told: a step
+    output nobody wrote is an empty string, not a missing value.
+    """
+    workflow = yaml.safe_load((_ROOT / '.github/workflows/release.yml').read_text())
+    jobs: dict[str, dict[str, str]] = {}
+    for job_name, job in workflow['jobs'].items():
+        steps = job.get('steps') or []
+        builds = [s.get('run') or '' for s in steps if 'docker build' in (s.get('run') or '')]
+        if not builds:
+            continue
+        meta = '\n'.join(s.get('run') or '' for s in steps if s.get('id') == 'meta')
+        jobs[job_name] = {'meta': meta, 'builds': builds}
+    return jobs
+
+
+# `echo "version=<something>" >> "$GITHUB_OUTPUT"` — the only way a step
+# output is written.
+_VERSION_OUTPUT = re.compile(r'echo\s+"?version=(?P<value>[^"\n]*)"?\s*>>\s*"\$GITHUB_OUTPUT"')
+
+# A build that refuses an empty version: `if [ -z "${VERSION}" ]; then`.
+_EMPTY_VERSION_GUARD = re.compile(r'if\s+\[\s*-z\s+"\$\{VERSION\}"\s*\]')
+
+
 def test_the_three_versions_agree():
     """The rule. Bump one, bump all three."""
     versions = {
@@ -128,6 +155,57 @@ def test_the_release_publishes_a_tag_the_chart_can_default_to():
             f'the image built in job {job_name!r} is not tagged with the application version, '
             "so the chart's default tag for it resolves to an image nothing ever pushed"
         )
+
+
+def test_every_image_build_gets_its_version_from_its_own_meta_step():
+    """The gap that let the portal break, and the reason the rule above
+    was not enough.
+
+    The rule above asks whether the build script *mentions*
+    `steps.meta.outputs.version`. It cannot see whether the job's `meta`
+    step ever *wrote* it — and a step output nobody wrote is not a
+    missing value, it is an empty string. The portal's build said
+    `-t "${IMAGE}:${{ steps.meta.outputs.version }}"` and its `meta` step
+    wrote only `tag=`, so the image was tagged `igni-portal:` and the
+    build died with `invalid tag "ghcr.io/ignite-ember/igni-portal:"`
+    before anything was pushed.
+
+    So the rule is per job: a job that builds an image tagged with the
+    version must have a `meta` step that writes it.
+    """
+    jobs = _jobs_building_images()
+    assert jobs, 'no job in the release workflow builds an image'
+
+    for job_name, job in jobs.items():
+        assert any('steps.meta.outputs.version' in run for run in job['builds']), (
+            f'job {job_name!r} builds an image but never tags it with the application version'
+        )
+        match = _VERSION_OUTPUT.search(job['meta'])
+        assert match, (
+            f'job {job_name!r} tags its image with steps.meta.outputs.version, but its meta step '
+            'never writes `version=` to $GITHUB_OUTPUT — the output is empty and the build dies '
+            'with "invalid tag"'
+        )
+        assert match.group('value').strip(), (
+            f'job {job_name!r} writes an empty version to $GITHUB_OUTPUT'
+        )
+
+
+def test_a_build_refuses_an_empty_version_instead_of_tagging_nothing():
+    """The second half, because the rule above is about the workflow file
+    and this one is about what the registry receives.
+
+    An empty version is a tag of `igni-portal:` and a build that dies
+    with an invalid reference — which is what the release of 0.7.0 did.
+    It is a clearer failure than a tag that names nothing, and it is
+    cheap: one check, before the build.
+    """
+    for job_name, job in _jobs_building_images().items():
+        for run in job['builds']:
+            assert _EMPTY_VERSION_GUARD.search(run), (
+                f'job {job_name!r} builds an image tagged with the version but does not refuse an '
+                'empty one, so a missing version reaches the registry as a tag of nothing'
+            )
 
 
 def test_the_chart_still_refuses_latest():

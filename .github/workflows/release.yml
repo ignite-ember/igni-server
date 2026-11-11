@@ -205,8 +205,13 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${{ env.REGISTRY }}/igni-api"
+          VERSION="${{ steps.meta.outputs.version }}"
+          if [ -z "${VERSION}" ]; then
+            echo "::error::The release version is empty; the image would be tagged with nothing. The meta step must write it."
+            exit 1
+          fi
           TAGS=(-t "${IMAGE}:${{ steps.meta.outputs.tag }}" -t "${IMAGE}:latest"
-                -t "${IMAGE}:${{ steps.meta.outputs.version }}")
+                -t "${IMAGE}:${VERSION}")
           docker build "${TAGS[@]}" -f containers/be/Dockerfile .
           docker push "${IMAGE}" --all-tags
 
@@ -316,7 +321,15 @@ jobs:
           ref: ${{ needs.resolve.outputs.sha }}
 
       - id: meta
-        run: echo "tag=${{ needs.resolve.outputs.sha }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "tag=${{ needs.resolve.outputs.sha }}" >> "$GITHUB_OUTPUT"
+          # The version, as the backend's `meta` step emits it: the build
+          # below tags the image with `steps.meta.outputs.version`, and a
+          # step output that nobody wrote is an empty string — so without
+          # this line the tag is `igni-portal:` and the build dies with
+          # "invalid tag" before anything is pushed. `resolve` read the
+          # version from pyproject.toml at this commit.
+          echo "version=${{ needs.resolve.outputs.version }}" >> "$GITHUB_OUTPUT"
 
       # Nothing is pushed unsigned. The push below happens before the
       # signature, so without the environment's signing key an image would
@@ -349,6 +362,7 @@ jobs:
 
       - name: Build and push
         run: |
+          set -euo pipefail
           IMAGE="${{ env.REGISTRY }}/igni-portal"
           # The version tag as well, and for the same reason the backend
           # has one: the chart's `portalImage.tag` defaults to its
@@ -358,8 +372,13 @@ jobs:
           # in ImagePullBackOff while the API's pulls fine. The two
           # images are resolved the same way, so they are tagged the same
           # way; the notes name both as `:0.7.0`.
+          VERSION="${{ steps.meta.outputs.version }}"
+          if [ -z "${VERSION}" ]; then
+            echo "::error::The release version is empty; the image would be tagged with nothing. The meta step must write it."
+            exit 1
+          fi
           TAGS=(-t "${IMAGE}:${{ steps.meta.outputs.tag }}" -t "${IMAGE}:latest"
-                -t "${IMAGE}:${{ steps.meta.outputs.version }}")
+                -t "${IMAGE}:${VERSION}")
           docker build "${TAGS[@]}" -f portal/Dockerfile portal/
           docker push "${IMAGE}" --all-tags
 
