@@ -15,6 +15,17 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The portal image is tagged with the release version.** The release
+  workflow's portal build read `steps.meta.outputs.version`, but that job's
+  `meta` step never wrote it — the output was an empty string, and the
+  build stopped with `invalid tag "ghcr.io/ignite-ember/igni-portal:"`
+  before anything was pushed. The backend's `meta` step has always written
+  it; the portal's does not, and the 0.7.0 release run hit exactly that.
+  The version is written now, and both builds refuse an empty one rather
+  than push a tag that names nothing.
+
 ## [0.7.0] - 2026-11-10
 
 The first release of igni server that has ever shipped. It changes an
