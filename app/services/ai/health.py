@@ -36,6 +36,11 @@ rather than each generating their own.
 ``GET {base_url}/models``, which every OpenAI-compatible server answers
 including vLLM. Deliberately not a completion: a real inference request
 costs GPU time, and would report a busy node as slow rather than as busy.
+
+A cloud backend is asked nothing at all: its probe is whether the server
+can get a token for it. That is the part an operator controls — the role,
+the identity, the stored key — and a model listing would call the provider
+for every portal refresh to learn little the first request does not.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.db.redis.keys import key as redis_key
 from app.services.ai import metrics as node_metrics
+from app.services.ai.providers.credentials import CloudCredentials, CredentialUnavailable, shared_credentials
 from app.services.ai.schemas import HealthState, InferenceBackend, NodeHealth, NodeMetrics, ProbedNode
 
 logger = logging.getLogger(__name__)
@@ -76,8 +82,9 @@ _REJECTED_CREDENTIALS = 'The node rejected our credentials'
 class NodeHealthProbe:
     """Asks nodes whether they are answering, and remembers briefly."""
 
-    def __init__(self, *, timeout: float = _PROBE_TIMEOUT_SECONDS) -> None:
+    def __init__(self, *, timeout: float = _PROBE_TIMEOUT_SECONDS, credentials: CloudCredentials | None = None) -> None:
         self._timeout = timeout
+        self._credentials = credentials if credentials is not None else shared_credentials()
         # One client per loop, for the reason `NodeRegistry` documents:
         # Redis clients are loop-bound.
         self._redis_by_loop: dict[int, aioredis.Redis] = {}
@@ -97,11 +104,13 @@ class NodeHealthProbe:
         questions and fail independently: a node can be perfectly
         reachable and publish no metrics, which is not a health problem.
         """
+        # A cloud provider publishes no vLLM gauges.
+        own = [b for b in backends if not b.kind.is_cloud]
         results = await asyncio.gather(
-            *(node_metrics.fetch(base_url=b.base_url, api_key=b.api_key, timeout=self._timeout) for b in backends),
+            *(node_metrics.fetch(base_url=b.base_url, api_key=b.api_key, timeout=self._timeout) for b in own),
             return_exceptions=True,
         )
-        return {backend.id: result for backend, result in zip(backends, results) if isinstance(result, NodeMetrics)}
+        return {backend.id: result for backend, result in zip(own, results) if isinstance(result, NodeMetrics)}
 
     async def check_all(self, backends: list[InferenceBackend]) -> dict[str, NodeHealth]:
         """Probe every backend concurrently, reusing cached answers.
@@ -153,6 +162,8 @@ class NodeHealthProbe:
     # ── Internals ────────────────────────────────────────────────────
 
     async def _probe(self, backend: InferenceBackend) -> NodeHealth:
+        if backend.kind.is_cloud:
+            return await self._cloud_probe(backend)
         health, payload = await self._request(base_url=backend.base_url, api_key=backend.api_key)
         if health.state is not HealthState.HEALTHY:
             return health
@@ -171,6 +182,23 @@ class NodeHealthProbe:
                 }
             )
         return health
+
+    async def _cloud_probe(self, backend: InferenceBackend) -> NodeHealth:
+        """Whether the server can sign for this cloud backend; the provider itself is not called."""
+        if backend.api_key:
+            # A static key (an Azure resource's) is checked by the first request, not here.
+            return NodeHealth(state=HealthState.HEALTHY, detail='Uses a stored key; checked on its first request')
+        started = time.monotonic()
+        try:
+            await self._credentials.bearer(backend_id=backend.id, kind=backend.kind, credential=backend.credential)
+        except CredentialUnavailable:
+            where = 'its stored credential' if backend.credential else "the server's own cloud identity"
+            return NodeHealth(state=HealthState.DEGRADED, detail=f'Could not get a token from {where}')
+        return NodeHealth(
+            state=HealthState.HEALTHY,
+            detail='The server holds a token for this provider',
+            latency_ms=(time.monotonic() - started) * 1000,
+        )
 
     async def _request(self, *, base_url: str, api_key: str | None) -> tuple[NodeHealth, object]:
         """One GET against ``/models``, turned into a health verdict.

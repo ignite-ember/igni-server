@@ -100,6 +100,8 @@ class ChatRequestContext:
                 total_tokens=usage.total_tokens,
                 duration=round(duration, 3),
                 stream=stream,
+                backend_id=self._lease.backend_id,
+                kind=self._lease.kind.value,
             )
         except Exception as exc:  # noqa: BLE001 — usage is not the response
             logger.warning('Failed to log chat usage: %s', exc)

@@ -100,6 +100,8 @@ class TestSwitchingNodes:
                 'total_tokens': 3,
                 'duration': 0.5,
                 'stream': True,
+                'backend_id': 'node-2',
+                'kind': 'openai',
             }
         ]
 

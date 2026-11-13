@@ -260,6 +260,7 @@ class InferenceBackendPool:
                     base_url=backend.base_url,
                     models=list(backend.models),
                     multimodal=backend.multimodal,
+                    kind=backend.kind,
                     # A node in the registry is registered even if it is
                     # also named elsewhere; the source map holds the two
                     # that are not.
@@ -376,6 +377,9 @@ class InferenceBackendPool:
             base_url=backend.base_url,
             model=model or backend.primary_model,
             api_key=backend.api_key,
+            kind=backend.kind,
+            credential=backend.credential,
+            model_ids=dict(backend.model_ids),
         )
 
     async def _flush_sticky_if_config_changed(

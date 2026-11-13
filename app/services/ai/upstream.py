@@ -167,6 +167,32 @@ class UpstreamUnreachable(_TransportFailure):
     """No node answered at all: refused, reset, or unresolvable."""
 
 
+class UpstreamCredentialsUnavailable(UpstreamFailure):
+    """The server could not get a token for a cloud backend, so nothing was sent.
+
+    Another backend may run under a different identity, so it is worth
+    asking one; once retrying is over the caller is told the service is
+    unavailable rather than that a node failed, because the fix is the
+    server's configuration, not the provider.
+    """
+
+    def __init__(self, kind: str):
+        self.kind = kind
+        super().__init__(f'No credentials for the {kind} backend')
+
+    @property
+    def label(self) -> str:
+        return 'credentials'
+
+    @property
+    def answer_status(self) -> int:
+        return 503
+
+    @property
+    def sentence(self) -> str:
+        return 'The server could not obtain credentials for the model provider.'
+
+
 class RetryPolicy(BaseModel):
     """How many nodes one request may try, and how long to pause between them."""
 

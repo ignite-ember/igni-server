@@ -42,7 +42,7 @@ from app.api.base_v1.schema.nodes import (
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.config import settings
 from app.security.portal_auth import get_current_portal_user, require_admin
-from app.services.ai.fleet_schemas import NodeIdTaken, NodeNotAdded, NodeNotServing
+from app.services.ai.fleet_schemas import NodeDefinitionInvalid, NodeIdTaken, NodeNotAdded, NodeNotServing
 from app.services.ai.fleet_status import FleetStatus
 from app.services.ai.health import NodeHealthProbe
 from app.services.ai.node_registry import HEARTBEAT_INTERVAL_SECONDS
@@ -222,6 +222,8 @@ async def edit_node(
         node = await nodes.edit(node_id, body.changes())
     except NodeNotAdded as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except NodeDefinitionInvalid as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return PinnedNodeView.of(node)
 
 

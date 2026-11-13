@@ -1199,6 +1199,16 @@
         "title": "AvailableModels",
         "type": "object"
       },
+      "BackendKind": {
+        "description": "Who serves a backend, which decides its address and its credentials.\n\n`openai` is every backend there was before kinds: the customer's vLLM\nnodes, OpenAI itself, anything OpenAI-compatible, with an optional\nBearer key. It is the default, so a configuration written before kinds\nexisted means what it always meant.",
+        "enum": [
+          "openai",
+          "azure_openai",
+          "vertex_openai"
+        ],
+        "title": "BackendKind",
+        "type": "string"
+      },
       "Body_ack_v1_platform_orgs__org_id__vm_commands__command_id__ack_post": {
         "properties": {
           "started_at": {
@@ -6173,6 +6183,10 @@
             "title": "In Flight",
             "type": "integer"
           },
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind",
+            "default": "openai"
+          },
           "last_seen_seconds_ago": {
             "anyOf": [
               {
@@ -7758,7 +7772,7 @@
         "type": "object"
       },
       "PinnedNodeCreate": {
-        "description": "A GPU node an admin is adding by hand.",
+        "description": "A node an admin is adding by hand: a GPU node, or a cloud model provider.",
         "properties": {
           "api_key": {
             "anyOf": [
@@ -7769,13 +7783,37 @@
                 "type": "null"
               }
             ],
-            "description": "Only if the node is behind an auth proxy",
+            "description": "Only if the node is behind an auth proxy; an Azure resource's key",
             "title": "Api Key"
           },
           "base_url": {
-            "description": "Where the OpenAI-compatible API is served, e.g. http://gpu-3:8000/v1",
-            "title": "Base Url",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the API is served, e.g. http://gpu-3:8000/v1, or an Azure resource's .../openai/v1. Built from project and region for vertex_openai.",
+            "title": "Base Url"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A cloud node's stored credential as JSON: a Google service-account key, or an Azure app's tenant_id, client_id and client_secret. Omit to use the server's own cloud identity.",
+            "title": "Credential"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind",
+            "default": "openai",
+            "description": "openai (a GPU node or any OpenAI-compatible API), azure_openai, or vertex_openai"
           },
           "max_concurrent": {
             "default": 64,
@@ -7783,6 +7821,14 @@
             "exclusiveMinimum": 0.0,
             "title": "Max Concurrent",
             "type": "integer"
+          },
+          "model_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The provider's own name for a model, e.g. an Azure deployment",
+            "title": "Model Ids",
+            "type": "object"
           },
           "models": {
             "description": "Model ids to route here, base plus any LoRA adapters",
@@ -7805,11 +7851,34 @@
             "pattern": "^[A-Za-z0-9._-]+$",
             "title": "Node Id",
             "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "vertex_openai: the Google Cloud project",
+            "title": "Project"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "vertex_openai: where the model runs, e.g. europe-west4",
+            "title": "Region"
           }
         },
         "required": [
           "node_id",
-          "base_url",
           "models"
         ],
         "title": "PinnedNodeCreate",
@@ -7840,6 +7909,17 @@
             ],
             "title": "Base Url"
           },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -7862,6 +7942,20 @@
               }
             ],
             "title": "Max Concurrent"
+          },
+          "model_ids": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Ids"
           },
           "models": {
             "anyOf": [
@@ -7888,6 +7982,28 @@
               }
             ],
             "title": "Multimodal"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
           }
         },
         "title": "PinnedNodeUpdate",
@@ -7908,9 +8024,25 @@
             "title": "Has Api Key",
             "type": "boolean"
           },
+          "has_credential": {
+            "default": false,
+            "title": "Has Credential",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind",
+            "default": "openai"
+          },
           "max_concurrent": {
             "title": "Max Concurrent",
             "type": "integer"
+          },
+          "model_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Model Ids",
+            "type": "object"
           },
           "models": {
             "items": {
@@ -7926,6 +8058,28 @@
           "node_id": {
             "title": "Node Id",
             "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
           }
         },
         "required": [

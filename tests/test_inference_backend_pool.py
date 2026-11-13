@@ -20,6 +20,7 @@ import pytest
 
 from app.services.ai.backend_pool import InferenceBackendPool
 from app.services.ai.backend_provider import BackendConfigError, InferenceBackendProvider
+from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.schemas import (
     InferenceBackend,
     ModelNotAvailableError,
@@ -367,6 +368,33 @@ class TestRetryPath:
         pinned_before = await redis.get(pool._sticky_key(user_id='alice', model=None))
         await pool.acquire('alice', exclude_backend_id=first.backend_id)
         assert await redis.get(pool._sticky_key(user_id='alice', model=None)) == pinned_before
+
+
+class TestACloudBackendsLease:
+    async def test_it_carries_what_signing_the_call_needs(self, pool_and_redis):
+        """The lease is all the chat client sees of the backend, so the kind,
+        the stored credential and the provider's model names travel on it."""
+        credential = json.dumps({'type': 'service_account', 'private_key': 'k'})
+        vertex = InferenceBackend(
+            id='vertex-eu',
+            kind='vertex_openai',
+            project='p1',
+            region='europe-west4',
+            models=['gemini-pro'],
+            model_ids={'gemini-pro': 'google/gemini-2.5-pro'},
+            credential=credential,
+        )
+        pool, _ = pool_and_redis([vertex])
+
+        lease = await pool.acquire('alice', model='gemini-pro')
+
+        assert (lease.kind, lease.credential, lease.model_ids, lease.base_url) == (
+            BackendKind.VERTEX_OPENAI,
+            credential,
+            {'gemini-pro': 'google/gemini-2.5-pro'},
+            vertex.base_url,
+        )
+        assert lease.upstream_model(lease.model) == 'google/gemini-2.5-pro'
 
 
 class TestLeaseContextManager:

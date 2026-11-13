@@ -106,9 +106,9 @@ class TestNothingGoogleSpecificIsRequired:
             timeout=180,
         )
 
-        assert (
-            result.returncode == 0
-        ), f'the app does not import in an environment with no Google Cloud variables:\n{result.stderr[-2000:]}'
+        assert result.returncode == 0, (
+            f'the app does not import in an environment with no Google Cloud variables:\n{result.stderr[-2000:]}'
+        )
         assert 'imported FastAPI' in result.stdout, result.stdout
 
     def test_there_is_no_google_cloud_sdk_in_the_dependency_set(self):
@@ -127,7 +127,13 @@ class TestNothingGoogleSpecificIsRequired:
         # collector's error replies with. It names no Google service and
         # reaches none. Allowed by name, so anything else beginning `google`
         # still fails here.
-        not_a_cloud_sdk = {'name = "googleapis-common-protos"'}
+        #
+        # `google-auth` is credentials only — no storage, no service client.
+        # It signs requests to Vertex AI for a `vertex_openai` inference
+        # backend (app/services/ai/providers/credentials.py), is imported
+        # only when an operator configures one, and nothing requires it: a
+        # deployment with no such backend never loads it.
+        not_a_cloud_sdk = {'name = "googleapis-common-protos"', 'name = "google-auth"'}
         google = [
             line for line in lock.splitlines() if line.startswith('name = "google') and line not in not_a_cloud_sdk
         ]
@@ -287,6 +293,6 @@ class TestNoTestLeavesTheEnvironmentBehind:
 
         before = os.environ.get('APP_ENV')
         assert the_app() is not None
-        assert (
-            os.environ.get('APP_ENV') == before
-        ), f'the_app() left APP_ENV as {os.environ.get("APP_ENV")!r}, was {before!r}'
+        assert os.environ.get('APP_ENV') == before, (
+            f'the_app() left APP_ENV as {os.environ.get("APP_ENV")!r}, was {before!r}'
+        )

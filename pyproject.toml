@@ -78,6 +78,15 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.66b2,<0.67",
     "opentelemetry-instrumentation-httpx>=0.66b2,<0.67",
     "pyjwt[crypto]>=2.10",
+    # The cloud model providers' own credentials (app/services/ai/providers):
+    # a GCP service account or Workload Identity for Vertex AI, an Azure
+    # Managed Identity or client secret for Azure OpenAI. AWS needs nothing
+    # new — boto3 above signs for Bedrock. Imported only when a backend of
+    # that kind is configured, so a vLLM-only or air-gapped deployment never
+    # loads them, and neither sends anything until an operator points a
+    # backend at that cloud.
+    "google-auth>=2.40",
+    "azure-identity>=1.23",
 ]
 
 [dependency-groups]

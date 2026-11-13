@@ -87,6 +87,7 @@ from app.services.secrets import decrypt_secret, encrypt_secret, previous_keys, 
 SHARED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ('signing_keys', 'kid', 'encrypted_private_key'),
     ('inference_nodes', 'id', 'api_key'),
+    ('inference_nodes', 'id', 'credential'),
 )
 
 #: Ciphertext columns in every organisation's own database.

@@ -10,11 +10,12 @@ one at all.
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, ValidationError
 
 from app.db.sql.models.inference_node import InferenceNode
 from app.db.sql.schemas.inference_node import NodeChanges
 from app.services.ai.fleet_schemas import FleetSnapshot
+from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.schemas import BackendStatus, InferenceBackend
 
 
@@ -112,7 +113,7 @@ class NodeHealthView(BaseModel):
 
 
 class PinnedNodeCreate(BaseModel):
-    """A GPU node an admin is adding by hand."""
+    """A node an admin is adding by hand: a GPU node, or a cloud model provider."""
 
     node_id: str = Field(
         min_length=1,
@@ -123,22 +124,79 @@ class PinnedNodeCreate(BaseModel):
         pattern=r'^[A-Za-z0-9._-]+$',
         description='Stable identifier, unique across every source',
     )
-    base_url: str = Field(description='Where the OpenAI-compatible API is served, e.g. http://gpu-3:8000/v1')
+    kind: BackendKind = Field(
+        default=BackendKind.OPENAI,
+        description='openai (a GPU node or any OpenAI-compatible API), azure_openai, or vertex_openai',
+    )
+    base_url: str | None = Field(
+        default=None,
+        description=(
+            "Where the API is served, e.g. http://gpu-3:8000/v1, or an Azure resource's .../openai/v1. "
+            'Built from project and region for vertex_openai.'
+        ),
+    )
     # Usually discovered rather than typed: POST /inference/nodes/discover
     # asks the node what it serves, which is the only way to get LoRA
     # adapter names right.
     models: list[str] = Field(min_length=1, description='Model ids to route here, base plus any LoRA adapters')
-    api_key: str | None = Field(default=None, description='Only if the node is behind an auth proxy')
+    api_key: str | None = Field(
+        default=None, description="Only if the node is behind an auth proxy; an Azure resource's key"
+    )
     max_concurrent: int = Field(default=64, gt=0, description="Roughly the vLLM instance's --max-num-seqs")
     multimodal: bool = False
+    region: str | None = Field(default=None, description='vertex_openai: where the model runs, e.g. europe-west4')
+    project: str | None = Field(default=None, description='vertex_openai: the Google Cloud project')
+    credential: str | None = Field(
+        default=None,
+        description=(
+            "A cloud node's stored credential as JSON: a Google service-account key, or an Azure app's "
+            "tenant_id, client_id and client_secret. Omit to use the server's own cloud identity."
+        ),
+    )
+    model_ids: dict[str, str] = Field(
+        default_factory=dict, description="The provider's own name for a model, e.g. an Azure deployment"
+    )
 
     @model_validator(mode='after')
-    def _base_url_is_absolute(self) -> 'PinnedNodeCreate':
+    def _is_a_backend(self) -> 'PinnedNodeCreate':
         """A 422 at the door rather than a node stored happily and
-        failing on every request routed to it."""
-        if not self.base_url.startswith(('http://', 'https://')):
-            raise ValueError('base_url must start with http:// or https://')
+        failing on every request routed to it. The rules are the
+        backend's own, so the portal and the config file cannot disagree."""
+        self.base_url = self.backend().base_url
         return self
+
+    def backend(self) -> InferenceBackend:
+        """The node as the router will see it. Raises `ValueError` naming what does not fit."""
+        return backend_or_value_error(
+            {
+                'id': self.node_id,
+                'kind': self.kind,
+                'base_url': self.base_url,
+                'models': self.models,
+                'api_key': self.api_key or None,
+                'max_concurrent': self.max_concurrent,
+                'multimodal': self.multimodal,
+                'region': self.region,
+                'project': self.project,
+                'credential': self.credential or None,
+                'model_ids': self.model_ids,
+            }
+        )
+
+
+def backend_or_value_error(fields: dict) -> InferenceBackend:
+    """An `InferenceBackend`, with its validation failure as one plain `ValueError`.
+
+    A `ValidationError` raised inside another model's validator is not
+    reported as the field error it is; its messages are.
+    """
+    if not fields.get('base_url'):
+        fields = {key: value for key, value in fields.items() if key != 'base_url'}
+    try:
+        return InferenceBackend.model_validate(fields)
+    except ValidationError as exc:
+        messages = [error['msg'].removeprefix('Value error, ') for error in exc.errors()]
+        raise ValueError('; '.join(messages)) from None
 
 
 class PinnedNodeUpdate(BaseModel):
@@ -153,6 +211,12 @@ class PinnedNodeUpdate(BaseModel):
     max_concurrent: int | None = Field(default=None, gt=0)
     multimodal: bool | None = None
     enabled: bool | None = None
+    region: str | None = None
+    project: str | None = None
+    # As ``api_key``: absent leaves the stored credential alone, an empty
+    # string clears it (back to the server's own cloud identity).
+    credential: str | None = None
+    model_ids: dict[str, str] | None = None
 
     @model_validator(mode='after')
     def _base_url_is_absolute(self) -> 'PinnedNodeUpdate':
@@ -189,6 +253,12 @@ class PinnedNodeView(BaseModel):
     multimodal: bool
     enabled: bool
     has_api_key: bool
+    kind: BackendKind = BackendKind.OPENAI
+    region: str | None = None
+    project: str | None = None
+    model_ids: dict[str, str] = Field(default_factory=dict)
+    # As ``has_api_key``: whether one is stored, never what it is.
+    has_credential: bool = False
 
     @classmethod
     def of(cls, node: InferenceNode) -> 'PinnedNodeView':
@@ -201,6 +271,11 @@ class PinnedNodeView(BaseModel):
             multimodal=bool(node.multimodal),
             enabled=bool(node.enabled),
             has_api_key=bool(node.api_key),
+            kind=BackendKind(node.kind or 'openai'),
+            region=node.region,
+            project=node.project,
+            model_ids=dict(node.model_ids or {}),
+            has_credential=bool(node.credential),
         )
 
 
@@ -260,6 +335,7 @@ class NodeStatusView(BaseModel):
     models: list[str]
     multimodal: bool
     source: str
+    kind: BackendKind = BackendKind.OPENAI
     in_flight: int
     max_concurrent: int
     utilization: float

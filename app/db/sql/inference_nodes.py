@@ -58,6 +58,11 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
         api_key: str | None = None,
         max_concurrent: int = 64,
         multimodal: bool = False,
+        kind: str = 'openai',
+        region: str | None = None,
+        project: str | None = None,
+        credential: str | None = None,
+        model_ids: dict[str, str] | None = None,
     ) -> InferenceNode:
         async with self.session_scope() as session:
             node = InferenceNode(
@@ -69,6 +74,11 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 api_key=encrypt_secret(api_key) if api_key else None,
                 max_concurrent=max_concurrent,
                 multimodal=multimodal,
+                kind=kind,
+                region=region,
+                project=project,
+                credential=encrypt_secret(credential) if credential else None,
+                model_ids=dict(model_ids or {}),
                 created_by_user_id=created_by_user_id,
             )
             session.add(node)
@@ -123,6 +133,14 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 # so treating absent as "clear" would wipe it on every
                 # edit of anything else.
                 node.api_key = None if changes.clears_api_key() else encrypt_secret(changes.api_key)
+            if changes.region is not None:
+                node.region = changes.region or None
+            if changes.project is not None:
+                node.project = changes.project or None
+            if changes.credential is not None:
+                node.credential = None if changes.clears_credential() else encrypt_secret(changes.credential)
+            if changes.model_ids is not None:
+                node.model_ids = dict(changes.model_ids)
 
             node.updated_at = datetime.now(timezone.utc)
             await session.flush()
@@ -174,4 +192,9 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             api_key=decrypt_secret(str(node.api_key)) if node.api_key else None,
             max_concurrent=int(node.max_concurrent),
             multimodal=bool(node.multimodal),
+            kind=str(node.kind or 'openai'),
+            region=node.region,
+            project=node.project,
+            credential=decrypt_secret(str(node.credential)) if node.credential else None,
+            model_ids=dict(node.model_ids or {}),
         )

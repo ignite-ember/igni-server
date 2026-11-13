@@ -2,6 +2,11 @@
 
 Every transport error is an `UpstreamFailure` past this boundary, so the
 callers retry on one exception family and never see `httpx`.
+
+Where the call goes and how it is signed is the backend's kind's
+business (`app/services/ai/providers/calls.py`). A cloud backend whose
+token the provider refuses gets one renewed token and one more try, on
+the same backend, before the refusal counts.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.services.ai.chat.schemas import UpstreamChatRequest, UpstreamCompletion, UpstreamLine
+from app.services.ai.providers.calls import forget_token, prepare, renews
+from app.services.ai.providers.credentials import CloudCredentials, shared_credentials
 from app.services.ai.request_shape import describe as describe_chat_request
 from app.services.ai.schemas import BackendLease
 from app.services.ai.sse_keepalive import lines_with_keepalive
@@ -38,8 +45,10 @@ class UpstreamChatClient:
         client_factory: ClientFactory = httpx.AsyncClient,
         complete_timeout: float | None = None,
         stream_timeout: httpx.Timeout = STREAM_TIMEOUT,
+        credentials: CloudCredentials | None = None,
     ) -> None:
         self._client_factory = client_factory
+        self._credentials = credentials if credentials is not None else shared_credentials()
         #: None reads `settings.ai.upstream_timeout` on every call, so a changed setting applies to the next one.
         self._complete_timeout = complete_timeout
         self._stream_timeout = stream_timeout
@@ -55,11 +64,15 @@ class UpstreamChatClient:
         Raises `UpstreamError` for a non-200, `UpstreamUnreadable` for a
         200 that is not a completion, and a transport failure otherwise.
         """
-        try:
-            async with self._client_factory(timeout=self.complete_timeout) as client:
-                resp = await client.post(lease.completions_url, headers=lease.auth_headers(), json=request.wire())
-        except httpx.RequestError as exc:
-            raise UpstreamFailure.from_transport(exc) from exc
+        for attempt in (1, 2):
+            call = await prepare(lease, request.wire(), self._credentials)
+            try:
+                async with self._client_factory(timeout=self.complete_timeout) as client:
+                    resp = await client.post(call.url, headers=call.headers, json=call.body)
+            except httpx.RequestError as exc:
+                raise UpstreamFailure.from_transport(exc) from exc
+            if not self._renew_token(lease, resp.status_code, attempt):
+                break
 
         if resp.status_code != 200:
             logger.error('Upstream AI error %s: %s', resp.status_code, resp.text[:500])
@@ -79,21 +92,32 @@ class UpstreamChatClient:
         """
         wire = request.wire()
         try:
-            async with self._client_factory(timeout=self._stream_timeout) as client:
-                async with client.stream(
-                    'POST', lease.completions_url, headers=lease.auth_headers(), json=wire
-                ) as resp:
-                    if resp.status_code != 200:
-                        error_body = await resp.aread()
-                        logger.error('Upstream AI stream error %s: %s', resp.status_code, error_body[:500])
-                        if resp.status_code == 400:
-                            # The shape, never the prompt: it answers what a 400 is about.
-                            logger.error('Upstream 400 — request %s', describe_chat_request(wire))
-                        raise UpstreamError(resp.status_code, error_body)
+            for attempt in (1, 2):
+                call = await prepare(lease, wire, self._credentials)
+                async with self._client_factory(timeout=self._stream_timeout) as client:
+                    async with client.stream('POST', call.url, headers=call.headers, json=call.body) as resp:
+                        if self._renew_token(lease, resp.status_code, attempt):
+                            continue
+                        if resp.status_code != 200:
+                            error_body = await resp.aread()
+                            logger.error('Upstream AI stream error %s: %s', resp.status_code, error_body[:500])
+                            if resp.status_code == 400:
+                                # The shape, never the prompt: it answers what a 400 is about.
+                                logger.error('Upstream 400 — request %s', describe_chat_request(wire))
+                            raise UpstreamError(resp.status_code, error_body)
 
-                    async for line in lines_with_keepalive(resp):
-                        upstream_line = UpstreamLine.from_sse(line)
-                        if upstream_line is not None:
-                            yield upstream_line
+                        async for line in lines_with_keepalive(resp):
+                            upstream_line = UpstreamLine.from_sse(line)
+                            if upstream_line is not None:
+                                yield upstream_line
+                        return
         except httpx.RequestError as exc:
             raise UpstreamFailure.from_transport(exc) from exc
+
+    def _renew_token(self, lease: BackendLease, status: int, attempt: int) -> bool:
+        """Whether *status* was a refused token worth renewing once; drops it if so."""
+        if attempt == 1 and status in (401, 403) and renews(lease):
+            logger.info('Backend %s refused its token (%s); renewing it once', lease.backend_id, status)
+            forget_token(lease, self._credentials)
+            return True
+        return False

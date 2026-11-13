@@ -78,6 +78,18 @@ class InferenceNode(Base):
     #: Never returned by the API. `info['encrypted']` puts it in
     #: `tools/rotate_secret_key.py`'s reach.
     api_key: Mapped[str | None] = Column(Text, nullable=True, info={'encrypted': True})
+    #: Who serves the node (``BackendKind``): ``openai`` for the customer's
+    #: own and anything OpenAI-compatible, or a cloud's kind.
+    kind: Mapped[str] = Column(Text, nullable=False, server_default=text("'openai'"))
+    #: Vertex AI only: where the model runs.
+    region: Mapped[str | None] = Column(Text, nullable=True)
+    project: Mapped[str | None] = Column(Text, nullable=True)
+    #: A cloud node's stored credential (a service-account key, a client
+    #: secret), Fernet-encrypted like ``api_key`` and never returned.
+    #: Null means the server's own cloud identity.
+    credential: Mapped[str | None] = Column(Text, nullable=True, info={'encrypted': True})
+    #: The provider's own name for each model the node serves.
+    model_ids: Mapped[Any] = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     max_concurrent: Mapped[int] = Column(Integer, nullable=False, server_default=text('64'))
     multimodal: Mapped[bool] = Column(Boolean, nullable=False, server_default=text('false'))
 

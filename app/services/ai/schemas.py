@@ -16,11 +16,13 @@ acquire must be paired with a release.
 """
 
 from enum import StrEnum
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.services.ai.node_drain import NodeDrain
+from app.services.ai.providers.kinds import BackendKind, Wire
 
 # How long a lease may be held before the pool assumes its holder died.
 # Generous, because a large summarisation request against a loaded node
@@ -45,7 +47,32 @@ class InferenceBackend(BaseModel):
     """
 
     id: str
+
+    # Who serves this backend. ``openai`` — the default, and every backend
+    # there was before kinds — is an OpenAI-compatible URL with an optional
+    # Bearer key. The cloud kinds are signed with the cloud's own
+    # credentials; see ``app/services/ai/providers``.
+    kind: BackendKind = BackendKind.OPENAI
+
+    # Given for every kind but ``vertex_openai``, whose address is built
+    # from ``project`` and ``region`` (see ``_vertex_has_an_address``).
     base_url: str
+
+    # Vertex AI only: where the model runs, and in which project.
+    region: str | None = None
+    project: str | None = None
+
+    # A cloud kind's stored credential, as JSON — a GCP service-account
+    # key, or an Azure app's ``tenant_id``/``client_id``/``client_secret``.
+    # Absent means the server's own identity (Workload Identity, Managed
+    # Identity): the cloud's default chain, with nothing kept here.
+    credential: str | None = Field(default=None, repr=False)
+
+    # The name a caller asks for, mapped to the name the provider knows:
+    # an Azure deployment, ``google/gemini-2.5-pro`` on Vertex. A model
+    # absent here is sent as asked for. Callers, usage and stickiness only
+    # ever see the names in ``models``.
+    model_ids: dict[str, str] = Field(default_factory=dict)
 
     # Written as ``models: [...]`` or, for the common single-model node,
     # ``model: "..."``. Both end up here; see the validator below.
@@ -97,11 +124,83 @@ class InferenceBackend(BaseModel):
         """
         return model is None or model in self.models
 
+    @property
+    def wire(self) -> Wire:
+        """The API this backend speaks, and so the endpoint its models are served on."""
+        return self.kind.wire
+
+    @model_validator(mode='before')
+    @classmethod
+    def _vertex_has_an_address(cls, data):
+        """Give a Vertex backend the address its project and region make.
+
+        Vertex AI's OpenAI-compatible endpoint is the same path in every
+        project, so an operator names the project and the region rather
+        than pasting a URL. ``global`` has no regional prefix. A base URL
+        given anyway wins: a private endpoint is still Vertex.
+        """
+        if isinstance(data, dict) and data.get('kind') == BackendKind.VERTEX_OPENAI and not data.get('base_url'):
+            project, region = data.get('project'), data.get('region')
+            if not (project and region):
+                where = f'Backend {data.get("id")!r} (vertex_openai)'
+                raise ValueError(f'{where}: a Vertex backend needs its project and region')
+            host = (
+                'https://aiplatform.googleapis.com'
+                if region == 'global'
+                else f'https://{region}-aiplatform.googleapis.com'
+            )
+            data = {**data, 'base_url': f'{host}/v1/projects/{project}/locations/{region}/endpoints/openapi'}
+        return data
+
     @model_validator(mode='after')
     def _base_url_is_absolute(self) -> 'InferenceBackend':
         if not self.base_url.startswith(('http://', 'https://')):
             raise ValueError(f'Backend {self.id!r}: base_url must start with http:// or https://')
         return self
+
+    @model_validator(mode='after')
+    def _fields_fit_the_kind(self) -> 'InferenceBackend':
+        """Refuse a field the kind would silently ignore.
+
+        A Vertex backend given an ``api_key`` would send Google's token and
+        never the key, and an operator reading the configuration would
+        believe the key was in use. Saying so at load time is cheaper than
+        that afternoon.
+        """
+        where = f'Backend {self.id!r} ({self.kind.value})'
+        vertex = self.kind is BackendKind.VERTEX_OPENAI
+        if vertex and not (self.project and self.region):
+            raise ValueError(f'{where}: a Vertex backend needs its project and region')
+        if not vertex and (self.project or self.region):
+            raise ValueError(f'{where}: project and region are for a Vertex backend only')
+        if vertex and self.api_key:
+            raise ValueError(f'{where}: Vertex is signed with Google credentials, not an api_key')
+        if not self.kind.is_cloud and self.credential:
+            raise ValueError(f'{where}: a stored credential is for a cloud backend; give an api_key instead')
+        if self.kind is BackendKind.AZURE_OPENAI and self.api_key and self.credential:
+            raise ValueError(f'{where}: give the resource key or a client secret, not both')
+        if self.credential:
+            _check_credential(where, self.kind, self.credential)
+        unknown = sorted(set(self.model_ids) - set(self.models))
+        if unknown:
+            raise ValueError(f'{where}: model_ids names models it does not serve: {", ".join(unknown)}')
+        return self
+
+
+def _check_credential(where: str, kind: BackendKind, credential: str) -> None:
+    """A stored credential is the JSON its cloud's SDK takes. Never echoes it."""
+    try:
+        stored = json.loads(credential)
+    except ValueError:
+        raise ValueError(f'{where}: the stored credential is not JSON') from None
+    if not isinstance(stored, dict):
+        raise ValueError(f'{where}: the stored credential is not a JSON object')
+    if kind is BackendKind.VERTEX_OPENAI and stored.get('type') != 'service_account':
+        raise ValueError(f'{where}: the stored credential is not a Google service-account key')
+    if kind is BackendKind.AZURE_OPENAI:
+        missing = [k for k in ('tenant_id', 'client_id', 'client_secret') if not stored.get(k)]
+        if missing:
+            raise ValueError(f'{where}: the stored credential lacks {", ".join(missing)}')
 
 
 class RegisteredNode(BaseModel):
@@ -231,6 +330,7 @@ class BackendStatus(BaseModel):
     models: list[str]
     multimodal: bool
     source: BackendSource
+    kind: BackendKind = BackendKind.OPENAI
     in_flight: int
     max_concurrent: int
     health: NodeHealth
@@ -269,6 +369,13 @@ class BackendLease(BaseModel):
     base_url: str
     model: str
     api_key: str | None = None
+    kind: BackendKind = BackendKind.OPENAI
+    credential: str | None = Field(default=None, repr=False)
+    model_ids: dict[str, str] = Field(default_factory=dict)
+
+    def upstream_model(self, model: str) -> str:
+        """The name the provider knows *model* by."""
+        return self.model_ids.get(model, model)
 
     @property
     def completions_url(self) -> str:

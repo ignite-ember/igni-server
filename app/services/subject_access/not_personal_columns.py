@@ -100,6 +100,10 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'inference_nodes.multimodal',
         'inference_nodes.enabled',
         'inference_nodes.updated_at',
+        'inference_nodes.kind',
+        'inference_nodes.region',
+        'inference_nodes.project',
+        'inference_nodes.model_ids',
         'organizations.updated_at',
     }
     | {
@@ -109,6 +113,9 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         # person's, and we are not giving it to you", which would be the
         # wrong thing to tell them about a machine credential.
         'inference_nodes.api_key',
+        # The same for a cloud model provider: a service account's key or
+        # an app's client secret, the server's and not a person's.
+        'inference_nodes.credential',
     }
     | {
         # The cloud's VMs: which profile a group or app has, what a
@@ -141,6 +148,9 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'producer_feed.owner_app_id',
         'producer_feed.incarnation',
         'chat_usage.app_id',
+        # Which backend served a turn, and its kind: the machine, not the person.
+        'chat_usage.backend_id',
+        'chat_usage.kind',
         'producer_feed.erase_after_days',
         'legal_holds.org_id',
         'app_legal_holds.org_id',
