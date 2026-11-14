@@ -190,15 +190,19 @@ RECIPIENTS: tuple[Recipient, ...] = (
         'R-A',
         'The model endpoint',
         "**Prompts — the developer's source code and their words.** This is the one that would change a DPIA.",
-        '`InferenceBackend.base_url`, which validates only that the URL is absolute. The product '
-        "is built for the customer's own vLLM nodes and the whole inference stack is about GPUs "
-        'they run.',
+        '`InferenceBackend.base_url`, which validates only that the URL is absolute, and its '
+        '`kind`: a GPU node or OpenAI-compatible API (`openai`), or a cloud — Azure OpenAI, '
+        'Vertex AI, AWS Bedrock, Anthropic, Microsoft Foundry — signed by igni server with the '
+        "cloud's own identity or a stored credential (DEC-16). The product is built for the "
+        "customer's own vLLM nodes; the cloud kinds exist for customers who choose a cloud.",
         'Nothing. There is no default endpoint; an unconfigured deployment serves a '
         '`NoModelConfigured` placeholder rather than calling anywhere.',
-        '**A customer who points this at a third-party API acquires a processor** and needs an '
-        'Article 28 agreement, a recipient entry in their own Article 30 record, and probably a '
-        'transfer assessment. A customer running their own nodes acquires nothing. Same '
-        'software, two different compliance positions, decided by one configuration value.',
+        '**A customer who points this at a third-party API or a cloud kind acquires a processor** '
+        "and needs an Article 28 agreement (the cloud's own DPA covers Bedrock, Vertex AI and "
+        'Azure), a recipient entry in their own Article 30 record, and probably a transfer '
+        "assessment. A cloud backend's `region` is where the prompt is processed: pin it to keep "
+        'data in the EU. A customer running their own nodes acquires nothing. Same software, two '
+        'different compliance positions, decided by one configuration value.',
     ),
     Recipient(
         'R-B',

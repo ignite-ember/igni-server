@@ -181,7 +181,20 @@ def token_lifetime_was_revisited() -> bool:
     return 'timedelta(days=30)' not in source
 
 
+def cloud_providers_are_proxied_natively() -> bool:
+    """DEC-16. Answered when igni server serves both APIs natively and signs
+    for the clouds itself: the Anthropic endpoint exists, Bedrock is a
+    backend kind with its role-based methods, and nothing translates
+    between the two APIs."""
+    ai = _ROOT / 'app/services/ai'
+    auth = (ai / 'providers/auth.py').read_text()
+    messages = _ROOT / 'app/api/base_v1/endpoints/client/messages.py'
+    translating = any('translat' in py.name for py in ai.rglob('*.py'))
+    return messages.exists() and 'BackendKind.BEDROCK' in auth and 'ASSUME_ROLE' in auth and not translating
+
+
 RESOLVERS = {
+    'cloud_providers_are_proxied_natively': cloud_providers_are_proxied_natively,
     'revocation_is_built': revocation_is_built,
     'updater_endpoint_is_configurable': updater_endpoint_is_configurable,
     'old_landing_route_is_gone': old_landing_route_is_gone,
@@ -377,6 +390,47 @@ DECISIONS: tuple[Decision, ...] = (
         unverifiable='A decision to keep thirty days deliberately looks identical in the code to '
         'never having asked. This is the one entry whose `answered` state a check cannot '
         'establish, and saying so is better than a resolver that lies.',
+    ),
+    Decision(
+        'DEC-16',
+        'Where may inference go, and who holds the cloud credentials?',
+        ('§100',),
+        'Customers on AWS, Google Cloud and Azure want Claude and their cloud\'s own models '
+        'through the identity they already run under — a Bedrock role, Workload Identity, a '
+        'managed identity. Without an answer each igni client signs for the cloud itself, so '
+        'every laptop and every Fleet VM holds cloud credentials, and a Fleet VM cannot reach the '
+        'host\'s instance role at all.',
+        (
+            (
+                'Each client signs for the cloud',
+                'Native providers in igni-core. Puts cloud credentials on every '
+                'laptop and VM, and the VM cannot use the node\'s role.',
+            ),
+            (
+                'A proxy the customer runs',
+                'LiteLLM or a gateway in their account. Works today; one more thing to '
+                'operate, and usage and access control live outside igni.',
+            ),
+            (
+                'igni server is the proxy, natively',
+                'The server signs for each cloud with its own identity (or a stored '
+                'credential); clients keep `cloud_token`. Each model is served on its own API — '
+                '`/v1/messages` for Claude, `/v1/chat/completions` for the rest — so nothing is lost '
+                'in translation.',
+            ),
+            (
+                'igni server, translating between the APIs',
+                'Any client on any model; prompt caching, thinking '
+                'and tool details lost or approximated in conversion, at twice the surface.',
+            ),
+        ),
+        'igni server is the proxy, natively, with the cloud\'s ambient identity by default.',
+        'cloud_providers_are_proxied_natively',
+        decided='igni server is the proxy, natively; no translation between the two APIs. Credentials '
+        'are the cloud\'s ambient chain by default (an IAM role, Workload Identity, a managed '
+        'identity), a role or service account it assumes, or a stored credential encrypted like a '
+        'node key — each a named method set in the portal. A cloud backend makes that cloud a '
+        'processor (R-A in SUPPLIERS.md); its region is the data-residency control.',
     ),
 )
 

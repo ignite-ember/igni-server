@@ -80,13 +80,42 @@ so a node that is reclaimed or panics leaves rotation on its own rather
 than staying in the list and failing every request routed to it. See
 [gpu-clusters.md](gpu-clusters.md).
 
+**Cloud model providers (DEC-16).** A backend can instead be a cloud's
+model service, and igni server signs for it — clients keep their igni
+token and never hold cloud credentials. Each kind speaks one API:
+`/v1/chat/completions` for `openai`, `azure_openai` and `vertex_openai`;
+`/v1/messages` (Anthropic's API) for `anthropic`, `bedrock`,
+`vertex_anthropic` and `azure_anthropic`. Add one in the portal under
+Inference, or in the static backend list:
+
+```json
+{"id": "bedrock-eu", "kind": "bedrock", "region": "eu-central-1",
+ "models": ["claude-opus-5-5"],
+ "model_ids": {"claude-opus-5-5": "eu.anthropic.claude-opus-5-5-v1:0"},
+ "auth": "assume_role",
+ "auth_settings": {"role_arn": "arn:aws:iam::123456789012:role/igni-bedrock"}}
+```
+
+| Kind | Auth methods | The identity needs |
+|---|---|---|
+| `bedrock` | `ambient` (the server's IAM role), `assume_role` (`role_arn`, optional `external_id`), `access_keys` | `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream`; for `assume_role`, `sts:AssumeRole` on the role and a trust policy naming the server |
+| `vertex_openai`, `vertex_anthropic` | `ambient` (Workload Identity), `impersonate` (`service_account`), `service_account_key` | `roles/aiplatform.user`; for `impersonate`, Service Account Token Creator on the account |
+| `azure_openai`, `azure_anthropic` | `ambient`, `managed_identity` (`client_id`), `client_secret` (`tenant_id`, `client_id`), `api_key` | Cognitive Services OpenAI User (or the Foundry equivalent) on the resource |
+| `anthropic` | `api_key` | — |
+
+A cloud backend makes that cloud a processor of prompts: see R-A in
+[SUPPLIERS.md](SUPPLIERS.md). `tools/smoke_provider.py` sends one real
+request through a configured backend, to prove its identity and model
+before users rely on it.
+
 ## 2. Object storage — changesets
 
 **Not this repo's.** igni server touches no object storage: changesets
 belong to CodeIndex (igni__code-index), and so does the work of making
-their storage self-hostable. There is no cloud SDK in this repo's
-dependency set, and a test asserts that a deployment with no Google
-Cloud in its environment starts.
+their storage self-hostable. No cloud SDK here is for storage: boto3
+sends SES email, and boto3, google-auth and azure-identity sign for a
+cloud model backend (§1) and load only when one is configured. A test
+asserts that a deployment with no Google Cloud in its environment starts.
 
 ## 3. Secrets
 
