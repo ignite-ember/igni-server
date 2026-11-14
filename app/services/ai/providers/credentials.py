@@ -146,6 +146,16 @@ class CloudCredentials:
         """A Bedrock backend's current keys. Raises `CredentialUnavailable` when AWS gives none."""
         return await self._value(signer, self._keys, self._key_sources)
 
+    async def obtain(self, signer: Signer) -> None:
+        """Get the backend's credential — its keys for Bedrock, its token otherwise — to prove it can be had.
+
+        Raises `CredentialUnavailable` when the cloud gives none.
+        """
+        if (signer.kind, signer.auth) in self._key_sources:
+            await self.aws(signer)
+        else:
+            await self.bearer(signer)
+
     def invalidate(self, signer: Signer) -> None:
         """Drop the backend's credential after the provider refused it."""
         key = signer.key()

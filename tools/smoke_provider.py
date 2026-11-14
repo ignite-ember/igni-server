@@ -43,7 +43,6 @@ from app.services.ai.backend_provider import BackendConfigError, InferenceBacken
 from app.services.ai.chat.schemas import UpstreamChatRequest  # noqa: E402
 from app.services.ai.chat.upstream_client import ClientFactory, UpstreamChatClient  # noqa: E402
 from app.services.ai.messages.calls import CallerHeaders  # noqa: E402
-from app.services.ai.messages.events import ProviderMessage  # noqa: E402
 from app.services.ai.messages.upstream import MessagesUpstream  # noqa: E402
 from app.services.ai.messages.usage import MessagesUsage, StreamTally  # noqa: E402
 from app.services.ai.providers.credentials import CloudCredentials  # noqa: E402
@@ -84,16 +83,16 @@ class Smoke:
         return f'{lines} stream lines'
 
     async def _messages(self, lease: BackendLease, *, stream: bool) -> str:
-        body = MessagesRequest(
+        request = MessagesRequest(
             model=lease.model, max_tokens=MAX_TOKENS, messages=[{'role': 'user', 'content': PROMPT}], stream=stream
-        ).model_dump(exclude_none=True)
+        )
         upstream = MessagesUpstream(credentials=self._credentials, client_factory=self._client_factory)
         if not stream:
-            message = await upstream.complete(lease=lease, body=body, asked=CallerHeaders())
-            usage = MessagesUsage.of(ProviderMessage.model_validate(message).usage)
+            reply = await upstream.complete(lease=lease, request=request, asked=CallerHeaders())
+            usage = MessagesUsage.of(reply.message.usage)
         else:
             tally = StreamTally()
-            async for event in upstream.stream(lease=lease, body=body, asked=CallerHeaders()):
+            async for event in upstream.stream(lease=lease, request=request, asked=CallerHeaders()):
                 if event.event is not None:
                     tally.absorb(event.event)
             usage = tally.usage

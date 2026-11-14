@@ -100,6 +100,8 @@ class PinnedNodeUpdate(BaseModel):
     # Never echo a value in a 422: it may be a key or a credential.
     model_config = ConfigDict(hide_input_in_errors=True)
 
+    # An empty string goes back to the kind's own address — Anthropic's API —
+    # and is refused for a kind that has none.
     base_url: str | None = None
     models: list[str] | None = Field(default=None, min_length=1)
     # Absent leaves the stored credential alone; an explicit empty string
@@ -125,7 +127,7 @@ class PinnedNodeUpdate(BaseModel):
     def _base_url_is_absolute(cls, base_url: str | None) -> str | None:
         # A field validator, so a 422 carries this field's value and not the
         # whole body, whose api_key or credential it would echo.
-        if base_url is not None and not base_url.startswith(('http://', 'https://')):
+        if base_url and not base_url.startswith(('http://', 'https://')):
             raise ValueError('base_url must start with http:// or https://')
         return base_url
 

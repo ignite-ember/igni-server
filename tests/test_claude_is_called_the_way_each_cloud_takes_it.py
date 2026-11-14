@@ -23,6 +23,7 @@ from botocore.credentials import Credentials
 import httpx
 import pytest
 
+from app.api.base_v1.schema.messages import MessagesRequest
 from app.services.ai.backend import BackendLease
 from app.services.ai.messages.calls import (
     ANTHROPIC_VERSION,
@@ -39,9 +40,10 @@ from app.services.ai.providers.auth import AuthMethod
 from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.upstream import UpstreamError
-from tests.cloud_fakes import FakeCloud
+from tests.cloud_fakes import FakeCloud, ScriptedProvider
 
 _BODY = {'model': 'claude', 'max_tokens': 64, 'messages': [{'role': 'user', 'content': 'hi'}]}
+_REQUEST = MessagesRequest(**_BODY)
 _ADDRESS = {
     BackendKind.ANTHROPIC: 'https://api.anthropic.com',
     BackendKind.AZURE_ANTHROPIC: 'https://res.services.ai.azure.com/anthropic',
@@ -73,7 +75,7 @@ def _credentials() -> CloudCredentials:
 
 async def _prepare(lease: BackendLease, *, stream: bool = False, asked: CallerHeaders | None = None) -> MessagesCall:
     return await MessagesCalls(_credentials()).prepare(
-        lease, body={**_BODY, 'stream': stream}, stream=stream, asked=asked or CallerHeaders()
+        lease, request=MessagesRequest(**_BODY, stream=stream), stream=stream, asked=asked or CallerHeaders()
     )
 
 
@@ -223,33 +225,14 @@ _DELTA = {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_del
 _END = {'type': 'message_delta', 'usage': {'output_tokens': 7}}
 
 
-class _Provider:
-    """A provider over a mock transport: refuses the first *refusals* calls with *status*, then answers."""
-
-    def __init__(self, answer: httpx.Response, *, refusals: int = 0, status: int = 401) -> None:
-        self.answer = answer
-        self.refusals = refusals
-        self.status = status
-        self.sent: list[httpx.Request] = []
-
-    def __call__(self, **kwargs) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
-
-    def _answer(self, request: httpx.Request) -> httpx.Response:
-        self.sent.append(request)
-        if len(self.sent) <= self.refusals:
-            return httpx.Response(self.status, text='refused')
-        return self.answer
-
-
 _BEDROCK = _lease(BackendKind.BEDROCK, AuthMethod.AMBIENT, region='eu-central-1')
 
 
 async def _bedrock_stream(content: bytes) -> list:
     upstream = MessagesUpstream(
-        credentials=_credentials(), client_factory=_Provider(httpx.Response(200, content=content))
+        credentials=_credentials(), client_factory=ScriptedProvider(httpx.Response(200, content=content))
     )
-    return [event async for event in upstream.stream(lease=_BEDROCK, body=_BODY, asked=CallerHeaders())]
+    return [event async for event in upstream.stream(lease=_BEDROCK, request=_REQUEST, asked=CallerHeaders())]
 
 
 class TestBedrocksStreamComesBackAsAnthropicsEvents:
@@ -315,24 +298,27 @@ class TestARefusedCredentialIsRenewedOnce:
     @pytest.mark.parametrize('status', [401, 403])
     async def test_a_token_kind_is_retried_once_with_a_fresh_token(self, status):
         message = {'type': 'message', 'content': [], 'usage': {'input_tokens': 1, 'output_tokens': 1}}
-        provider = _Provider(httpx.Response(200, json=message), refusals=1, status=status)
+        provider = ScriptedProvider.refusing(1, httpx.Response(200, json=message), status=status)
         upstream = MessagesUpstream(credentials=_credentials(), client_factory=provider)
 
         answer = await upstream.complete(
-            lease=_lease(BackendKind.VERTEX_ANTHROPIC, AuthMethod.AMBIENT), body=_BODY, asked=CallerHeaders()
+            lease=_lease(BackendKind.VERTEX_ANTHROPIC, AuthMethod.AMBIENT), request=_REQUEST, asked=CallerHeaders()
         )
 
-        assert answer == message
-        assert [request.headers['authorization'] for request in provider.sent] == ['Bearer tok-1', 'Bearer tok-2']
+        assert answer.sent == message
+        assert answer.message.usage == AnthropicUsage(input_tokens=1, output_tokens=1)
+        assert provider.authorizations() == ['Bearer tok-1', 'Bearer tok-2']
 
     async def test_a_key_refused_is_not_asked_again(self):
-        provider = _Provider(httpx.Response(200, json={}), refusals=1)
+        provider = ScriptedProvider.refusing(1, httpx.Response(200, json={}))
         upstream = MessagesUpstream(credentials=_credentials(), client_factory=provider)
 
         with pytest.raises(UpstreamError) as raised:
             await upstream.complete(
-                lease=_lease(BackendKind.ANTHROPIC, AuthMethod.API_KEY, api_key='k'), body=_BODY, asked=CallerHeaders()
+                lease=_lease(BackendKind.ANTHROPIC, AuthMethod.API_KEY, api_key='k'),
+                request=_REQUEST,
+                asked=CallerHeaders(),
             )
 
         assert raised.value.status_code == 401
-        assert len(provider.sent) == 1
+        assert [request.headers['x-api-key'] for request in provider.sent] == ['k']

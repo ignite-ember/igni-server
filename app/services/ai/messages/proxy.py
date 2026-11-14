@@ -16,7 +16,6 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api.base_v1.schema.messages import MessagesRequest
 from app.db.sql.chat_usage import ChatUsageDB
-from app.services.ai.chat.callers import ChatCallerResolver
 from app.services.ai.chat.errors import NoOtherNode, UpstreamRefusal
 from app.services.ai.chat.presence import CallerPresence
 from app.services.ai.chat.schemas import ChatCaller
@@ -24,7 +23,6 @@ from app.services.ai.chat.tails import TailRunner
 from app.services.ai.fair_queue import FairQueue
 from app.services.ai.messages.calls import CallerHeaders
 from app.services.ai.messages.context import MessagesAdmission, MessagesContext
-from app.services.ai.messages.events import ProviderMessage
 from app.services.ai.messages.stream import MessagesStream
 from app.services.ai.messages.upstream import MessagesUpstream
 from app.services.ai.messages.usage import MessagesUsage
@@ -36,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class _Answer(BaseModel):
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(frozen=True)
 
 
 class MessagesCallerLeft(_Answer):
@@ -45,6 +43,8 @@ class MessagesCallerLeft(_Answer):
 
 class StreamedMessage(_Answer):
     """A stream, opened and not yet started."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     stream: MessagesStream
 
@@ -64,7 +64,6 @@ class MessagesProxy:
     def __init__(
         self,
         *,
-        callers: ChatCallerResolver,
         pools: PoolManager,
         queue: FairQueue,
         usage_db: ChatUsageDB,
@@ -75,7 +74,6 @@ class MessagesProxy:
         max_wait: float,
     ) -> None:
         self._max_wait = max_wait
-        self._callers = callers
         self._pools = pools
         self._queue = queue
         self._usage_db = usage_db
@@ -94,7 +92,7 @@ class MessagesProxy:
             return MessagesCallerLeft()
         ctx = MessagesContext(
             caller=caller,
-            body=body.wire(),
+            request=body,
             asked=asked,
             lease=lease,
             pools=self._pools,
@@ -119,7 +117,7 @@ class MessagesProxy:
         try:
             while True:
                 try:
-                    message = await self._upstream.complete(lease=ctx.lease, body=ctx.body, asked=ctx.asked)
+                    reply = await self._upstream.complete(lease=ctx.lease, request=ctx.request, asked=ctx.asked)
                 except asyncio.CancelledError:
                     await self._tails.run(self._log_abandoned(ctx, started=started))
                     raise
@@ -133,15 +131,15 @@ class MessagesProxy:
                     await self._retry.pause(attempt)
                     attempt += 1
                     continue
-                usage = MessagesUsage.of(ProviderMessage.model_validate(message).usage)
+                usage = MessagesUsage.of(reply.message.usage)
                 if not usage.reported:
-                    usage = MessagesUsage.estimated(self._estimator, body=ctx.body)
+                    usage = MessagesUsage.estimated(self._estimator, request=ctx.request)
                 await ctx.log_usage(usage, duration=time.monotonic() - started, stream=False)
-                return message
+                return reply.sent
         finally:
             await ctx.release()
 
     async def _log_abandoned(self, ctx: MessagesContext, *, started: float) -> None:
         """A message its caller left: the prompt ran, so it is billed, estimated."""
-        estimated = MessagesUsage.estimated(self._estimator, body=ctx.body)
+        estimated = MessagesUsage.estimated(self._estimator, request=ctx.request)
         await ctx.log_usage(estimated, duration=time.monotonic() - started, stream=False)

@@ -20,7 +20,7 @@ import pytest
 
 from app.services.ai.backend import InferenceBackend
 from app.services.ai.backend_provider import BackendConfigError, InferenceBackendProvider
-from tests.cloud_fakes import backend, FakeCloud
+from tests.cloud_fakes import backend, FakeCloud, ScriptedProvider
 
 _TOOL = pathlib.Path(__file__).resolve().parent.parent / 'tools' / 'smoke_provider.py'
 
@@ -56,21 +56,6 @@ def _tool() -> ModuleType:
     return module
 
 
-class _Provider:
-    """The provider behind every backend: one scripted answer, and each request it was sent."""
-
-    def __init__(self, answer: httpx.Response) -> None:
-        self.answer = answer
-        self.sent: list[httpx.Request] = []
-
-    def __call__(self, **kwargs) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
-
-    def _answer(self, request: httpx.Request) -> httpx.Response:
-        self.sent.append(request)
-        return self.answer
-
-
 @pytest.fixture
 def deployed(monkeypatch):
     """This deployment's backends are exactly *backends*."""
@@ -85,7 +70,7 @@ def deployed(monkeypatch):
     return deploy
 
 
-async def _run(argv: list[str], provider: _Provider, capsys) -> tuple[int, list[str]]:
+async def _run(argv: list[str], provider: ScriptedProvider, capsys) -> tuple[int, list[str]]:
     code = await _tool().main(argv, credentials=FakeCloud().credentials(), client_factory=provider)
     printed = re.sub(r'\d+\.\d+s', 'Ns', capsys.readouterr().out)
     return code, printed.splitlines()
@@ -129,28 +114,62 @@ async def test_a_backend_is_called_on_its_own_api_and_its_count_printed(
     deployed, capsys, defined, answer, url, printed
 ):
     deployed(defined)
-    provider = _Provider(httpx.Response(200, json=answer))
+    provider = ScriptedProvider(httpx.Response(200, json=answer))
 
     assert await _run([defined.id], provider, capsys) == (0, printed)
     assert [str(request.url) for request in provider.sent] == [url]
 
 
+@pytest.mark.parametrize(
+    ('defined', 'answer', 'url', 'outcome'),
+    [
+        pytest.param(
+            _NODE,
+            httpx.Response(200, text='data: {"choices": []}\n\ndata: [DONE]\n\n'),
+            'http://node.invalid/v1/chat/completions',
+            'OK in Ns — 2 stream lines',
+            id='a GPU node',
+        ),
+        pytest.param(
+            _ANTHROPIC,
+            httpx.Response(
+                200,
+                text='event: message_start\ndata: {"type": "message_start", "message": {"usage": {"input_tokens": 9}}}'
+                '\n\nevent: message_delta\ndata: {"type": "message_delta", "usage": {"output_tokens": 1}}\n\n',
+            ),
+            'https://api.anthropic.com/v1/messages',
+            'OK in Ns — tokens: input 9 (cache read 0, written 0), output 1',
+            id="Anthropic's own API",
+        ),
+    ],
+)
+async def test_a_streamed_request_is_streamed_as_igni_clients_do(deployed, capsys, defined, answer, url, outcome):
+    deployed(defined)
+    provider = ScriptedProvider(answer)
+
+    code, printed = await _run([defined.id, '--stream'], provider, capsys)
+
+    assert (code, printed[1:]) == (0, [f'asking for {defined.models[0]!r}; streamed', outcome])
+    assert [str(request.url) for request in provider.sent] == [url]
+    assert json.loads(provider.sent[0].content)['stream'] is True
+
+
 async def test_bedrock_is_signed_with_the_servers_keys_and_never_prints_them(deployed, capsys):
     deployed(_BEDROCK)
-    provider = _Provider(httpx.Response(200, json=_MESSAGE))
+    provider = ScriptedProvider(httpx.Response(200, json=_MESSAGE))
 
     _code, printed = await _run(['bedrock-eu'], provider, capsys)
 
-    assert provider.sent[0].headers['authorization'].startswith(
-        'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/'
-    ), 'signed with SigV4, with the keys the server holds'
+    assert provider.sent[0].headers['authorization'].startswith('AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/'), (
+        'signed with SigV4, with the keys the server holds'
+    )
     assert provider.sent[0].headers['x-amz-security-token'] == 'SESSION'
     assert not any('SECRET-MATERIAL' in line or 'SESSION' in line for line in printed)
 
 
 async def test_the_prompt_is_the_short_one_and_the_answer_is_kept_small(deployed, capsys):
     deployed(_ANTHROPIC)
-    provider = _Provider(httpx.Response(200, json=_MESSAGE))
+    provider = ScriptedProvider(httpx.Response(200, json=_MESSAGE))
 
     await _run(['anthropic'], provider, capsys)
 
@@ -164,7 +183,7 @@ async def test_the_prompt_is_the_short_one_and_the_answer_is_kept_small(deployed
 
 async def test_a_refused_identity_is_a_failure_that_says_where_to_look(deployed, capsys):
     deployed(_BEDROCK)
-    provider = _Provider(httpx.Response(403, json={'message': 'not authorized'}))
+    provider = ScriptedProvider(httpx.Response(403, json={'message': 'not authorized'}))
 
     code, printed = await _run(['bedrock-eu'], provider, capsys)
 
@@ -173,12 +192,15 @@ async def test_a_refused_identity_is_a_failure_that_says_where_to_look(deployed,
         'FAILED after Ns: 403 — The inference node refused the request (403).',
         "The server log has the provider's own words; a 401 or 403 is the identity, a 404 the model name.",
     ]
-    assert len(provider.sent) == 2, 'the refused credential is renewed once, as the server does'
+    assert [request.headers['authorization'][:40] for request in provider.sent] == [
+        'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/',
+        'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/',
+    ], 'the refused credential is renewed once, as the server does'
 
 
 async def test_an_unknown_backend_is_named_and_nothing_is_sent(deployed, capsys):
     deployed(_BEDROCK, _ANTHROPIC)
-    provider = _Provider(httpx.Response(200, json=_MESSAGE))
+    provider = ScriptedProvider(httpx.Response(200, json=_MESSAGE))
 
     assert await _run(['no-such-backend'], provider, capsys) == (
         2,
@@ -189,7 +211,7 @@ async def test_an_unknown_backend_is_named_and_nothing_is_sent(deployed, capsys)
 
 async def test_a_model_the_backend_does_not_serve_is_refused_before_sending(deployed, capsys):
     deployed(_BEDROCK)
-    provider = _Provider(httpx.Response(200, json=_MESSAGE))
+    provider = ScriptedProvider(httpx.Response(200, json=_MESSAGE))
 
     assert await _run(['bedrock-eu', '--model', 'not-served'], provider, capsys) == (
         2,
@@ -204,7 +226,7 @@ async def test_a_deployment_with_no_backends_says_so_in_its_own_words(monkeypatc
 
     monkeypatch.setattr(InferenceBackendProvider, '__init__', lambda self: None)
     monkeypatch.setattr(InferenceBackendProvider, 'load', load)
-    provider = _Provider(httpx.Response(200, json=_MESSAGE))
+    provider = ScriptedProvider(httpx.Response(200, json=_MESSAGE))
 
     assert await _run(['bedrock-eu'], provider, capsys) == (2, ['No inference backends are available.'])
     assert provider.sent == []

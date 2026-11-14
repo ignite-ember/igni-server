@@ -73,6 +73,21 @@ class TestABackendSaysWhatItIs:
         assert refused.value.reasons == ["Backend 'b' (azure_openai): model_ids names models it does not serve: other"]
 
 
+class TestEachMethodIsNamed:
+    def test_every_method_has_a_label_for_a_sentence(self):
+        assert {method: method.label for method in AuthMethod} == {
+            AuthMethod.NONE: 'no credentials',
+            AuthMethod.API_KEY: 'the stored key',
+            AuthMethod.AMBIENT: "the server's own cloud identity",
+            AuthMethod.MANAGED_IDENTITY: 'the user-assigned managed identity',
+            AuthMethod.CLIENT_SECRET: "the app registration's client secret",
+            AuthMethod.IMPERSONATE: 'the impersonated service account',
+            AuthMethod.SERVICE_ACCOUNT_KEY: 'the stored service-account key',
+            AuthMethod.ASSUME_ROLE: 'the assumed IAM role',
+            AuthMethod.ACCESS_KEYS: 'the stored access keys',
+        }
+
+
 class TestEachKindOffersItsMethods:
     def test_the_portal_and_the_router_share_one_table(self):
         assert {kind: list(methods) for kind, methods in METHODS.items()} == {

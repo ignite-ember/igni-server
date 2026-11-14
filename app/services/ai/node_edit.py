@@ -5,8 +5,9 @@ old method's secret and settings unless the edit gives them — switching
 an Azure node from its client secret to its managed identity should not
 leave the secret stored, nor be refused for still carrying it. Clearing
 the current method's secret without naming a method falls back to the
-method what remains means. A Vertex node's address follows its project
-and region. `NodeEdit` works all of that out before anything is written,
+method what remains means. A Vertex or Bedrock node's address follows its
+region (and project), and a blank address is the kind's own when it has
+one — Anthropic's API. `NodeEdit` works all of that out before anything is written,
 and refuses an edit that would leave a backend the router cannot use.
 """
 
@@ -15,7 +16,6 @@ from __future__ import annotations
 from app.db.sql.schemas.inference_node import NodeChanges
 from app.services.ai.backend import InferenceBackend
 from app.services.ai.providers.auth import METHODS
-from app.services.ai.providers.kinds import BackendKind
 
 #: The edit fields that are also the backend's own.
 _BACKEND_FIELDS = frozenset(InferenceBackend.model_fields) & frozenset(NodeChanges.model_fields)
@@ -60,9 +60,12 @@ class NodeEdit:
         return implied
 
     def _overrides(self, written: NodeChanges) -> dict[str, object]:
-        """The backend fields *written* sets; an empty string clears a key, a credential or a region."""
+        """The backend fields *written* sets; an empty string clears a key, a credential or a region.
+
+        A blank address stays blank, so the backend is addressed by its kind again.
+        """
         overrides: dict[str, object] = {
-            name: (None if value == '' else value)
+            name: (None if value == '' and name != 'base_url' else value)
             for name, value in written.model_dump(exclude_none=True).items()
             if name in _BACKEND_FIELDS
         }
@@ -70,7 +73,7 @@ class NodeEdit:
             # No method named: what remains says which it is now (`default_method`).
             overrides['auth'] = None
         moved = written.region is not None or written.project is not None
-        if self._current.kind is BackendKind.VERTEX_OPENAI and moved and written.base_url is None:
+        if self._current.kind.derives_address and moved and written.base_url is None:
             overrides['base_url'] = ''
         return overrides
 

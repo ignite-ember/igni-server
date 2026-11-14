@@ -9,6 +9,9 @@ request was signed with and how often the cloud was asked.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
+
+import httpx
 
 from app.services.ai.backend import BackendLease, InferenceBackend
 from app.services.ai.providers.auth import AuthMethod, METHODS
@@ -100,3 +103,30 @@ class FakeCloud:
             },
             clock=self.clock,
         )
+
+
+class ScriptedProvider:
+    """A provider behind a mock transport: answers each request in turn from *answers*, the last from then on.
+
+    It records every request it was sent, so a test says exactly what reached it.
+    """
+
+    def __init__(self, *answers: httpx.Response) -> None:
+        self.answers = answers
+        self.sent: list[httpx.Request] = []
+
+    @classmethod
+    def refusing(cls, times: int, then: httpx.Response, *, status: int = 401) -> ScriptedProvider:
+        """Refuses the first *times* requests with *status*, then answers *then*."""
+        return cls(*(httpx.Response(status, text='refused') for _ in range(times)), then)
+
+    def __call__(self, **kwargs: Any) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
+
+    def authorizations(self) -> list[str | None]:
+        """The `authorization` header of each request, in order."""
+        return [request.headers.get('authorization') for request in self.sent]
+
+    def _answer(self, request: httpx.Request) -> httpx.Response:
+        self.sent.append(request)
+        return self.answers[min(len(self.sent), len(self.answers)) - 1]

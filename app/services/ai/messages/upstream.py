@@ -24,10 +24,11 @@ from botocore.eventstream import EventStreamBuffer
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.api.base_v1.schema.messages import MessagesRequest
 from app.config import settings
 from app.services.ai.backend import BackendLease
 from app.services.ai.messages.calls import CallerHeaders, MessagesCalls
-from app.services.ai.messages.events import ClaudeEvent, event_of, ProviderMessage
+from app.services.ai.messages.events import ClaudeEvent, event_of, ProviderMessage, ProviderReply
 from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.sse_keepalive import KEEPALIVE_LINE, lines_with_keepalive
@@ -77,11 +78,11 @@ class MessagesUpstream:
         self._complete_timeout = complete_timeout
         self._stream_timeout = stream_timeout
 
-    async def complete(self, *, lease: BackendLease, body: dict[str, Any], asked: CallerHeaders) -> dict[str, Any]:
-        """One non-streamed answer: the provider's message, as the JSON it sent."""
+    async def complete(self, *, lease: BackendLease, request: MessagesRequest, asked: CallerHeaders) -> ProviderReply:
+        """One non-streamed answer: the provider's message, read, and the JSON it sent."""
         timeout = self._complete_timeout if self._complete_timeout is not None else settings.ai.upstream_timeout
         for attempt in (1, 2):
-            call = await self._calls.prepare(lease, body=body, stream=False, asked=asked)
+            call = await self._calls.prepare(lease, request=request, stream=False, asked=asked)
             try:
                 async with self._client_factory(timeout=timeout) as client:
                     resp = await client.post(call.url, headers=call.headers, content=call.content)
@@ -93,19 +94,18 @@ class MessagesUpstream:
             logger.error('Upstream Messages error %s from %s: %s', resp.status_code, lease.backend_id, resp.text[:500])
             raise UpstreamError(resp.status_code, resp.text[:500])
         try:
-            message: dict[str, Any] = resp.json()
-            ProviderMessage.model_validate(message)
+            sent: dict[str, Any] = resp.json()
+            return ProviderReply(message=ProviderMessage.model_validate(sent), sent=sent)
         except (ValueError, ValidationError) as exc:
             raise UpstreamUnreadable(resp.text[:200]) from exc
-        return message
 
     async def stream(
-        self, *, lease: BackendLease, body: dict[str, Any], asked: CallerHeaders
+        self, *, lease: BackendLease, request: MessagesRequest, asked: CallerHeaders
     ) -> AsyncGenerator[StreamEvent, None]:
         """The provider's events as SSE frames, keepalives included."""
         try:
             for attempt in (1, 2):
-                call = await self._calls.prepare(lease, body=body, stream=True, asked=asked)
+                call = await self._calls.prepare(lease, request=request, stream=True, asked=asked)
                 async with self._client_factory(timeout=self._stream_timeout) as client:
                     async with client.stream('POST', call.url, headers=call.headers, content=call.content) as resp:
                         if self._renew_token(lease, status=resp.status_code, attempt=attempt):
