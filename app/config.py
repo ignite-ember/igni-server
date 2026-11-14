@@ -471,14 +471,6 @@ class Settings(BaseSettings):
     )
 
     # Super-admin (application-wide admin, not org-level)
-    service_events_per_minute: int = Field(
-        default=600,
-        ge=0,
-        description=(
-            'Events one service may ask igni to deliver to producers per minute (POST /v1/service-events). '
-            '0 disables the limit.'
-        ),
-    )
     service_event_max_wait_seconds: int = Field(
         default=1_209_600,
         ge=1,

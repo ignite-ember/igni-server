@@ -218,26 +218,14 @@ async def test_the_retention_round_expires_what_is_due_and_deletes_what_closed_l
     assert (await client.get(f'/service-events/{sent["event_id"]}', headers=world['service'])).status_code == 404
 
 
-async def test_rate_limited_per_service(client, world, monkeypatch):
-    monkeypatch.setattr(settings, 'service_events_per_minute', 2)
-    # One minute for the whole test, so the count cannot roll over mid-way.
-    fixed = datetime.now(timezone.utc).replace(second=1)
-    monkeypatch.setattr(
-        'app.services.cloud.event_rate_limit.datetime',
-        type('Fixed', (), {'now': staticmethod(lambda tz=None: fixed)}),
-    )
-    other = await shipped(client, 'igni.artifacts')
-    other_headers = await token_for(client, other, organisation=world['acme'].org_id)
-
+async def test_a_service_is_never_told_to_slow_down(client, world):
+    """There is no per-service event limit: a burst is accepted whole, never answered 429."""
     codes = [
         (await client.post('/service-events', json=_event(world['ada']), headers=world['service'])).status_code
-        for _ in range(3)
+        for _ in range(25)
     ]
-    elsewhere = await client.post('/service-events', json=_event(world['ada']), headers=other_headers)
 
-    assert codes[:2] == [202, 202]
-    assert codes[2] == 429
-    assert elsewhere.status_code != 429
+    assert codes == [202] * 25
 
 
 async def test_only_a_service_asks_and_only_a_platform_client_fetches(client, world):
