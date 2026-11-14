@@ -16,6 +16,7 @@ from app.db.sql.chat_usage import ChatUsageDB
 from app.db.sql.inference_nodes import InferenceNodeDB
 from app.db.sql.models.chat_usage import ChatUsage
 from app.services.ai.chat.schemas import ChatCaller
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.providers.kinds import BackendKind
 from tests.chat_proxy import context, lease, SpyPool
 from tests.cloud_fakes import SERVICE_ACCOUNT
@@ -61,6 +62,21 @@ class TestAdding:
 
         nodes = (await client.get('/portal/inference', headers=headers)).json()['nodes']
         assert [(n['id'], n['kind']) for n in nodes] == [('vertex-eu', 'vertex_openai')]
+
+    async def test_the_fleet_view_asks_the_apps_credentials_and_builds_nothing_else(self, app, client, fleet_admin):
+        # Building the chat services here would pin this test's pool to the app for every later one.
+        headers, _org = fleet_admin
+        before = dict(app.state._state)
+        app.state._state.pop('chat_services', None)
+        app.state._state.pop('cloud_credentials', None)
+        try:
+            await client.get('/portal/inference', headers=headers)
+
+            assert 'chat_services' not in app.state._state
+            assert app.state.cloud_credentials is CloudCredentials.of_app(app)
+        finally:
+            app.state._state.clear()
+            app.state._state.update(before)
 
     async def test_a_backend_its_kind_cannot_use_is_refused_saying_why_and_nothing_is_stored(self, client, fleet_admin):
         headers, _org = fleet_admin

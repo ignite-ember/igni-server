@@ -40,13 +40,13 @@ from app.api.base_v1.schema.pinned_nodes import BackendKindView, PinnedNodeCreat
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.config import settings
 from app.security.portal_auth import get_current_portal_user, require_admin
-from app.services.ai.chat.services import ChatServices
 from app.services.ai.fleet_schemas import NodeDefinitionInvalid, NodeIdTaken, NodeNotAdded, NodeNotServing
 from app.services.ai.fleet_status import FleetStatus
 from app.services.ai.health import NodeHealthProbe
 from app.services.ai.node_registry import HEARTBEAT_INTERVAL_SECONDS
 from app.services.ai.node_rotation import NodeRotation
 from app.services.ai.pinned_nodes import PinnedNodes
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.schemas import HealthState
 
 router = APIRouter()
@@ -74,7 +74,7 @@ def require_node_manager(current_user: PortalUser = Depends(get_current_portal_u
 
 def node_probe(request: Request) -> NodeHealthProbe:
     """The fleet's health probe, asking the app's one cloud-credentials cache."""
-    return NodeHealthProbe(credentials=ChatServices.of_app(request.app).credentials)
+    return NodeHealthProbe(credentials=CloudCredentials.of_app(request.app))
 
 
 def fleet_status(probe: NodeHealthProbe = Depends(node_probe)) -> FleetStatus:

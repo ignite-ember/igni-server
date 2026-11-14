@@ -54,10 +54,8 @@ class ChatServices:
             producers=Producers(), orgs=OrgContexts(), group_models=GroupModelService()
         )
         self._catalog = catalog or ChatModelCatalog(pools=pools)
-        # The app's one credentials cache: the proxy signs with it and the
-        # fleet's health probe asks it, so the two share every token.
-        self._credentials = credentials or CloudCredentials()
-        upstream = upstream or UpstreamChatClient(credentials=self._credentials)
+        credentials = credentials or CloudCredentials()
+        upstream = upstream or UpstreamChatClient(credentials=credentials)
         estimator = estimator or TokenEstimator()
         retry = retry or RetryPolicy()
         self._proxy = ChatProxy(
@@ -74,7 +72,7 @@ class ChatServices:
         """The app's instance, built on first use, so it works with or without a lifespan."""
         services: ChatServices | None = getattr(app.state, 'chat_services', None)
         if services is None:
-            services = app.state.chat_services = cls()
+            services = app.state.chat_services = cls(credentials=CloudCredentials.of_app(app))
         return services
 
     @property
@@ -92,11 +90,6 @@ class ChatServices:
     @property
     def proxy(self) -> ChatProxy:
         return self._proxy
-
-    @property
-    def credentials(self) -> CloudCredentials:
-        """The cloud credentials every backend call and health probe of this app uses."""
-        return self._credentials
 
 
 def chat_services(request: Request) -> ChatServices:

@@ -26,6 +26,8 @@ import logging
 import time
 from types import MappingProxyType
 
+from starlette.applications import Starlette
+
 from app.services.ai.providers.auth import AuthMethod
 from app.services.ai.providers.azure import (
     AzureClientSecretSource,
@@ -83,6 +85,18 @@ class CloudCredentials:
         self._sources = sources
         self._clock = clock
         self._tokens: dict[tuple[str, BackendKind, AuthMethod, str], CachedToken[str]] = {}
+
+    @classmethod
+    def of_app(cls, app: Starlette) -> CloudCredentials:
+        """The app's one cache, built on first use: the proxy signs with it and the health probe asks it.
+
+        Its own slot on the app rather than a part of the chat services, so
+        the fleet page asking for a token builds nothing else.
+        """
+        credentials: CloudCredentials | None = getattr(app.state, 'cloud_credentials', None)
+        if credentials is None:
+            credentials = app.state.cloud_credentials = cls()
+        return credentials
 
     async def bearer(self, signer: Signer) -> str:
         """The backend's current token. Raises `CredentialUnavailable` when the cloud gives none."""
