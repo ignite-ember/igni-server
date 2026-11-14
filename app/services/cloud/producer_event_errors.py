@@ -33,14 +33,6 @@ class ViewTooLarge(EventRefused):
         super().__init__(f'A view may be at most {MAX_VIEW_BYTES} bytes')
 
 
-class TooManyEvents(EventRefused):
-    """The service has spent its minute; `retry_after` is the seconds until the next one."""
-
-    def __init__(self, *, retry_after: int) -> None:
-        super().__init__('Too many events from this service this minute')
-        self.retry_after = retry_after
-
-
 class ExtensionOff(EventRefused):
     """The producer does not have the service's extension on."""
 
