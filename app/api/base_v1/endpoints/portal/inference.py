@@ -26,7 +26,7 @@ to. An ordinary member has no reason to enumerate the first and must not
 be able to do the second.
 """
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 
 from app.api.base_v1.schema.nodes import (
     AvailableModels,
@@ -35,19 +35,18 @@ from app.api.base_v1.schema.nodes import (
     NodeDrainView,
     NodeProbeRequest,
     NodeProbeResult,
-    PinnedNodeCreate,
-    PinnedNodeUpdate,
-    PinnedNodeView,
 )
+from app.api.base_v1.schema.pinned_nodes import BackendKindView, PinnedNodeCreate, PinnedNodeUpdate, PinnedNodeView
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.config import settings
 from app.security.portal_auth import get_current_portal_user, require_admin
-from app.services.ai.fleet_schemas import NodeIdTaken, NodeNotAdded, NodeNotServing
+from app.services.ai.fleet_schemas import NodeDefinitionInvalid, NodeIdTaken, NodeNotAdded, NodeNotServing
 from app.services.ai.fleet_status import FleetStatus
 from app.services.ai.health import NodeHealthProbe
 from app.services.ai.node_registry import HEARTBEAT_INTERVAL_SECONDS
 from app.services.ai.node_rotation import NodeRotation
 from app.services.ai.pinned_nodes import PinnedNodes
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.schemas import HealthState
 
 router = APIRouter()
@@ -73,8 +72,13 @@ def require_node_manager(current_user: PortalUser = Depends(get_current_portal_u
 # constructors' keyword arguments as query parameters.
 
 
-def fleet_status() -> FleetStatus:
-    return FleetStatus()
+def node_probe(request: Request) -> NodeHealthProbe:
+    """The fleet's health probe, asking the app's one cloud-credentials cache."""
+    return NodeHealthProbe(credentials=CloudCredentials.of_app(request.app))
+
+
+def fleet_status(probe: NodeHealthProbe = Depends(node_probe)) -> FleetStatus:
+    return FleetStatus(probe=probe)
 
 
 def pinned_nodes() -> PinnedNodes:
@@ -83,10 +87,6 @@ def pinned_nodes() -> PinnedNodes:
 
 def node_rotation() -> NodeRotation:
     return NodeRotation()
-
-
-def node_probe() -> NodeHealthProbe:
-    return NodeHealthProbe()
 
 
 @router.get(
@@ -156,6 +156,16 @@ async def discover_node(
     )
 
 
+@router.get(
+    '/inference/auth-methods',
+    response_model=list[BackendKindView],
+    description='Each kind of backend and the ways it can authenticate, the first being its default.',
+)
+async def auth_methods(current_user: PortalUser = Depends(require_admin)) -> list[BackendKindView]:
+    """The server's own table, so the portal's form can never offer a method the server refuses."""
+    return BackendKindView.every()
+
+
 @router.post(
     '/inference/nodes',
     response_model=PinnedNodeView,
@@ -171,6 +181,8 @@ async def add_node(
         node = await nodes.add(body, by=current_user)
     except NodeIdTaken as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except NodeDefinitionInvalid as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return PinnedNodeView.of(node)
 
 
@@ -222,6 +234,8 @@ async def edit_node(
         node = await nodes.edit(node_id, body.changes())
     except NodeNotAdded as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except NodeDefinitionInvalid as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return PinnedNodeView.of(node)
 
 

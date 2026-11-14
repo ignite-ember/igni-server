@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.services.ai.backend import BackendLease
 from app.services.ai.backend_pool import InferenceBackendPool
 from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.chat.errors import (
@@ -12,7 +13,7 @@ from app.services.ai.chat.errors import (
 )
 from app.services.ai.chat.schemas import ChatCaller
 from app.services.ai.fair_queue import FairQueue, QueueFull, QueueTimeout
-from app.services.ai.schemas import BackendLease, ModelNotAvailableError
+from app.services.ai.schemas import ModelNotAvailableError
 
 
 class ChatAdmission:

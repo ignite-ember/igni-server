@@ -57,16 +57,18 @@ node registers again and is sealed under the current key.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
+from typing import Any
 
+from pydantic import BaseModel
 import redis.asyncio as aioredis
 
 from app.config import settings
 from app.db.redis.keys import key as redis_key
 from app.db.redis.sealed import seal, unseal
-from app.services.ai.schemas import InferenceBackend, RegisteredNode
+from app.services.ai.backend import InferenceBackend
+from app.services.ai.schemas import RegisteredNode
 from app.services.secrets import SecretDecryptError
 from app.utils.redis_text import as_str
 
@@ -83,10 +85,6 @@ _REGISTRATION_TTL_SECONDS = 180
 HEARTBEAT_INTERVAL_SECONDS = 60
 
 _KEY_PREFIX = redis_key('nodes', 'registered') + ':'
-
-# Where an entry keeps its API key, encrypted. Outside ``backend`` so the
-# stored ``backend`` never carries a key at all.
-_SEALED_API_KEY = 'sealed_api_key'
 
 
 class NodeRegistry:
@@ -207,39 +205,54 @@ class NodeRegistry:
         )
 
 
+class StoredRegistration(BaseModel):
+    """A registration as Redis holds it (F151): the backend without its key, and the key sealed beside it.
+
+    ``backend`` is an `InferenceBackend`'s fields with ``api_key`` taken
+    out — not a backend on its own, because one that names the ``api_key``
+    method is not valid without its key. `node` puts the key back before
+    the backend is validated. An entry with no sealed key is read as it
+    is: either it never had a key, or it was written before F151 with the
+    key in ``backend``, and the next heartbeat rewrites it sealed.
+    """
+
+    backend: dict[str, Any]
+    registered_at: float
+    last_seen: float
+    sealed_api_key: str | None = None
+
+    @classmethod
+    def of(cls, node: RegisteredNode) -> StoredRegistration:
+        backend = node.backend.model_dump(mode='json', exclude={'api_key'})
+        sealed = seal(node.backend.api_key) if node.backend.api_key else None
+        return cls(backend=backend, registered_at=node.registered_at, last_seen=node.last_seen, sealed_api_key=sealed)
+
+    def node(self) -> RegisteredNode:
+        """The registration, its key unsealed. Raises `SecretDecryptError`, or `ValueError` for a bad backend."""
+        backend = {**self.backend, 'api_key': unseal(self.sealed_api_key)} if self.sealed_api_key else self.backend
+        return RegisteredNode(
+            backend=InferenceBackend.model_validate(backend),
+            registered_at=self.registered_at,
+            last_seen=self.last_seen,
+        )
+
+
 def _serialise(node: RegisteredNode) -> str:
     """The entry as stored: the API key sealed, never in ``backend``."""
-    payload = node.model_dump(mode='json')
-    api_key, payload['backend']['api_key'] = payload['backend'].get('api_key'), None
-    if api_key:
-        payload[_SEALED_API_KEY] = seal(api_key)
-    return json.dumps(payload)
+    return StoredRegistration.of(node).model_dump_json(exclude_none=True)
 
 
 def _parse(raw: str | None, *, node_id: str) -> RegisteredNode | None:
     """Decode a stored registration, discarding one we can no longer read.
 
-    A payload written by an older version whose shape has since changed
-    would otherwise raise on every read and take the whole node list down
-    with it. Dropping the single unreadable entry costs one node until it
-    next heartbeats, which it will.
+    An entry that will not parse would otherwise raise on every read and
+    take the whole node list down with it. Dropping the single unreadable
+    entry costs one node until it next heartbeats, which it will.
     """
     if raw is None:
         return None
     try:
-        payload = json.loads(raw)
-        sealed = payload.pop(_SEALED_API_KEY, None) if isinstance(payload, dict) else None
-        node = RegisteredNode.model_validate(payload)
-    except (ValueError, json.JSONDecodeError):
-        logger.warning('Discarding unreadable registration for node %s', node_id)
-        return None
-    if not sealed:
-        # No key, or an entry written before F151 with the key in
-        # ``backend``: read as it is, and sealed by the next heartbeat's
-        # rewrite.
-        return node
-    try:
-        api_key = unseal(sealed)
+        return StoredRegistration.model_validate_json(raw).node()
     except SecretDecryptError:
         logger.error(
             'Skipping registered inference node %s: its API key will not decrypt with any configured '
@@ -247,4 +260,6 @@ def _parse(raw: str | None, *, node_id: str) -> RegisteredNode | None:
             node_id,
         )
         return None
-    return node.model_copy(update={'backend': node.backend.model_copy(update={'api_key': api_key})})
+    except ValueError:
+        logger.warning('Discarding unreadable registration for node %s', node_id)
+        return None

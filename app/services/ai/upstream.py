@@ -19,6 +19,8 @@ import re
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from app.services.ai.providers.kinds import BackendKind
+
 #: Attempts per request, including the first.
 MAX_RETRIES = 3
 
@@ -165,6 +167,32 @@ class UpstreamTimeout(_TransportFailure):
 
 class UpstreamUnreachable(_TransportFailure):
     """No node answered at all: refused, reset, or unresolvable."""
+
+
+class UpstreamCredentialsUnavailable(UpstreamFailure):
+    """The server could not get a token for a cloud backend, so nothing was sent.
+
+    Another backend may run under a different identity, so it is worth
+    asking one; once retrying is over the caller is told the service is
+    unavailable rather than that a node failed, because the fix is the
+    server's configuration, not the provider.
+    """
+
+    def __init__(self, kind: BackendKind):
+        self.kind = kind
+        super().__init__(f'No credentials for the {kind.value} backend')
+
+    @property
+    def label(self) -> str:
+        return 'credentials'
+
+    @property
+    def answer_status(self) -> int:
+        return 503
+
+    @property
+    def sentence(self) -> str:
+        return 'The server could not obtain credentials for the model provider.'
 
 
 class RetryPolicy(BaseModel):

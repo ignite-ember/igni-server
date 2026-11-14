@@ -13,12 +13,14 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/render'
 import { server } from '../../test/server'
+import type { NodeStatus } from '../../types'
 import { InferencePage } from '../InferencePage'
 
-function node(overrides: Record<string, unknown> = {}) {
+function node(overrides: Partial<NodeStatus> = {}): NodeStatus {
   return {
     id: 'gpu-01',
     base_url: 'http://gpu-01.internal:8000/v1',
+    kind: 'openai',
     models: ['igni-1.0-27b'],
     multimodal: false,
     source: 'static',
@@ -751,7 +753,7 @@ describe('Changing what a node serves', () => {
     return user
   }
 
-  const pinned = { source: 'pinned' }
+  const pinned: Partial<NodeStatus> = { source: 'pinned' }
 
   test('Edit links to the node page', async () => {
     respondWith(status({ nodes: [node(pinned)], total_in_flight: 0, total_capacity: 64, utilization: 0 }))

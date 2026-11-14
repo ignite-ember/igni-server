@@ -38,14 +38,11 @@ import pytest
 from app.api.base_v1.endpoints.client.openai_errors import openai_error
 from app.api.base_v1.schema.openai_error import OpenAIErrorBody
 from app.config import settings
+from app.services.ai.backend import BackendLease
 from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.chat.errors import UpstreamRefusal
 from app.services.ai.chat.services import chat_services, ChatServices
-from app.services.ai.schemas import (
-    BackendLease,
-    ModelNotAvailableError,
-    NoBackendAvailableError,
-)
+from app.services.ai.schemas import ModelNotAvailableError, NoBackendAvailableError
 from app.services.ai.upstream import RetryPolicy, UpstreamError, UpstreamFailure, UpstreamStale, UpstreamUnreadable
 from tests.chat_proxy import completions, context, drain, NO_BACKOFF, on_transport, SpyPool, streamer
 from tests.conftest import auth_header, create_org, create_user, make_token

@@ -18,115 +18,12 @@ import json
 
 import pytest
 
-from app.services.ai.backend_pool import InferenceBackendPool
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.backend_provider import BackendConfigError, InferenceBackendProvider
-from app.services.ai.schemas import (
-    InferenceBackend,
-    ModelNotAvailableError,
-    NoBackendAvailableError,
-    RegisteredNode,
-)
-
-
-class FakeRedis:
-    """Enough Redis for the pool: strings, sorted sets, hashes, scan."""
-
-    def __init__(self):
-        self._strings: dict[str, str] = {}
-        self._zsets: dict[str, dict[str, float]] = {}
-        self._hashes: dict[str, dict[str, str]] = {}
-
-    async def hgetall(self, key):
-        return dict(self._hashes.get(key, {}))
-
-    async def hset(self, key, mapping):
-        self._hashes.setdefault(key, {}).update(mapping)
-
-    async def hdel(self, key, *fields):
-        for field in fields:
-            self._hashes.get(key, {}).pop(field, None)
-
-    async def get(self, key):
-        return self._strings.get(key)
-
-    async def set(self, key, value, ex=None):
-        self._strings[key] = value
-
-    async def delete(self, key):
-        self._strings.pop(key, None)
-        self._zsets.pop(key, None)
-        self._hashes.pop(key, None)
-
-    async def zadd(self, key, mapping):
-        self._zsets.setdefault(key, {}).update(mapping)
-
-    async def zrem(self, key, member):
-        self._zsets.get(key, {}).pop(member, None)
-
-    async def zcard(self, key):
-        return len(self._zsets.get(key, {}))
-
-    async def zremrangebyscore(self, key, min_score, max_score):
-        zset = self._zsets.get(key, {})
-        for member in [m for m, score in zset.items() if score <= max_score]:
-            del zset[member]
-
-    async def expire(self, key, ttl):
-        pass
-
-    async def scan_iter(self, match=None, count=None):
-        prefix = (match or '').replace('*', '')
-        for key in list(self._strings.keys()):
-            if key.startswith(prefix):
-                yield key
-
-    def pipeline(self):
-        return FakePipeline(self)
-
-
-class FakePipeline:
-    def __init__(self, redis):
-        self._redis = redis
-        self._ops = []
-
-    def zadd(self, key, mapping):
-        self._ops.append(('zadd', key, mapping))
-        return self
-
-    def expire(self, key, ttl):
-        return self
-
-    def hset(self, key, mapping):
-        self._ops.append(('hset', key, mapping))
-        return self
-
-    def hdel(self, key, *fields):
-        self._ops.append(('hdel', key, fields))
-        return self
-
-    async def execute(self):
-        for op in self._ops:
-            if op[0] == 'zadd':
-                await self._redis.zadd(op[1], op[2])
-            elif op[0] == 'hset':
-                await self._redis.hset(op[1], mapping=op[2])
-            elif op[0] == 'hdel':
-                await self._redis.hdel(op[1], *op[2])
-        self._ops.clear()
-
-
-class FakeRegistry:
-    """A registry holding whatever the test put in it.
-
-    Defaults to empty so the static-config tests describe only the file,
-    and so nothing in this module depends on a live Redis.
-    """
-
-    def __init__(self, nodes=()):
-        self.nodes = list(nodes)
-
-    async def list_nodes(self):
-        return list(self.nodes)
+from app.services.ai.providers.auth import AuthMethod
+from app.services.ai.providers.kinds import BackendKind
+from app.services.ai.schemas import ModelNotAvailableError, NoBackendAvailableError, RegisteredNode
+from tests.backend_pool_fakes import FakeRegistry, pool_over
 
 
 def _registered(backend: InferenceBackend) -> RegisteredNode:
@@ -152,17 +49,7 @@ def _backend(backend_id: str, *, model='igni-1.0-27b', max_concurrent=2) -> Infe
 @pytest.fixture
 def pool_and_redis(tmp_path):
     def build(backends, **kwargs):
-        path = tmp_path / f'backends-{len(backends)}-{id(backends)}.json'
-        path.write_text(json.dumps([b.model_dump() for b in backends]))
-        provider = InferenceBackendProvider(path=str(path), registry=FakeRegistry())
-        pool = InferenceBackendPool(provider=provider, **kwargs)
-        redis = FakeRedis()
-
-        async def _stub_redis():
-            return redis
-
-        pool._get_redis = _stub_redis  # type: ignore[method-assign]
-        return pool, redis
+        return pool_over(backends, tmp_path, **kwargs)
 
     return build
 
@@ -367,6 +254,38 @@ class TestRetryPath:
         pinned_before = await redis.get(pool._sticky_key(user_id='alice', model=None))
         await pool.acquire('alice', exclude_backend_id=first.backend_id)
         assert await redis.get(pool._sticky_key(user_id='alice', model=None)) == pinned_before
+
+
+class TestACloudBackendsLease:
+    async def test_it_carries_what_signing_the_call_needs(self, pool_and_redis):
+        """The lease is all the chat client sees of the backend, so the kind,
+        the stored credential and the provider's model names travel on it."""
+        credential = json.dumps({'type': 'service_account', 'private_key': 'k'})
+        vertex = InferenceBackend(
+            id='vertex-eu',
+            kind='vertex_openai',
+            project='p1',
+            region='europe-west4',
+            models=['gemini-pro'],
+            model_ids={'gemini-pro': 'google/gemini-2.5-pro'},
+            credential=credential,
+        )
+        pool, _ = pool_and_redis([vertex])
+
+        lease = await pool.acquire('alice', model='gemini-pro')
+
+        assert lease.model_dump(exclude={'lease_id'}) == {
+            'backend_id': 'vertex-eu',
+            'base_url': vertex.base_url,
+            'model': 'gemini-pro',
+            'api_key': None,
+            'kind': BackendKind.VERTEX_OPENAI,
+            'auth': AuthMethod.SERVICE_ACCOUNT_KEY,
+            'auth_settings': {},
+            'credential': credential,
+            'model_ids': {'gemini-pro': 'google/gemini-2.5-pro'},
+        }
+        assert lease.upstream_model(lease.model) == 'google/gemini-2.5-pro'
 
 
 class TestLeaseContextManager:

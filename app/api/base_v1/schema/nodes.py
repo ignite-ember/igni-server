@@ -12,10 +12,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.db.sql.models.inference_node import InferenceNode
-from app.db.sql.schemas.inference_node import NodeChanges
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.fleet_schemas import FleetSnapshot
-from app.services.ai.schemas import BackendStatus, InferenceBackend
+from app.services.ai.providers.kinds import BackendKind
+from app.services.ai.schemas import BackendStatus
 
 
 class NodeRegistration(BaseModel):
@@ -111,99 +111,6 @@ class NodeHealthView(BaseModel):
     latency_ms: float | None = None
 
 
-class PinnedNodeCreate(BaseModel):
-    """A GPU node an admin is adding by hand."""
-
-    node_id: str = Field(
-        min_length=1,
-        max_length=128,
-        # Ids namespace Redis keys, so the characters are constrained
-        # rather than trusted — a colon would let one node reach outside
-        # its own gauge.
-        pattern=r'^[A-Za-z0-9._-]+$',
-        description='Stable identifier, unique across every source',
-    )
-    base_url: str = Field(description='Where the OpenAI-compatible API is served, e.g. http://gpu-3:8000/v1')
-    # Usually discovered rather than typed: POST /inference/nodes/discover
-    # asks the node what it serves, which is the only way to get LoRA
-    # adapter names right.
-    models: list[str] = Field(min_length=1, description='Model ids to route here, base plus any LoRA adapters')
-    api_key: str | None = Field(default=None, description='Only if the node is behind an auth proxy')
-    max_concurrent: int = Field(default=64, gt=0, description="Roughly the vLLM instance's --max-num-seqs")
-    multimodal: bool = False
-
-    @model_validator(mode='after')
-    def _base_url_is_absolute(self) -> 'PinnedNodeCreate':
-        """A 422 at the door rather than a node stored happily and
-        failing on every request routed to it."""
-        if not self.base_url.startswith(('http://', 'https://')):
-            raise ValueError('base_url must start with http:// or https://')
-        return self
-
-
-class PinnedNodeUpdate(BaseModel):
-    """A partial edit. Everything optional; absent means unchanged."""
-
-    base_url: str | None = None
-    models: list[str] | None = Field(default=None, min_length=1)
-    # Absent leaves the stored credential alone; an explicit empty string
-    # clears it. The portal never sends the key back, so treating absent
-    # as "clear" would wipe it on every edit of anything else.
-    api_key: str | None = None
-    max_concurrent: int | None = Field(default=None, gt=0)
-    multimodal: bool | None = None
-    enabled: bool | None = None
-
-    @model_validator(mode='after')
-    def _base_url_is_absolute(self) -> 'PinnedNodeUpdate':
-        if self.base_url is not None and not self.base_url.startswith(('http://', 'https://')):
-            raise ValueError('base_url must start with http:// or https://')
-        return self
-
-    def changes(self) -> NodeChanges:
-        """The edit, as the persistence layer's own contract.
-
-        Was `-> dict`, unannotated, with a fully knowable key set — the
-        model's own fields — which the caller then splatted back into
-        `NodeChanges(**body.changes())`.
-
-        `exclude_unset` is the whole semantics and survives: absent
-        means unchanged, and an explicitly-null `api_key` means clear
-        it. Dumping everything would turn every edit into a write of
-        every field.
-        """
-        return NodeChanges(**self.model_dump(exclude_unset=True))
-
-
-class PinnedNodeView(BaseModel):
-    """A node added here, as the portal gets it back.
-
-    No ``api_key``: it goes in and is never returned. An admin who needs
-    to change it sets a new one.
-    """
-
-    node_id: str
-    base_url: str
-    models: list[str]
-    max_concurrent: int
-    multimodal: bool
-    enabled: bool
-    has_api_key: bool
-
-    @classmethod
-    def of(cls, node: InferenceNode) -> 'PinnedNodeView':
-        """Project a stored node for the portal."""
-        return cls(
-            node_id=str(node.node_id),
-            base_url=str(node.base_url),
-            models=list(node.models or []),
-            max_concurrent=int(node.max_concurrent),
-            multimodal=bool(node.multimodal),
-            enabled=bool(node.enabled),
-            has_api_key=bool(node.api_key),
-        )
-
-
 class NodeMetricsView(BaseModel):
     """The node's own numbers, when it publishes them.
 
@@ -260,6 +167,7 @@ class NodeStatusView(BaseModel):
     models: list[str]
     multimodal: bool
     source: str
+    kind: BackendKind = BackendKind.OPENAI
     in_flight: int
     max_concurrent: int
     utilization: float

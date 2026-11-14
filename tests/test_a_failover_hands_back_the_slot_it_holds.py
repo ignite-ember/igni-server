@@ -276,5 +276,7 @@ class TestTheContextWhenItsPartsFail:
                 'total_tokens': 3,
                 'duration': 1.235,
                 'stream': True,
+                'backend_id': 'node-1',
+                'kind': 'openai',
             }
         ]

@@ -55,9 +55,37 @@ export interface NodeMetrics {
   preemptions: number | null
 }
 
+/** Who serves a backend: the customer's own (or anything OpenAI-compatible), or a cloud's. */
+export type BackendKind = 'openai' | 'azure_openai' | 'vertex_openai'
+
+/** How requests to a backend are authenticated. Each kind offers its own set. */
+export type AuthMethod =
+  'none' | 'api_key' | 'ambient' | 'managed_identity' | 'client_secret' | 'impersonate' | 'service_account_key'
+
+/** A setting an auth method needs — not secret, shown back in the portal. */
+export type AuthSetting = 'client_id' | 'tenant_id' | 'service_account'
+
+/** The API a backend speaks, and so the endpoint its models are served on. */
+export type Wire = 'openai'
+
+/** One method a kind offers: the settings it needs (not secret) and where its secret goes. */
+export interface AuthMethodInfo {
+  method: AuthMethod
+  settings: AuthSetting[]
+  secret: 'api_key' | 'credential' | null
+}
+
+/** A kind and its methods, from the server's own table — the first is its default. */
+export interface BackendKindInfo {
+  kind: BackendKind
+  wire: Wire
+  methods: AuthMethodInfo[]
+}
+
 export interface NodeStatus {
   id: string
   base_url: string
+  kind: BackendKind
   /** Every id this node answers to: the base model, plus any LoRA adapters. */
   models: string[]
   multimodal: boolean
@@ -85,7 +113,6 @@ export interface NodeDrain {
   reason: string | null
 }
 
-
 /** A node an admin added by hand. The api_key is never returned. */
 export interface PinnedNode {
   node_id: string
@@ -95,15 +122,50 @@ export interface PinnedNode {
   multimodal: boolean
   enabled: boolean
   has_api_key: boolean
+  kind: BackendKind
+  region: string | null
+  project: string | null
+  model_ids: Record<string, string>
+  auth: AuthMethod
+  auth_settings: Partial<Record<AuthSetting, string>>
+  /** Whether a credential is stored — never what it is. */
+  has_credential: boolean
+}
+
+/**
+ * A partial edit of a node added here. Absent leaves a field alone; an
+ * empty `api_key` or `credential` clears it, and an absent one keeps the
+ * stored secret, which is never sent back.
+ */
+export interface PinnedNodeUpdate {
+  base_url?: string
+  models?: string[]
+  max_concurrent?: number
+  multimodal?: boolean
+  enabled?: boolean
+  region?: string
+  project?: string
+  model_ids?: Record<string, string>
+  auth?: AuthMethod
+  auth_settings?: Partial<Record<AuthSetting, string>>
+  api_key?: string
+  credential?: string
 }
 
 export interface PinnedNodeInput {
   node_id: string
-  base_url: string
+  base_url?: string
   models: string[]
   api_key?: string
   max_concurrent: number
   multimodal: boolean
+  kind?: BackendKind
+  region?: string
+  project?: string
+  model_ids?: Record<string, string>
+  auth?: AuthMethod
+  auth_settings?: Partial<Record<AuthSetting, string>>
+  credential?: string
 }
 
 /** An address to ask what it serves, before adding it as a node. */

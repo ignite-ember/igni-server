@@ -27,9 +27,19 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import inspect
+import pathlib
 
 from fastapi import HTTPException
 import pytest
+from sqlalchemy.exc import IntegrityError
+
+from app.db.sql.inference_nodes import InferenceNodeDB
+from app.db.sql.organizations import OrganizationDB
+from app.db.sql.schemas.inference_node import NodeIdAlreadyRegistered
+from app.db.sql.schemas.organization import SlugTaken
+from app.services.ai.backend import InferenceBackend
+from tests.conftest import create_org, create_user
 
 
 async def _gather_outcomes(make_coro, n: int = 6):
@@ -54,9 +64,6 @@ class TestOrganizationSlug:
     async def test_a_duplicate_slug_is_a_409_not_a_500(self, db):
         """The sequential case, which was the actual bug: this never
         needed concurrency to fail."""
-        from app.db.sql.organizations import OrganizationDB
-        from app.db.sql.schemas.organization import SlugTaken
-        from tests.conftest import create_user
 
         await create_user(db, user_id='slug-owner', email='slug-owner@example.com')
         await db.flush()
@@ -78,9 +85,6 @@ class TestOrganizationSlug:
         org's own domain, which seats them as admin. Seating queries
         memberships; that query must not autoflush the org and let the
         duplicate slug escape as a raw IntegrityError."""
-        from app.db.sql.organizations import OrganizationDB
-        from app.db.sql.schemas.organization import SlugTaken
-        from tests.conftest import create_user
 
         await create_user(db, user_id='first-founder', email='ann@first.io')
         await create_user(db, user_id='second-founder', email='bob@second.io')
@@ -111,9 +115,6 @@ class TestOrganizationSlug:
         assuming. A different violation must not be reported as a taken
         slug — it should stay a 500 somebody investigates.
         """
-        import inspect
-
-        from app.db.sql.organizations import OrganizationDB
 
         source = inspect.getsource(OrganizationDB._flush_refusing_taken_slug)
 
@@ -133,29 +134,21 @@ class TestInferenceNodeId:
         """Registration is driven by a node's own startup, so two
         instances racing on one id is the ordinary way here, not an
         unusual one."""
-        from app.db.sql.inference_nodes import InferenceNodeDB
-        from app.db.sql.schemas.inference_node import NodeIdAlreadyRegistered
-        from tests.conftest import create_org, create_user
 
         await create_user(db, user_id='node-owner', email='node-owner@example.com')
         org = await create_org(db, owner_user_id='node-owner', slug='node-org', display_name='N')
         await db.flush()
 
         nodes = InferenceNodeDB()
-        kwargs = dict(
-            org_id=str(org.id),
-            base_url='http://127.0.0.1:9',
-            models=['m'],
-            created_by_user_id='node-owner',
-        )
-        await nodes.create(node_id='dup-node', **kwargs)
+        backend = InferenceBackend(id='dup-node', base_url='http://127.0.0.1:9', models=['m'])
+        await nodes.create(backend, org_id=str(org.id), created_by_user_id='node-owner')
 
         # A domain error, not an HTTPException. The status code is the
         # router's to choose — see app/services/ai/pinned_nodes.py, which
         # turns it into a NodeIdTaken the portal router maps to 409 — and a caller
         # that is not an HTTP request can now catch this by name.
         with pytest.raises(NodeIdAlreadyRegistered) as caught:
-            await nodes.create(node_id='dup-node', **kwargs)
+            await nodes.create(backend, org_id=str(org.id), created_by_user_id='node-owner')
 
         assert caught.value.node_id == 'dup-node'
 
@@ -168,16 +161,11 @@ class TestInferenceNodeId:
         for a node that does not exist, instead of at the user id that
         does not.
         """
-        from sqlalchemy.exc import IntegrityError
-
-        from app.db.sql.inference_nodes import InferenceNodeDB
 
         with pytest.raises(IntegrityError):
             await InferenceNodeDB().create(
-                node_id='orphan-node',
+                InferenceBackend(id='orphan-node', base_url='http://127.0.0.1:9', models=['m']),
                 org_id=None,
-                base_url='http://127.0.0.1:9',
-                models=['m'],
                 created_by_user_id='nobody-has-this-id',
             )
 
@@ -192,7 +180,6 @@ class TestNoCreateFlushesWithoutAHandler:
     """
 
     def test_every_db_module_that_inserts_handles_conflicts(self):
-        import pathlib
 
         root = pathlib.Path(__file__).resolve().parent.parent / 'app/db/sql'
 

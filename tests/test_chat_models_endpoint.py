@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.chat.services import chat_services, ChatServices
-from app.services.ai.schemas import InferenceBackend
 from tests.conftest import auth_header, create_org, create_user, make_token
 
 

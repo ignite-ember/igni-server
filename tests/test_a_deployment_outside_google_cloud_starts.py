@@ -91,7 +91,8 @@ class TestNothingGoogleSpecificIsRequired:
             [
                 sys.executable,
                 '-c',
-                'import app.main; print("imported", type(app.main.app).__name__)',
+                'import sys, app.main; print("imported", type(app.main.app).__name__); '
+                'print("cloud sdks loaded:", sorted(m for m in ("google.auth", "azure.identity") if m in sys.modules))',
             ],
             cwd=tmp_path,
             env={
@@ -106,10 +107,13 @@ class TestNothingGoogleSpecificIsRequired:
             timeout=180,
         )
 
-        assert (
-            result.returncode == 0
-        ), f'the app does not import in an environment with no Google Cloud variables:\n{result.stderr[-2000:]}'
+        assert result.returncode == 0, (
+            f'the app does not import in an environment with no Google Cloud variables:\n{result.stderr[-2000:]}'
+        )
         assert 'imported FastAPI' in result.stdout, result.stdout
+        # The cloud credential libraries load only when a backend of that
+        # cloud is configured (app/services/ai/providers): booting loads none.
+        assert 'cloud sdks loaded: []' in result.stdout, result.stdout
 
     def test_there_is_no_google_cloud_sdk_in_the_dependency_set(self):
         """The air-gap claim (DP-5) and this one are the same claim seen
@@ -122,12 +126,17 @@ class TestNothingGoogleSpecificIsRequired:
             'the assertion below is no longer measuring what it thinks.'
         )
 
-        # `googleapis-common-protos` is not a cloud SDK: it is the protobuf
-        # definitions of `google.rpc.Status`, which the OTLP exporters decode a
-        # collector's error replies with. It names no Google service and
-        # reaches none. Allowed by name, so anything else beginning `google`
-        # still fails here.
-        not_a_cloud_sdk = {'name = "googleapis-common-protos"'}
+        # Allowed by name, each for its reason, so anything else beginning
+        # `google` still fails here:
+        #
+        # - `googleapis-common-protos` is the protobuf definitions of
+        #   `google.rpc.Status`, which the OTLP exporters decode a collector's
+        #   error replies with. It names no Google service and reaches none.
+        # - `google-auth` is credentials only — no storage, no service client.
+        #   It is declared (pyproject) but imported only inside the Vertex token
+        #   sources (app/services/ai/providers/google.py), so a deployment with
+        #   no Vertex backend never loads it; the boot test above holds that.
+        not_a_cloud_sdk = {'name = "googleapis-common-protos"', 'name = "google-auth"'}
         google = [
             line for line in lock.splitlines() if line.startswith('name = "google') and line not in not_a_cloud_sdk
         ]
@@ -287,6 +296,6 @@ class TestNoTestLeavesTheEnvironmentBehind:
 
         before = os.environ.get('APP_ENV')
         assert the_app() is not None
-        assert (
-            os.environ.get('APP_ENV') == before
-        ), f'the_app() left APP_ENV as {os.environ.get("APP_ENV")!r}, was {before!r}'
+        assert os.environ.get('APP_ENV') == before, (
+            f'the_app() left APP_ENV as {os.environ.get("APP_ENV")!r}, was {before!r}'
+        )

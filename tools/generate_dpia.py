@@ -48,7 +48,7 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TRACKER = _ROOT / 'docs/COMPLIANCE_TRACKER.md'
 _READINESS = _ROOT / 'docs/REVIEW_FINDINGS.md'
 _ROP_GENERATOR = _ROOT / 'tools/generate_records_of_processing.py'
-_SCHEMAS = _ROOT / 'app/services/ai/schemas.py'
+_SCHEMAS = _ROOT / 'app/services/ai/backend.py'
 _OUTPUT = _ROOT / 'docs/DPIA.md'
 
 PLACEHOLDER = '`__CONTROLLER_TO_COMPLETE__`'

@@ -36,6 +36,11 @@ rather than each generating their own.
 ``GET {base_url}/models``, which every OpenAI-compatible server answers
 including vLLM. Deliberately not a completion: a real inference request
 costs GPU time, and would report a busy node as slow rather than as busy.
+
+A cloud backend is asked nothing at all: its probe is whether the server
+can get a token for it. That is the part an operator controls — the role,
+the identity, the stored key — and a model listing would call the provider
+for every portal refresh to learn little the first request does not.
 """
 
 from __future__ import annotations
@@ -50,7 +55,11 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.db.redis.keys import key as redis_key
 from app.services.ai import metrics as node_metrics
-from app.services.ai.schemas import HealthState, InferenceBackend, NodeHealth, NodeMetrics, ProbedNode
+from app.services.ai.backend import InferenceBackend
+from app.services.ai.providers.auth import AuthMethod
+from app.services.ai.providers.credentials import CloudCredentials
+from app.services.ai.providers.tokens import CredentialUnavailable
+from app.services.ai.schemas import HealthState, NodeHealth, NodeMetrics, ProbedNode
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +82,22 @@ _HEARTBEAT_GRACE_SECONDS = 180
 _REJECTED_CREDENTIALS = 'The node rejected our credentials'
 
 
+#: How the health detail names each token method, for the person reading it.
+_METHOD_NAMES = {
+    AuthMethod.AMBIENT: "the server's own cloud identity",
+    AuthMethod.MANAGED_IDENTITY: 'the user-assigned managed identity',
+    AuthMethod.CLIENT_SECRET: "the app registration's client secret",
+    AuthMethod.IMPERSONATE: 'the impersonated service account',
+    AuthMethod.SERVICE_ACCOUNT_KEY: 'the stored service-account key',
+}
+
+
 class NodeHealthProbe:
     """Asks nodes whether they are answering, and remembers briefly."""
 
-    def __init__(self, *, timeout: float = _PROBE_TIMEOUT_SECONDS) -> None:
+    def __init__(self, *, credentials: CloudCredentials, timeout: float = _PROBE_TIMEOUT_SECONDS) -> None:
         self._timeout = timeout
+        self._credentials = credentials
         # One client per loop, for the reason `NodeRegistry` documents:
         # Redis clients are loop-bound.
         self._redis_by_loop: dict[int, aioredis.Redis] = {}
@@ -97,11 +117,13 @@ class NodeHealthProbe:
         questions and fail independently: a node can be perfectly
         reachable and publish no metrics, which is not a health problem.
         """
+        # A cloud provider publishes no vLLM gauges.
+        own = [b for b in backends if not b.kind.is_cloud]
         results = await asyncio.gather(
-            *(node_metrics.fetch(base_url=b.base_url, api_key=b.api_key, timeout=self._timeout) for b in backends),
+            *(node_metrics.fetch(base_url=b.base_url, api_key=b.api_key, timeout=self._timeout) for b in own),
             return_exceptions=True,
         )
-        return {backend.id: result for backend, result in zip(backends, results) if isinstance(result, NodeMetrics)}
+        return {backend.id: result for backend, result in zip(own, results) if isinstance(result, NodeMetrics)}
 
     async def check_all(self, backends: list[InferenceBackend]) -> dict[str, NodeHealth]:
         """Probe every backend concurrently, reusing cached answers.
@@ -153,6 +175,8 @@ class NodeHealthProbe:
     # ── Internals ────────────────────────────────────────────────────
 
     async def _probe(self, backend: InferenceBackend) -> NodeHealth:
+        if backend.kind.is_cloud:
+            return await self._cloud_probe(backend)
         health, payload = await self._request(base_url=backend.base_url, api_key=backend.api_key)
         if health.state is not HealthState.HEALTHY:
             return health
@@ -171,6 +195,25 @@ class NodeHealthProbe:
                 }
             )
         return health
+
+    async def _cloud_probe(self, backend: InferenceBackend) -> NodeHealth:
+        """Whether the server can sign for this cloud backend; the provider itself is not called."""
+        if backend.auth is None or not backend.auth.is_token:
+            # A static key (an Azure resource's) is checked by the first request, not here.
+            return NodeHealth(state=HealthState.HEALTHY, detail='Uses a stored key; checked on its first request')
+        started = time.monotonic()
+        try:
+            await self._credentials.bearer(backend.signer)
+        except CredentialUnavailable:
+            return NodeHealth(
+                state=HealthState.DEGRADED,
+                detail=f'Could not get a token with {_METHOD_NAMES.get(backend.auth, backend.auth.value)}',
+            )
+        return NodeHealth(
+            state=HealthState.HEALTHY,
+            detail='The server holds a token for this provider',
+            latency_ms=(time.monotonic() - started) * 1000,
+        )
 
     async def _request(self, *, base_url: str, api_key: str | None) -> tuple[NodeHealth, object]:
         """One GET against ``/models``, turned into a health verdict.

@@ -123,7 +123,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 
 | Table | Held | Returned on a subject-access request | Withheld | Not personal |
 |---|---|---|---|---|
-| `chat_usage` | 9 | `created_at`, `duration`, `input_tokens`, `model`, `org_id`, `output_tokens`, `stream`, `total_tokens`, `user_id` | — | 2 |
+| `chat_usage` | 9 | `created_at`, `duration`, `input_tokens`, `model`, `org_id`, `output_tokens`, `stream`, `total_tokens`, `user_id` | — | 4 |
 
 ### Security audit trail
 
@@ -155,7 +155,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 
 | Table | Held | Returned on a subject-access request | Withheld | Not personal |
 |---|---|---|---|---|
-| `inference_nodes` | 2 | `created_at`, `created_by_user_id` | — | 10 |
+| `inference_nodes` | 2 | `created_at`, `created_by_user_id` | — | 17 |
 
 ### The cloud's producers and their VMs
 

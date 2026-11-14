@@ -86,6 +86,14 @@ class NodeNotAdded(LookupError):
         self.node_id = node_id
 
 
+class NodeDefinitionInvalid(ValueError):
+    """A node, as added or as edited, is one the router cannot use; nothing was written."""
+
+    def __init__(self, node_id: str, *, reason: str, adding: bool = False) -> None:
+        super().__init__(f"Node '{node_id}' was not {'added' if adding else 'changed'}: {reason}")
+        self.node_id = node_id
+
+
 class NodeNotServing(LookupError):
     """Nothing serves under this id, from any source."""
 

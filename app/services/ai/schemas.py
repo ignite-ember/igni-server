@@ -18,90 +18,17 @@ acquire must be paired with a release.
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel
 
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.node_drain import NodeDrain
+from app.services.ai.providers.kinds import BackendKind
 
 # How long a lease may be held before the pool assumes its holder died.
 # Generous, because a large summarisation request against a loaded node
 # legitimately takes minutes — the cost of setting this too low is
 # over-subscribing a node, which is worse than briefly under-using it.
 DEFAULT_LEASE_TIMEOUT_SECONDS = 900
-
-
-class InferenceBackend(BaseModel):
-    """One inference endpoint the customer runs.
-
-    ``models`` is a list because a vLLM node started with
-    ``--enable-lora --lora-modules sql=... docs=...`` serves its base
-    model *and* every adapter as separate ids on the same process, and a
-    request picks between them with the ordinary ``model`` parameter.
-    Modelling that as one string per node would mean either a node per
-    adapter — three entries for one GPU, each with its own concurrency
-    gauge counting the same sequences — or adapters being unreachable.
-
-    They share weights, memory and the KV cache, so capacity and sticky
-    routing stay per node. Only *selection* is per model.
-    """
-
-    id: str
-    base_url: str
-
-    # Written as ``models: [...]`` or, for the common single-model node,
-    # ``model: "..."``. Both end up here; see the validator below.
-    models: list[str] = Field(min_length=1)
-
-    # Optional, and that is deliberate. A vLLM node on a private network
-    # usually has no auth at all; requiring a token here would mean every
-    # Helm chart carrying a hardcoded "none". Customers who front their
-    # nodes with an auth proxy set it, and the pool passes it through.
-    api_key: str | None = None
-
-    # Concurrent requests this node will serve before the pool routes
-    # elsewhere. The right value is roughly the vLLM instance's
-    # ``--max-num-seqs``; going over does not fail, it just queues inside
-    # the node where we can no longer see or balance it.
-    max_concurrent: int = Field(default=64, gt=0)
-
-    # Whether the model accepts image input, so the chat router can skip a
-    # text-only node when the request carries images.
-    multimodal: bool = False
-
-    @model_validator(mode='before')
-    @classmethod
-    def _accept_a_single_model(cls, data):
-        """Let a one-model node be written ``model: "x"``.
-
-        Not legacy tolerance — most nodes serve exactly one model, and
-        making every config say ``models: ["x"]`` to express that would
-        be noise. A payload giving both wins on ``models``.
-        """
-        if isinstance(data, dict) and 'models' not in data and 'model' in data:
-            data = {**data, 'models': [data['model']]}
-        return data
-
-    @property
-    def primary_model(self) -> str:
-        """What a request that names no model gets.
-
-        The first entry, which for a LoRA node is the base model — the
-        adapters are opt-in by name.
-        """
-        return self.models[0]
-
-    def serves(self, model: str | None) -> bool:
-        """Whether this node can answer for ``model``.
-
-        ``None`` means the caller did not care, and every node can answer
-        that.
-        """
-        return model is None or model in self.models
-
-    @model_validator(mode='after')
-    def _base_url_is_absolute(self) -> 'InferenceBackend':
-        if not self.base_url.startswith(('http://', 'https://')):
-            raise ValueError(f'Backend {self.id!r}: base_url must start with http:// or https://')
-        return self
 
 
 class RegisteredNode(BaseModel):
@@ -231,6 +158,7 @@ class BackendStatus(BaseModel):
     models: list[str]
     multimodal: bool
     source: BackendSource
+    kind: BackendKind = BackendKind.OPENAI
     in_flight: int
     max_concurrent: int
     health: NodeHealth
@@ -253,38 +181,6 @@ class BackendStatus(BaseModel):
     @property
     def utilization(self) -> float:
         return self.in_flight / self.max_concurrent if self.max_concurrent else 0.0
-
-
-class BackendLease(BaseModel):
-    """A claim on one backend, held for the duration of one request.
-
-    ``lease_id`` is what releases it. Holding this rather than a bare
-    backend id is what makes the concurrency gauge correct: two
-    concurrent requests to the same node hold two leases, and releasing
-    one does not free the other.
-    """
-
-    lease_id: str
-    backend_id: str
-    base_url: str
-    model: str
-    api_key: str | None = None
-
-    @property
-    def completions_url(self) -> str:
-        """The node's OpenAI-compatible chat completions endpoint."""
-        return f'{self.base_url.rstrip("/")}/chat/completions'
-
-    def auth_headers(self) -> dict[str, str]:
-        """Headers for a call to this node.
-
-        No ``Authorization`` when the node has no key: a vLLM on a private
-        network has no auth, and ``Bearer None`` would be a confusing 401.
-        """
-        headers = {'Content-Type': 'application/json'}
-        if self.api_key:
-            headers['Authorization'] = f'Bearer {self.api_key}'
-        return headers
 
 
 class NoBackendAvailableError(Exception):

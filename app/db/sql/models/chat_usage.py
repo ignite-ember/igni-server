@@ -19,6 +19,10 @@ class ChatUsage(TenantBase):
     #: the app — its own id, or the space's — so an app's whole use sums.
     app_id: Mapped[str | None] = Column(String(255), nullable=True)
     model: Mapped[str] = Column(String(255), nullable=False)
+    # The backend that answered, and its kind (``BackendKind``): a cloud's
+    # usage is billed by the cloud, a GPU node's is not. Null before t0030.
+    backend_id: Mapped[str | None] = Column(String(255), nullable=True)
+    kind: Mapped[str | None] = Column(String(64), nullable=True)
     input_tokens: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))
     output_tokens: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))
     total_tokens: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))

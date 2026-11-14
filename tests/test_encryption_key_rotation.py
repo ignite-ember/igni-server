@@ -222,8 +222,8 @@ def _store_node_key(node_id: str, plaintext: str = 'node-proxy-key') -> None:
     """A portal-added GPU node whose API key is encrypted under the key configured now."""
     _query(
         _shared_url(),
-        'INSERT INTO inference_nodes (id, node_id, base_url, models, api_key) '
-        "VALUES (:id, :node_id, 'http://gpu.internal:8000', '[\"m\"]'::jsonb, :value) RETURNING id",
+        'INSERT INTO inference_nodes (id, node_id, base_url, models, api_key, auth) '
+        "VALUES (:id, :node_id, 'http://gpu.internal:8000', '[\"m\"]'::jsonb, :value, 'api_key') RETURNING id",
         {'id': str(uuid.uuid4()), 'node_id': node_id, 'value': encrypt_secret(plaintext)},
     )
 

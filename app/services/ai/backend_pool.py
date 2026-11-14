@@ -39,16 +39,15 @@ import redis.asyncio as aioredis
 
 from app.config import settings
 from app.db.redis.keys import key as redis_key
+from app.services.ai.backend import BackendLease, InferenceBackend
 from app.services.ai.backend_provider import InferenceBackendProvider
 from app.services.ai.health import combine
 from app.services.ai.node_drain import NodeDrainRegistry
 from app.services.ai.schemas import (
     AllBackendsDrainedError,
-    BackendLease,
     BackendStatus,
     DEFAULT_LEASE_TIMEOUT_SECONDS,
     HealthState,
-    InferenceBackend,
     ModelNotAvailableError,
     NoBackendAvailableError,
     NodeHealth,
@@ -260,6 +259,7 @@ class InferenceBackendPool:
                     base_url=backend.base_url,
                     models=list(backend.models),
                     multimodal=backend.multimodal,
+                    kind=backend.kind,
                     # A node in the registry is registered even if it is
                     # also named elsewhere; the source map holds the two
                     # that are not.
@@ -370,13 +370,7 @@ class InferenceBackendPool:
         # leases are outstanding; pruning handles the normal case.
         pipe.expire(key, self.lease_timeout * 2)
         await pipe.execute()
-        return BackendLease(
-            lease_id=lease_id,
-            backend_id=backend.id,
-            base_url=backend.base_url,
-            model=model or backend.primary_model,
-            api_key=backend.api_key,
-        )
+        return BackendLease.for_backend(backend, lease_id=lease_id, model=model or backend.primary_model)
 
     async def _flush_sticky_if_config_changed(
         self, redis_client: aioredis.Redis, backends: list[InferenceBackend]

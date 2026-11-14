@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from app.services.ai.providers.auth import AuthMethod
+
 
 class NodeIdAlreadyRegistered(Exception):
     """Two nodes tried to register under one id.
@@ -52,6 +54,16 @@ class NodeChanges(BaseModel):
     pools: list[str] | None = None
     multimodal: bool | None = None
     enabled: bool | None = None
+    region: str | None = None
+    project: str | None = None
+    # As ``api_key``: absent leaves it, an empty string clears it.
+    credential: str | None = None
+    model_ids: dict[str, str] | None = None
+    auth: AuthMethod | None = None
+    auth_settings: dict[str, str] | None = None
 
     def clears_api_key(self) -> bool:
         return self.api_key == ''
+
+    def clears_credential(self) -> bool:
+        return self.credential == ''

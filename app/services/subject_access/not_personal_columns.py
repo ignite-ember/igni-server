@@ -100,7 +100,22 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'inference_nodes.multimodal',
         'inference_nodes.enabled',
         'inference_nodes.updated_at',
+        'inference_nodes.kind',
+        'inference_nodes.region',
+        'inference_nodes.project',
+        'inference_nodes.model_ids',
+        # How a node authenticates and the method's settings: a managed
+        # identity's client id, a service account's address — the
+        # deployment's machine identities, not a person's.
+        'inference_nodes.auth',
+        'inference_nodes.auth_settings',
         'organizations.updated_at',
+    }
+    | {
+        # How a turn was served, not by whom: the backend that answered and
+        # its kind. The person is `chat_usage.user_id`, classified elsewhere.
+        'chat_usage.backend_id',
+        'chat_usage.kind',
     }
     | {
         # Credentials belonging to a *system* — a GPU node's proxy key.
@@ -109,6 +124,9 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         # person's, and we are not giving it to you", which would be the
         # wrong thing to tell them about a machine credential.
         'inference_nodes.api_key',
+        # The same for a cloud model provider: a service account's key or
+        # an app's client secret, the server's and not a person's.
+        'inference_nodes.credential',
     }
     | {
         # The cloud's VMs: which profile a group or app has, what a

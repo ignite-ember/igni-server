@@ -60,6 +60,11 @@ _ALLOWED_HOSTS: dict[str, str] = {
     'accounts.google.com': 'Google OAuth, only when the customer enables it',
     'oauth2.googleapis.com': 'Google token exchange',
     'www.googleapis.com': 'Google userinfo, after the token exchange',
+    # Cloud model providers, reached only through a backend an operator
+    # configured with that cloud's kind (app/services/ai/providers). There
+    # is no default backend of any cloud kind.
+    'aiplatform.googleapis.com': "Vertex AI's global endpoint, only for a vertex_openai backend in region global",
+    'cognitiveservices.azure.com': 'the Entra ID scope Azure OpenAI tokens are issued for, never fetched',
     # Not hosts.
     'www.w3.org': 'an XML namespace in an SVG, never fetched',
     # Examples in docstrings, schema descriptions and log samples.

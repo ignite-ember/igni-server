@@ -43,8 +43,8 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.db.sql.inference_nodes import InferenceNodeDB
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.node_registry import NodeRegistry
-from app.services.ai.schemas import InferenceBackend
 from app.services.secrets import SecretCipherUnavailable, SecretDecryptError
 
 logger = logging.getLogger(__name__)

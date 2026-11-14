@@ -1050,6 +1050,57 @@
         "title": "AuditEventView",
         "type": "object"
       },
+      "AuthMethod": {
+        "description": "How a request to a backend is authenticated.",
+        "enum": [
+          "none",
+          "api_key",
+          "ambient",
+          "managed_identity",
+          "client_secret",
+          "impersonate",
+          "service_account_key"
+        ],
+        "title": "AuthMethod",
+        "type": "string"
+      },
+      "AuthMethodView": {
+        "description": "One way a kind of backend can authenticate, for the portal to build its form from.",
+        "properties": {
+          "method": {
+            "$ref": "#/components/schemas/AuthMethod"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "enum": [
+                  "api_key",
+                  "credential"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "settings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Settings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "method",
+          "settings",
+          "secret"
+        ],
+        "title": "AuthMethodView",
+        "type": "object"
+      },
       "AuthMethods": {
         "description": "Everything the sign-in page needs to render itself.",
         "properties": {
@@ -1197,6 +1248,41 @@
           }
         },
         "title": "AvailableModels",
+        "type": "object"
+      },
+      "BackendKind": {
+        "description": "Who serves a backend, which decides its address and its credentials.\n\n`openai` is every backend there was before kinds: the customer's vLLM\nnodes, OpenAI itself, anything OpenAI-compatible, with an optional\nBearer key. It is the default, so a configuration written before kinds\nexisted means what it always meant.",
+        "enum": [
+          "openai",
+          "azure_openai",
+          "vertex_openai"
+        ],
+        "title": "BackendKind",
+        "type": "string"
+      },
+      "BackendKindView": {
+        "description": "A kind of backend and the methods it offers, the first being its default.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind"
+          },
+          "methods": {
+            "items": {
+              "$ref": "#/components/schemas/AuthMethodView"
+            },
+            "title": "Methods",
+            "type": "array"
+          },
+          "wire": {
+            "$ref": "#/components/schemas/Wire"
+          }
+        },
+        "required": [
+          "kind",
+          "wire",
+          "methods"
+        ],
+        "title": "BackendKindView",
         "type": "object"
       },
       "Body_ack_v1_platform_orgs__org_id__vm_commands__command_id__ack_post": {
@@ -6173,6 +6259,10 @@
             "title": "In Flight",
             "type": "integer"
           },
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind",
+            "default": "openai"
+          },
           "last_seen_seconds_ago": {
             "anyOf": [
               {
@@ -7758,7 +7848,7 @@
         "type": "object"
       },
       "PinnedNodeCreate": {
-        "description": "A GPU node an admin is adding by hand.",
+        "description": "A node an admin is adding by hand: a GPU node, or a cloud model provider.",
         "properties": {
           "api_key": {
             "anyOf": [
@@ -7769,13 +7859,50 @@
                 "type": "null"
               }
             ],
-            "description": "Only if the node is behind an auth proxy",
+            "description": "Only if the node is behind an auth proxy; an Azure resource's key",
             "title": "Api Key"
           },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthMethod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How requests are authenticated; GET /inference/auth-methods lists what each kind offers"
+          },
+          "auth_settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The method's settings, not secret: an Azure client_id and tenant_id, a service_account",
+            "title": "Auth Settings",
+            "type": "object"
+          },
           "base_url": {
-            "description": "Where the OpenAI-compatible API is served, e.g. http://gpu-3:8000/v1",
+            "default": "",
+            "description": "Where the API is served, e.g. http://gpu-3:8000/v1, or an Azure resource's .../openai/v1. Built from project and region for vertex_openai.",
             "title": "Base Url",
             "type": "string"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The method's secret when it has one: an Azure client secret, a Google service-account key (JSON)",
+            "title": "Credential"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind",
+            "default": "openai",
+            "description": "openai (a GPU node or any OpenAI-compatible API), azure_openai, or vertex_openai"
           },
           "max_concurrent": {
             "default": 64,
@@ -7783,6 +7910,14 @@
             "exclusiveMinimum": 0.0,
             "title": "Max Concurrent",
             "type": "integer"
+          },
+          "model_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The provider's own name for a model, e.g. an Azure deployment",
+            "title": "Model Ids",
+            "type": "object"
           },
           "models": {
             "description": "Model ids to route here, base plus any LoRA adapters",
@@ -7805,11 +7940,34 @@
             "pattern": "^[A-Za-z0-9._-]+$",
             "title": "Node Id",
             "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "vertex_openai: the Google Cloud project",
+            "title": "Project"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "vertex_openai: where the model runs, e.g. europe-west4",
+            "title": "Region"
           }
         },
         "required": [
           "node_id",
-          "base_url",
           "models"
         ],
         "title": "PinnedNodeCreate",
@@ -7829,6 +7987,30 @@
             ],
             "title": "Api Key"
           },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthMethod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_settings": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Settings"
+          },
           "base_url": {
             "anyOf": [
               {
@@ -7839,6 +8021,17 @@
               }
             ],
             "title": "Base Url"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential"
           },
           "enabled": {
             "anyOf": [
@@ -7862,6 +8055,20 @@
               }
             ],
             "title": "Max Concurrent"
+          },
+          "model_ids": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Ids"
           },
           "models": {
             "anyOf": [
@@ -7888,14 +8095,46 @@
               }
             ],
             "title": "Multimodal"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
           }
         },
         "title": "PinnedNodeUpdate",
         "type": "object"
       },
       "PinnedNodeView": {
-        "description": "A node added here, as the portal gets it back.\n\nNo ``api_key``: it goes in and is never returned. An admin who needs\nto change it sets a new one.",
+        "description": "A node added here, as the portal gets it back.\n\nNo ``api_key`` or ``credential``: they go in and are never returned.\nAn admin who needs to change one sets a new one.",
         "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/AuthMethod"
+          },
+          "auth_settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Auth Settings",
+            "type": "object"
+          },
           "base_url": {
             "title": "Base Url",
             "type": "string"
@@ -7908,9 +8147,23 @@
             "title": "Has Api Key",
             "type": "boolean"
           },
+          "has_credential": {
+            "title": "Has Credential",
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind"
+          },
           "max_concurrent": {
             "title": "Max Concurrent",
             "type": "integer"
+          },
+          "model_ids": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Model Ids",
+            "type": "object"
           },
           "models": {
             "items": {
@@ -7926,6 +8179,28 @@
           "node_id": {
             "title": "Node Id",
             "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
           }
         },
         "required": [
@@ -7935,7 +8210,14 @@
           "max_concurrent",
           "multimodal",
           "enabled",
-          "has_api_key"
+          "has_api_key",
+          "kind",
+          "region",
+          "project",
+          "model_ids",
+          "auth",
+          "auth_settings",
+          "has_credential"
         ],
         "title": "PinnedNodeView",
         "type": "object"
@@ -13166,6 +13448,14 @@
         ],
         "title": "Wakes",
         "type": "object"
+      },
+      "Wire": {
+        "description": "The API a backend speaks, and so the endpoint that serves its models.",
+        "enum": [
+          "openai"
+        ],
+        "title": "Wire",
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -19359,6 +19649,37 @@
           }
         ],
         "summary": "Get Inference Status",
+        "tags": [
+          "Portal - Inference"
+        ]
+      }
+    },
+    "/v1/portal/inference/auth-methods": {
+      "get": {
+        "description": "Each kind of backend and the ways it can authenticate, the first being its default.",
+        "operationId": "auth_methods_v1_portal_inference_auth_methods_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BackendKindView"
+                  },
+                  "title": "Response Auth Methods V1 Portal Inference Auth Methods Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Auth Methods",
         "tags": [
           "Portal - Inference"
         ]

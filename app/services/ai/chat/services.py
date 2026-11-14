@@ -17,6 +17,7 @@ from app.services.ai.chat.tails import TailRunner
 from app.services.ai.chat.upstream_client import UpstreamChatClient
 from app.services.ai.fair_queue import FairQueue
 from app.services.ai.pool_manager import PoolManager
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.token_estimate import TokenEstimator
 from app.services.ai.upstream import RetryPolicy
 from app.services.auth.org_context import OrgContexts
@@ -45,6 +46,7 @@ class ChatServices:
         retry: RetryPolicy | None = None,
         callers: ChatCallerResolver | None = None,
         catalog: ChatModelCatalog | None = None,
+        credentials: CloudCredentials | None = None,
     ) -> None:
         pools = pools or PoolManager()
         self._tails = tails or TailRunner()
@@ -52,7 +54,8 @@ class ChatServices:
             producers=Producers(), orgs=OrgContexts(), group_models=GroupModelService()
         )
         self._catalog = catalog or ChatModelCatalog(pools=pools)
-        upstream = upstream or UpstreamChatClient()
+        credentials = credentials or CloudCredentials()
+        upstream = upstream or UpstreamChatClient(credentials=credentials)
         estimator = estimator or TokenEstimator()
         retry = retry or RetryPolicy()
         self._proxy = ChatProxy(
@@ -69,7 +72,7 @@ class ChatServices:
         """The app's instance, built on first use, so it works with or without a lifespan."""
         services: ChatServices | None = getattr(app.state, 'chat_services', None)
         if services is None:
-            services = app.state.chat_services = cls()
+            services = app.state.chat_services = cls(credentials=CloudCredentials.of_app(app))
         return services
 
     @property

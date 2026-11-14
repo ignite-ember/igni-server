@@ -32,6 +32,8 @@ class ChatUsageDB(TenantData):
         total_tokens: int,
         duration: float | None,
         stream: bool,
+        backend_id: str | None = None,
+        kind: str | None = None,
     ) -> None:
         """Insert a single usage row. Fire-and-forget safe."""
         if org_id is None:
@@ -47,6 +49,8 @@ class ChatUsageDB(TenantData):
                 total_tokens=total_tokens,
                 duration=duration,
                 stream=1 if stream else 0,
+                backend_id=backend_id,
+                kind=kind,
             )
             session.add(row)
 

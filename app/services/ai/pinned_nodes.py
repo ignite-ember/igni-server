@@ -8,17 +8,20 @@ their ids, which is why adding checks all three sources.
 
 import logging
 
-from app.api.base_v1.schema.nodes import PinnedNodeCreate
+from app.api.base_v1.schema.pinned_nodes import PinnedNodeCreate
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.db.sql.inference_nodes import InferenceNodeDB
 from app.db.sql.models.inference_node import InferenceNode
 from app.db.sql.schemas.inference_node import NodeChanges, NodeIdAlreadyRegistered
+from app.services.ai.backend import BackendInvalid
 from app.services.ai.fleet_schemas import (
+    NodeDefinitionInvalid,
     NodeIdAlreadyAdded,
     NodeIdInStaticConfig,
     NodeIdRegisteredByCluster,
     NodeNotAdded,
 )
+from app.services.ai.node_edit import NodeEdit
 from app.services.ai.node_registry import NodeRegistry
 from app.services.ai.pool_manager import PoolManager
 
@@ -43,23 +46,21 @@ class PinnedNodes:
         """Store a node; it is routed to immediately and never expires.
 
         Raises a `NodeIdTaken` subclass naming the source that already
-        holds the id.
+        holds the id, and `NodeDefinitionInvalid` for a node the router
+        could not use — checked by the backend's own rules, so the portal
+        and the config file cannot disagree, and answered in its own words
+        rather than a validation error that would echo the body back.
         """
+        try:
+            backend = node.backend()
+        except BackendInvalid as exc:
+            raise NodeDefinitionInvalid(node.node_id, reason=str(exc), adding=True) from exc
         await self._refuse_if_taken(node.node_id)
         try:
-            created = await self._nodes.create(
-                node_id=node.node_id,
-                # ``None``, not ``''``: the column is a nullable foreign key
-                # to ``organizations.id`` (provenance, not ownership), and no
-                # organisation has an empty id.
-                org_id=by.org_id or None,
-                base_url=node.base_url,
-                models=list(node.models),
-                api_key=node.api_key or None,
-                max_concurrent=node.max_concurrent,
-                multimodal=node.multimodal,
-                created_by_user_id=by.user_id,
-            )
+            # ``None``, not ``''``, for the org: the column is a nullable
+            # foreign key to ``organizations.id`` (provenance, not
+            # ownership), and no organisation has an empty id.
+            created = await self._nodes.create(backend, org_id=by.org_id or None, created_by_user_id=by.user_id)
         except NodeIdAlreadyRegistered as exc:
             # Another request won the race between the check and the insert.
             raise NodeIdAlreadyAdded(node.node_id) from exc
@@ -75,7 +76,20 @@ class PinnedNodes:
         return node
 
     async def edit(self, node_id: str, changes: NodeChanges) -> InferenceNode:
-        """Apply a partial edit. Raises `NodeNotAdded` for any other node."""
+        """Apply a partial edit. Raises `NodeNotAdded` for any other node.
+
+        The edited node must still be a node the router can use, checked
+        before anything is written: changing a Vertex node's region to
+        nothing would otherwise store a definition every request then fails on.
+        Raises `NodeDefinitionInvalid` when it is not.
+        """
+        stored = await self._nodes.get_by_node_id(node_id)
+        if stored is None:
+            raise NodeNotAdded(node_id)
+        try:
+            _edited, changes = NodeEdit(self._nodes.to_backend(stored), changes).result()
+        except BackendInvalid as exc:
+            raise NodeDefinitionInvalid(str(stored.node_id), reason=str(exc)) from exc
         node = await self._nodes.update(node_id, changes)
         if node is None:
             raise NodeNotAdded(node_id)
