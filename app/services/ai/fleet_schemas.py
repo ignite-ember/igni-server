@@ -87,10 +87,10 @@ class NodeNotAdded(LookupError):
 
 
 class NodeDefinitionInvalid(ValueError):
-    """An edit would leave a node the router cannot use; nothing was written."""
+    """A node, as added or as edited, is one the router cannot use; nothing was written."""
 
-    def __init__(self, node_id: str, reason: str) -> None:
-        super().__init__(f"Node '{node_id}' was not changed: {reason}")
+    def __init__(self, node_id: str, reason: str, *, adding: bool = False) -> None:
+        super().__init__(f"Node '{node_id}' was not {'added' if adding else 'changed'}: {reason}")
         self.node_id = node_id
 
 

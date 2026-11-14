@@ -10,11 +10,12 @@ one at all.
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationError
 
 from app.db.sql.models.inference_node import InferenceNode
 from app.db.sql.schemas.inference_node import NodeChanges
 from app.services.ai.fleet_schemas import FleetSnapshot
+from app.services.ai.providers.auth import AuthMethod, default_method, METHODS
 from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.schemas import BackendStatus, InferenceBackend
 
@@ -115,6 +116,9 @@ class NodeHealthView(BaseModel):
 class PinnedNodeCreate(BaseModel):
     """A node an admin is adding by hand: a GPU node, or a cloud model provider."""
 
+    # Never echo a value in a 422: it may be a key or a credential.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     node_id: str = Field(
         min_length=1,
         max_length=128,
@@ -146,24 +150,21 @@ class PinnedNodeCreate(BaseModel):
     multimodal: bool = False
     region: str | None = Field(default=None, description='vertex_openai: where the model runs, e.g. europe-west4')
     project: str | None = Field(default=None, description='vertex_openai: the Google Cloud project')
+    auth: AuthMethod | None = Field(
+        default=None,
+        description='How requests are authenticated; GET /inference/auth-methods lists what each kind offers',
+    )
+    auth_settings: dict[str, str] = Field(
+        default_factory=dict,
+        description="The method's settings, not secret: an Azure client_id and tenant_id, a service_account",
+    )
     credential: str | None = Field(
         default=None,
-        description=(
-            "A cloud node's stored credential as JSON: a Google service-account key, or an Azure app's "
-            "tenant_id, client_id and client_secret. Omit to use the server's own cloud identity."
-        ),
+        description="The method's secret when it has one: an Azure client secret, a Google service-account key (JSON)",
     )
     model_ids: dict[str, str] = Field(
         default_factory=dict, description="The provider's own name for a model, e.g. an Azure deployment"
     )
-
-    @model_validator(mode='after')
-    def _is_a_backend(self) -> 'PinnedNodeCreate':
-        """A 422 at the door rather than a node stored happily and
-        failing on every request routed to it. The rules are the
-        backend's own, so the portal and the config file cannot disagree."""
-        self.base_url = self.backend().base_url
-        return self
 
     def backend(self) -> InferenceBackend:
         """The node as the router will see it. Raises `ValueError` naming what does not fit."""
@@ -180,6 +181,8 @@ class PinnedNodeCreate(BaseModel):
                 'project': self.project,
                 'credential': self.credential or None,
                 'model_ids': self.model_ids,
+                'auth': self.auth,
+                'auth_settings': self.auth_settings,
             }
         )
 
@@ -202,6 +205,9 @@ def backend_or_value_error(fields: dict) -> InferenceBackend:
 class PinnedNodeUpdate(BaseModel):
     """A partial edit. Everything optional; absent means unchanged."""
 
+    # Never echo a value in a 422: it may be a key or a credential.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     base_url: str | None = None
     models: list[str] | None = Field(default=None, min_length=1)
     # Absent leaves the stored credential alone; an explicit empty string
@@ -214,15 +220,22 @@ class PinnedNodeUpdate(BaseModel):
     region: str | None = None
     project: str | None = None
     # As ``api_key``: absent leaves the stored credential alone, an empty
-    # string clears it (back to the server's own cloud identity).
+    # string clears it.
     credential: str | None = None
     model_ids: dict[str, str] | None = None
+    # A new method drops the secret and the settings the old one used,
+    # unless this edit gives them.
+    auth: AuthMethod | None = None
+    auth_settings: dict[str, str] | None = None
 
-    @model_validator(mode='after')
-    def _base_url_is_absolute(self) -> 'PinnedNodeUpdate':
-        if self.base_url is not None and not self.base_url.startswith(('http://', 'https://')):
+    @field_validator('base_url')
+    @classmethod
+    def _base_url_is_absolute(cls, base_url: str | None) -> str | None:
+        # A field validator, so a 422 carries this field's value and not the
+        # whole body, whose api_key or credential it would echo.
+        if base_url is not None and not base_url.startswith(('http://', 'https://')):
             raise ValueError('base_url must start with http:// or https://')
-        return self
+        return base_url
 
     def changes(self) -> NodeChanges:
         """The edit, as the persistence layer's own contract.
@@ -257,6 +270,8 @@ class PinnedNodeView(BaseModel):
     region: str | None = None
     project: str | None = None
     model_ids: dict[str, str] = Field(default_factory=dict)
+    auth: AuthMethod = AuthMethod.NONE
+    auth_settings: dict[str, str] = Field(default_factory=dict)
     # As ``has_api_key``: whether one is stored, never what it is.
     has_credential: bool = False
 
@@ -275,8 +290,47 @@ class PinnedNodeView(BaseModel):
             region=node.region,
             project=node.project,
             model_ids=dict(node.model_ids or {}),
+            auth=AuthMethod(node.auth)
+            if node.auth
+            else default_method(
+                BackendKind(node.kind or 'openai'), has_api_key=bool(node.api_key), has_credential=bool(node.credential)
+            ),
+            auth_settings=dict(node.auth_settings or {}),
             has_credential=bool(node.credential),
         )
+
+
+class AuthMethodView(BaseModel):
+    """One way a kind of backend can authenticate, for the portal to build its form from."""
+
+    method: AuthMethod
+    #: Settings the method needs, not secret.
+    settings: list[str]
+    #: Where its secret goes, `api_key` or `credential`, or none.
+    secret: str | None
+
+
+class BackendKindView(BaseModel):
+    """A kind of backend and the methods it offers, the first being its default."""
+
+    kind: BackendKind
+    wire: str
+    methods: list[AuthMethodView]
+
+    @classmethod
+    def every(cls) -> list['BackendKindView']:
+        """Every kind, from the server's own table."""
+        return [
+            cls(
+                kind=kind,
+                wire=kind.wire.value,
+                methods=[
+                    AuthMethodView(method=method, settings=list(spec.settings), secret=spec.secret)
+                    for method, spec in methods.items()
+                ],
+            )
+            for kind, methods in METHODS.items()
+        ]
 
 
 class NodeMetricsView(BaseModel):

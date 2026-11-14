@@ -378,6 +378,8 @@ class InferenceBackendPool:
             model=model or backend.primary_model,
             api_key=backend.api_key,
             kind=backend.kind,
+            auth=backend.auth,
+            auth_settings=dict(backend.auth_settings),
             credential=backend.credential,
             model_ids=dict(backend.model_ids),
         )

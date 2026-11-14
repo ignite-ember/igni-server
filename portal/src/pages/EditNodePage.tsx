@@ -30,6 +30,7 @@ import {
   Button,
   Checkbox,
   FormControl,
+  Textarea,
   PageHeader,
   Spinner,
   Stack,
@@ -41,17 +42,21 @@ import { useState } from "react";
 import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 
 import client from "../api/client";
+import {
+  type AuthDraft,
+  authComplete,
+  authFields,
+  KIND_LABEL,
+  methodsOf,
+  modelIdsText,
+  parseModelIds,
+  useAuthMethods,
+} from "../components/inference/auth";
+import { AuthFields } from "../components/inference/AuthFields";
+import type { PinnedNode } from "../types";
 import "./EditNodePage.css";
 
-interface StoredNode {
-  node_id: string;
-  base_url: string;
-  models: string[];
-  max_concurrent: number;
-  multimodal: boolean;
-  enabled: boolean;
-  has_api_key: boolean;
-}
+type StoredNode = PinnedNode;
 
 export function EditNodePage() {
   const { nodeId = "" } = useParams<{ nodeId: string }>();
@@ -120,12 +125,36 @@ function NodeForm({ node }: { node: StoredNode }) {
   const [multimodal, setMultimodal] = useState(node.multimodal);
   const [enabled, setEnabled] = useState(node.enabled);
   const [apiKey, setApiKey] = useState("");
+  const [region, setRegion] = useState(node.region ?? "");
+  const [project, setProject] = useState(node.project ?? "");
+  const [modelIds, setModelIds] = useState(modelIdsText(node.model_ids ?? {}));
+  const [auth, setAuth] = useState<AuthDraft>({
+    method: node.auth,
+    settings: node.auth_settings ?? {},
+    secret: "",
+  });
   const [error, setError] = useState<string | null>(null);
+  const kind = node.kind ?? "openai";
+  const cloud = kind !== "openai";
+  const vertex = kind === "vertex_openai";
+  const methods = methodsOf(useAuthMethods().data, kind);
+  const method = methods.find((m) => m.method === auth.method);
+  // Only the stored method's secret can be kept by leaving the field blank;
+  // a newly chosen method has none stored yet.
+  const secretStored =
+    auth.method === node.auth &&
+    (method?.secret === "api_key" ? node.has_api_key : node.has_credential);
 
   const save = useMutation({
     mutationFn: () =>
       client.patch(`/portal/inference/nodes/${nodeId}`, {
-        base_url: baseUrl.trim(),
+        // A Vertex node's address is built from its project and region.
+        ...(vertex
+          ? { region: region.trim(), project: project.trim() }
+          : { base_url: baseUrl.trim() }),
+        ...(cloud && method
+          ? { ...authFields(method, auth), model_ids: parseModelIds(modelIds) }
+          : {}),
         models: models
           .split(",")
           .map((m) => m.trim())
@@ -137,7 +166,7 @@ function NodeForm({ node }: { node: StoredNode }) {
         // string as "clear it", and this page never receives the key
         // back, so sending it unconditionally would wipe it on every
         // edit of anything else.
-        ...(apiKey ? { api_key: apiKey } : {}),
+        ...(!cloud && apiKey ? { api_key: apiKey } : {}),
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["inference-status"] });
@@ -158,7 +187,12 @@ function NodeForm({ node }: { node: StoredNode }) {
 
     // Checked here as well as by the API, so the answer arrives before
     // the round trip rather than after it.
+    if (vertex && !(region.trim() && project.trim())) {
+      setError("A Vertex backend needs its project and region.");
+      return;
+    }
     if (
+      !vertex &&
       !baseUrl.trim().startsWith("http://") &&
       !baseUrl.trim().startsWith("https://")
     ) {
@@ -169,6 +203,10 @@ function NodeForm({ node }: { node: StoredNode }) {
       setError(
         "A node needs at least one model, or nothing will ever be routed to it.",
       );
+      return;
+    }
+    if (cloud && !authComplete(method, auth, secretStored)) {
+      setError("The chosen authentication needs every field filled in.");
       return;
     }
     if (!(Number(maxConcurrent) > 0)) {
@@ -198,7 +236,9 @@ function NodeForm({ node }: { node: StoredNode }) {
           <PageHeader.Title as="h1">{node.node_id}</PageHeader.Title>
         </PageHeader.TitleArea>
         <PageHeader.Description>
-          <Text size="medium">Nothing changes until you press Save.</Text>
+          <Text size="medium">
+            {KIND_LABEL[kind]}. Nothing changes until you press Save.
+          </Text>
         </PageHeader.Description>
       </PageHeader>
 
@@ -208,18 +248,37 @@ function NodeForm({ node }: { node: StoredNode }) {
 
       <form onSubmit={submit}>
         <Stack direction="vertical" gap="normal" className="node-form">
-          <FormControl required>
-            <FormControl.Label>Address</FormControl.Label>
-            <TextInput
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.currentTarget.value)}
-              block
-            />
-            <FormControl.Caption>
-              Where igni sends requests, including the <code>/v1</code> path if
-              the node serves one.
-            </FormControl.Caption>
-          </FormControl>
+          {vertex ? (
+            <Stack direction="horizontal" gap="normal" padding="none">
+              <FormControl required>
+                <FormControl.Label>Project</FormControl.Label>
+                <TextInput
+                  value={project}
+                  onChange={(e) => setProject(e.currentTarget.value)}
+                />
+              </FormControl>
+              <FormControl required>
+                <FormControl.Label>Region</FormControl.Label>
+                <TextInput
+                  value={region}
+                  onChange={(e) => setRegion(e.currentTarget.value)}
+                />
+              </FormControl>
+            </Stack>
+          ) : (
+            <FormControl required>
+              <FormControl.Label>Address</FormControl.Label>
+              <TextInput
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.currentTarget.value)}
+                block
+              />
+              <FormControl.Caption>
+                Where igni sends requests, including the <code>/v1</code> path
+                if the node serves one.
+              </FormControl.Caption>
+            </FormControl>
+          )}
 
           <FormControl required>
             <FormControl.Label>Models</FormControl.Label>
@@ -235,6 +294,22 @@ function NodeForm({ node }: { node: StoredNode }) {
             </FormControl.Caption>
           </FormControl>
 
+          {cloud && (
+            <FormControl>
+              <FormControl.Label>Provider&apos;s names</FormControl.Label>
+              <Textarea
+                value={modelIds}
+                onChange={(e) => setModelIds(e.currentTarget.value)}
+                rows={2}
+                block
+              />
+              <FormControl.Caption>
+                One <code>name = provider-name</code> per line, where the
+                provider knows a model by another name.
+              </FormControl.Caption>
+            </FormControl>
+          )}
+
           <FormControl required>
             <FormControl.Label>Concurrency</FormControl.Label>
             <TextInput
@@ -248,7 +323,6 @@ function NodeForm({ node }: { node: StoredNode }) {
               see any other client of the same GPU.
             </FormControl.Caption>
           </FormControl>
-
 
           <FormControl>
             <Checkbox
@@ -271,24 +345,33 @@ function NodeForm({ node }: { node: StoredNode }) {
             </FormControl.Caption>
           </FormControl>
 
-          <FormControl>
-            <FormControl.Label>API key</FormControl.Label>
-            <TextInput
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.currentTarget.value)}
-              placeholder={
-                node.has_api_key
-                  ? "stored — leave blank to keep it"
-                  : "none set"
-              }
-              block
+          {cloud ? (
+            <AuthFields
+              methods={methods}
+              value={auth}
+              onChange={setAuth}
+              secretStored={secretStored}
             />
-            <FormControl.Caption>
-              Sent as a bearer token to the node. It is never returned, so
-              leaving this blank keeps whatever is stored.
-            </FormControl.Caption>
-          </FormControl>
+          ) : (
+            <FormControl>
+              <FormControl.Label>API key</FormControl.Label>
+              <TextInput
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.currentTarget.value)}
+                placeholder={
+                  node.has_api_key
+                    ? "stored — leave blank to keep it"
+                    : "none set"
+                }
+                block
+              />
+              <FormControl.Caption>
+                Sent as a bearer token to the node. It is never returned, so
+                leaving this blank keeps whatever is stored.
+              </FormControl.Caption>
+            </FormControl>
+          )}
 
           <Stack direction="horizontal" gap="condensed" padding="none">
             <Button type="submit" variant="primary" disabled={save.isPending}>

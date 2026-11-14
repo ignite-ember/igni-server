@@ -30,6 +30,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 
 from app.api.base_v1.schema.nodes import (
     AvailableModels,
+    BackendKindView,
     InferenceStatusView,
     NodeDrainRequest,
     NodeDrainView,
@@ -156,6 +157,16 @@ async def discover_node(
     )
 
 
+@router.get(
+    '/inference/auth-methods',
+    response_model=list[BackendKindView],
+    description='Each kind of backend and the ways it can authenticate, the first being its default.',
+)
+async def auth_methods(current_user: PortalUser = Depends(require_admin)) -> list[BackendKindView]:
+    """The server's own table, so the portal's form can never offer a method the server refuses."""
+    return BackendKindView.every()
+
+
 @router.post(
     '/inference/nodes',
     response_model=PinnedNodeView,
@@ -171,6 +182,8 @@ async def add_node(
         node = await nodes.add(body, by=current_user)
     except NodeIdTaken as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except NodeDefinitionInvalid as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return PinnedNodeView.of(node)
 
 

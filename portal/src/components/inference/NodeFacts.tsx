@@ -2,6 +2,7 @@ import { Stack, Text, Token, Truncate } from '@primer/react'
 
 import type { NodeStatus } from '../../types'
 import { countOf } from '../../utils/plural'
+import { KIND_LABEL } from './auth'
 import { formatAge, HEALTH_LABEL, SOURCE_DETAIL } from './display'
 import { Fact, Glossed } from './Fact'
 import { ServingControl } from './ServingControl'
@@ -29,6 +30,12 @@ export function NodeFacts({
           </Text>
         </Truncate>
       </Fact>
+
+      {node.kind && node.kind !== 'openai' && (
+        <Fact term="Provider">
+          <Text size="small">{KIND_LABEL[node.kind]}</Text>
+        </Fact>
+      )}
 
       <Fact term="Models">
         <Stack direction="horizontal" gap="condensed" wrap="wrap" padding="none">

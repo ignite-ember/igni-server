@@ -55,7 +55,8 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.db.redis.keys import key as redis_key
 from app.services.ai import metrics as node_metrics
-from app.services.ai.providers.credentials import CloudCredentials, CredentialUnavailable, shared_credentials
+from app.services.ai.providers.auth import AuthMethod
+from app.services.ai.providers.credentials import CloudCredentials, CredentialUnavailable, shared_credentials, Signer
 from app.services.ai.schemas import HealthState, InferenceBackend, NodeHealth, NodeMetrics, ProbedNode
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,16 @@ _HEARTBEAT_GRACE_SECONDS = 180
 # Named because two places test for it: the health verdict shows it, and
 # discovery turns it into "you need to enter a token".
 _REJECTED_CREDENTIALS = 'The node rejected our credentials'
+
+
+#: How the health detail names each token method, for the person reading it.
+_METHOD_NAMES = {
+    AuthMethod.AMBIENT: "the server's own cloud identity",
+    AuthMethod.MANAGED_IDENTITY: 'the user-assigned managed identity',
+    AuthMethod.CLIENT_SECRET: "the app registration's client secret",
+    AuthMethod.IMPERSONATE: 'the impersonated service account',
+    AuthMethod.SERVICE_ACCOUNT_KEY: 'the stored service-account key',
+}
 
 
 class NodeHealthProbe:
@@ -185,15 +196,24 @@ class NodeHealthProbe:
 
     async def _cloud_probe(self, backend: InferenceBackend) -> NodeHealth:
         """Whether the server can sign for this cloud backend; the provider itself is not called."""
-        if backend.api_key:
+        if backend.auth is None or not backend.auth.is_token:
             # A static key (an Azure resource's) is checked by the first request, not here.
             return NodeHealth(state=HealthState.HEALTHY, detail='Uses a stored key; checked on its first request')
         started = time.monotonic()
+        signer = Signer(
+            backend_id=backend.id,
+            kind=backend.kind,
+            auth=backend.auth,
+            settings=backend.auth_settings,
+            secret=backend.credential,
+        )
         try:
-            await self._credentials.bearer(backend_id=backend.id, kind=backend.kind, credential=backend.credential)
+            await self._credentials.bearer(signer)
         except CredentialUnavailable:
-            where = 'its stored credential' if backend.credential else "the server's own cloud identity"
-            return NodeHealth(state=HealthState.DEGRADED, detail=f'Could not get a token from {where}')
+            return NodeHealth(
+                state=HealthState.DEGRADED,
+                detail=f'Could not get a token with {_METHOD_NAMES.get(backend.auth, backend.auth.value)}',
+            )
         return NodeHealth(
             state=HealthState.HEALTHY,
             detail='The server holds a token for this provider',

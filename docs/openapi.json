@@ -1050,6 +1050,53 @@
         "title": "AuditEventView",
         "type": "object"
       },
+      "AuthMethod": {
+        "description": "How a request to a backend is authenticated.",
+        "enum": [
+          "none",
+          "api_key",
+          "ambient",
+          "managed_identity",
+          "client_secret",
+          "impersonate",
+          "service_account_key"
+        ],
+        "title": "AuthMethod",
+        "type": "string"
+      },
+      "AuthMethodView": {
+        "description": "One way a kind of backend can authenticate, for the portal to build its form from.",
+        "properties": {
+          "method": {
+            "$ref": "#/components/schemas/AuthMethod"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "settings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Settings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "method",
+          "settings",
+          "secret"
+        ],
+        "title": "AuthMethodView",
+        "type": "object"
+      },
       "AuthMethods": {
         "description": "Everything the sign-in page needs to render itself.",
         "properties": {
@@ -1208,6 +1255,32 @@
         ],
         "title": "BackendKind",
         "type": "string"
+      },
+      "BackendKindView": {
+        "description": "A kind of backend and the methods it offers, the first being its default.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/BackendKind"
+          },
+          "methods": {
+            "items": {
+              "$ref": "#/components/schemas/AuthMethodView"
+            },
+            "title": "Methods",
+            "type": "array"
+          },
+          "wire": {
+            "title": "Wire",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "wire",
+          "methods"
+        ],
+        "title": "BackendKindView",
+        "type": "object"
       },
       "Body_ack_v1_platform_orgs__org_id__vm_commands__command_id__ack_post": {
         "properties": {
@@ -7786,6 +7859,25 @@
             "description": "Only if the node is behind an auth proxy; an Azure resource's key",
             "title": "Api Key"
           },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthMethod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How requests are authenticated; GET /inference/auth-methods lists what each kind offers"
+          },
+          "auth_settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The method's settings, not secret: an Azure client_id and tenant_id, a service_account",
+            "title": "Auth Settings",
+            "type": "object"
+          },
           "base_url": {
             "anyOf": [
               {
@@ -7807,7 +7899,7 @@
                 "type": "null"
               }
             ],
-            "description": "A cloud node's stored credential as JSON: a Google service-account key, or an Azure app's tenant_id, client_id and client_secret. Omit to use the server's own cloud identity.",
+            "description": "The method's secret when it has one: an Azure client secret, a Google service-account key (JSON)",
             "title": "Credential"
           },
           "kind": {
@@ -7897,6 +7989,30 @@
               }
             ],
             "title": "Api Key"
+          },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthMethod"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_settings": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Settings"
           },
           "base_url": {
             "anyOf": [
@@ -8012,6 +8128,17 @@
       "PinnedNodeView": {
         "description": "A node added here, as the portal gets it back.\n\nNo ``api_key``: it goes in and is never returned. An admin who needs\nto change it sets a new one.",
         "properties": {
+          "auth": {
+            "$ref": "#/components/schemas/AuthMethod",
+            "default": "none"
+          },
+          "auth_settings": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Auth Settings",
+            "type": "object"
+          },
           "base_url": {
             "title": "Base Url",
             "type": "string"
@@ -19513,6 +19640,37 @@
           }
         ],
         "summary": "Get Inference Status",
+        "tags": [
+          "Portal - Inference"
+        ]
+      }
+    },
+    "/v1/portal/inference/auth-methods": {
+      "get": {
+        "description": "Each kind of backend and the ways it can authenticate, the first being its default.",
+        "operationId": "auth_methods_v1_portal_inference_auth_methods_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BackendKindView"
+                  },
+                  "title": "Response Auth Methods V1 Portal Inference Auth Methods Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Auth Methods",
         "tags": [
           "Portal - Inference"
         ]

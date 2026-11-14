@@ -19,9 +19,10 @@ from enum import StrEnum
 import json
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.services.ai.node_drain import NodeDrain
+from app.services.ai.providers.auth import AuthMethod, default_method, METHODS
 from app.services.ai.providers.kinds import BackendKind, Wire
 
 # How long a lease may be held before the pool assumes its holder died.
@@ -46,6 +47,10 @@ class InferenceBackend(BaseModel):
     routing stay per node. Only *selection* is per model.
     """
 
+    # A validation error names what is wrong, never the value: the value
+    # may be a key, a client secret or a service-account key.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     id: str
 
     # Who serves this backend. ``openai`` — the default, and every backend
@@ -62,10 +67,19 @@ class InferenceBackend(BaseModel):
     region: str | None = None
     project: str | None = None
 
-    # A cloud kind's stored credential, as JSON — a GCP service-account
-    # key, or an Azure app's ``tenant_id``/``client_id``/``client_secret``.
-    # Absent means the server's own identity (Workload Identity, Managed
-    # Identity): the cloud's default chain, with nothing kept here.
+    # How requests to this backend are authenticated (``AuthMethod``); each
+    # kind offers its own set (``providers/auth.py``). Absent means what a
+    # configuration written before methods were named meant: see
+    # ``default_method``.
+    auth: AuthMethod | None = None
+
+    # The method's settings — not secret, shown back in the portal: an
+    # Azure client id and tenant, the service account to impersonate.
+    auth_settings: dict[str, str] = Field(default_factory=dict)
+
+    # The method's secret when it is handed to the cloud's SDK rather than
+    # sent as a key: an Azure app's client secret, a GCP service-account
+    # key (JSON). Kept encrypted, never returned.
     credential: str | None = Field(default=None, repr=False)
 
     # The name a caller asks for, mapped to the name the provider knows:
@@ -160,7 +174,7 @@ class InferenceBackend(BaseModel):
 
     @model_validator(mode='after')
     def _fields_fit_the_kind(self) -> 'InferenceBackend':
-        """Refuse a field the kind would silently ignore.
+        """Refuse a field the kind or the method would silently ignore.
 
         A Vertex backend given an ``api_key`` would send Google's token and
         never the key, and an operator reading the configuration would
@@ -173,34 +187,43 @@ class InferenceBackend(BaseModel):
             raise ValueError(f'{where}: a Vertex backend needs its project and region')
         if not vertex and (self.project or self.region):
             raise ValueError(f'{where}: project and region are for a Vertex backend only')
-        if vertex and self.api_key:
-            raise ValueError(f'{where}: Vertex is signed with Google credentials, not an api_key')
-        if not self.kind.is_cloud and self.credential:
-            raise ValueError(f'{where}: a stored credential is for a cloud backend; give an api_key instead')
-        if self.kind is BackendKind.AZURE_OPENAI and self.api_key and self.credential:
-            raise ValueError(f'{where}: give the resource key or a client secret, not both')
-        if self.credential:
-            _check_credential(where, self.kind, self.credential)
+        if self.auth is None:
+            self.auth = default_method(self.kind, has_api_key=bool(self.api_key), has_credential=bool(self.credential))
+        _check_auth(where, self)
         unknown = sorted(set(self.model_ids) - set(self.models))
         if unknown:
             raise ValueError(f'{where}: model_ids names models it does not serve: {", ".join(unknown)}')
         return self
 
 
-def _check_credential(where: str, kind: BackendKind, credential: str) -> None:
-    """A stored credential is the JSON its cloud's SDK takes. Never echoes it."""
-    try:
-        stored = json.loads(credential)
-    except ValueError:
-        raise ValueError(f'{where}: the stored credential is not JSON') from None
-    if not isinstance(stored, dict):
-        raise ValueError(f'{where}: the stored credential is not a JSON object')
-    if kind is BackendKind.VERTEX_OPENAI and stored.get('type') != 'service_account':
-        raise ValueError(f'{where}: the stored credential is not a Google service-account key')
-    if kind is BackendKind.AZURE_OPENAI:
-        missing = [k for k in ('tenant_id', 'client_id', 'client_secret') if not stored.get(k)]
-        if missing:
-            raise ValueError(f'{where}: the stored credential lacks {", ".join(missing)}')
+def _check_auth(where: str, backend: InferenceBackend) -> None:
+    """The method is one the kind offers, with exactly its settings and its secret. Never echoes a secret."""
+    methods = METHODS[backend.kind]
+    assert backend.auth is not None
+    spec = methods.get(backend.auth)
+    if spec is None:
+        offered = ', '.join(method.value for method in methods)
+        raise ValueError(f'{where}: auth {backend.auth.value!r} is not offered for this kind; it takes {offered}')
+    method = f'{where} with {backend.auth.value} auth'
+    missing = [name for name in spec.settings if not backend.auth_settings.get(name)]
+    if missing:
+        raise ValueError(f'{method}: needs {", ".join(missing)}')
+    extra = sorted(set(backend.auth_settings) - set(spec.settings))
+    if extra:
+        raise ValueError(f'{method}: does not take {", ".join(extra)}')
+    for slot in ('api_key', 'credential'):
+        given = bool(getattr(backend, slot))
+        if slot == spec.secret and not given:
+            raise ValueError(f'{method}: needs its {"key" if slot == "api_key" else "credential"}')
+        if slot != spec.secret and given:
+            raise ValueError(f'{method}: takes no {"api_key" if slot == "api_key" else "stored credential"}')
+    if backend.auth is AuthMethod.SERVICE_ACCOUNT_KEY:
+        try:
+            stored = json.loads(backend.credential or '')
+        except ValueError:
+            raise ValueError(f'{method}: the stored credential is not JSON') from None
+        if not isinstance(stored, dict) or stored.get('type') != 'service_account':
+            raise ValueError(f'{method}: the stored credential is not a Google service-account key')
 
 
 class RegisteredNode(BaseModel):
@@ -370,6 +393,8 @@ class BackendLease(BaseModel):
     model: str
     api_key: str | None = None
     kind: BackendKind = BackendKind.OPENAI
+    auth: AuthMethod = AuthMethod.NONE
+    auth_settings: dict[str, str] = Field(default_factory=dict)
     credential: str | None = Field(default=None, repr=False)
     model_ids: dict[str, str] = Field(default_factory=dict)
 

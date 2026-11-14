@@ -84,6 +84,12 @@ class InferenceNode(Base):
     #: Vertex AI only: where the model runs.
     region: Mapped[str | None] = Column(Text, nullable=True)
     project: Mapped[str | None] = Column(Text, nullable=True)
+    #: How requests to the node are authenticated (``AuthMethod``), and
+    #: the method's settings — client ids, a service account's email —
+    #: which are not secret. Null ``auth`` means the kind's default for
+    #: what the row carries (``default_method``).
+    auth: Mapped[str | None] = Column(Text, nullable=True)
+    auth_settings: Mapped[Any] = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     #: A cloud node's stored credential (a service-account key, a client
     #: secret), Fernet-encrypted like ``api_key`` and never returned.
     #: Null means the server's own cloud identity.

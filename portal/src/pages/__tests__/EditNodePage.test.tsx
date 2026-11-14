@@ -29,6 +29,25 @@ const STORED = {
   multimodal: false,
   enabled: true,
   has_api_key: true,
+  kind: 'openai',
+  region: null,
+  project: null,
+  model_ids: {},
+  auth: 'api_key',
+  auth_settings: {},
+  has_credential: false,
+}
+
+const AZURE = {
+  ...STORED,
+  base_url: 'https://acme.openai.azure.com/openai/v1',
+  models: ['gpt-5'],
+  has_api_key: false,
+  kind: 'azure_openai',
+  model_ids: { 'gpt-5': 'acme-gpt5' },
+  auth: 'client_secret',
+  auth_settings: { tenant_id: 'tenant-1', client_id: 'client-1' },
+  has_credential: true,
 }
 
 function renderPage(nodeId = 'gpu-01') {
@@ -201,5 +220,81 @@ describe('The node edit page', () => {
 
     const crumb = await screen.findByRole('link', { name: 'Inference' })
     expect(crumb).toHaveAttribute('href', '/inference')
+  })
+
+  describe('a cloud backend', () => {
+    function capturePatch() {
+      const sent: Record<string, unknown>[] = []
+      server.use(
+        http.patch('/v1/portal/inference/nodes/gpu-01', async ({ request }) => {
+          sent.push((await request.json()) as Record<string, unknown>)
+          return HttpResponse.json(AZURE)
+        }),
+      )
+      return sent
+    }
+
+    test('shows its method and settings, and says the secret is stored without showing it', async () => {
+      serveStored(AZURE)
+      renderPage()
+
+      expect(await screen.findByDisplayValue('tenant-1')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('client-1')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: /authentication/i })).toHaveValue('client_secret')
+      expect(screen.getByPlaceholderText(/stored — leave blank to keep it/i)).toHaveValue('')
+      expect(screen.getByDisplayValue('gpt-5 = acme-gpt5')).toBeInTheDocument()
+    })
+
+    test('saving without a new secret keeps the stored one', async () => {
+      serveStored(AZURE)
+      const sent = capturePatch()
+      renderPage()
+      const user = userEvent.setup()
+
+      await user.click(await screen.findByRole('button', { name: /save node/i }))
+
+      await waitFor(() => expect(sent).toHaveLength(1))
+      expect(sent[0]).toMatchObject({
+        auth: 'client_secret',
+        auth_settings: { tenant_id: 'tenant-1', client_id: 'client-1' },
+        model_ids: { 'gpt-5': 'acme-gpt5' },
+      })
+      expect(sent[0]).not.toHaveProperty('credential')
+    })
+
+    test('switching to a managed identity sends it with only its own setting', async () => {
+      serveStored(AZURE)
+      const sent = capturePatch()
+      renderPage()
+      const user = userEvent.setup()
+
+      await user.selectOptions(
+        await screen.findByRole('combobox', { name: /authentication/i }),
+        await screen.findByRole('option', { name: /user-assigned managed identity/i }),
+      )
+      await user.type(screen.getByRole('textbox', { name: /client id/i }), 'uami-1')
+      await user.click(screen.getByRole('button', { name: /save node/i }))
+
+      await waitFor(() => expect(sent).toHaveLength(1))
+      expect(sent[0]).toMatchObject({ auth: 'managed_identity', auth_settings: { client_id: 'uami-1' } })
+    })
+
+    test('a method whose secret is not stored yet is not saved without it', async () => {
+      serveStored({ ...AZURE, auth: 'ambient', auth_settings: {}, has_credential: false })
+      const sent = capturePatch()
+      renderPage()
+      const user = userEvent.setup()
+
+      await user.selectOptions(
+        await screen.findByRole('combobox', { name: /authentication/i }),
+        await screen.findByRole('option', { name: /client secret/i }),
+      )
+      await user.type(screen.getByRole('textbox', { name: /tenant id/i }), 't')
+      await user.type(screen.getByRole('textbox', { name: /client id/i }), 'c')
+      await user.click(screen.getByRole('button', { name: /save node/i }))
+
+      expect(await screen.findByText(/needs every field/i)).toBeInTheDocument()
+      expect(sent).toHaveLength(0)
+    })
   })
 })

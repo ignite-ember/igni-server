@@ -55,6 +55,37 @@ export const NO_LICENCE = {
   modules: UNLICENSED_MODULES,
 }
 
+/** What `GET /portal/inference/auth-methods` answers: the server's table, as it stands. */
+export const AUTH_METHODS = [
+  {
+    kind: 'openai',
+    wire: 'openai',
+    methods: [
+      { method: 'none', settings: [], secret: null },
+      { method: 'api_key', settings: [], secret: 'api_key' },
+    ],
+  },
+  {
+    kind: 'azure_openai',
+    wire: 'openai',
+    methods: [
+      { method: 'ambient', settings: [], secret: null },
+      { method: 'managed_identity', settings: ['client_id'], secret: null },
+      { method: 'client_secret', settings: ['tenant_id', 'client_id'], secret: 'credential' },
+      { method: 'api_key', settings: [], secret: 'api_key' },
+    ],
+  },
+  {
+    kind: 'vertex_openai',
+    wire: 'openai',
+    methods: [
+      { method: 'ambient', settings: [], secret: null },
+      { method: 'impersonate', settings: ['service_account'], secret: null },
+      { method: 'service_account_key', settings: [], secret: 'credential' },
+    ],
+  },
+]
+
 export const defaultHandlers = [
   http.get('/v1/portal/me', () => HttpResponse.json(ME_DEFAULT)),
 
@@ -141,4 +172,6 @@ export const defaultHandlers = [
       heartbeat_interval_seconds: 60,
     }),
   ),
+  // The server's own table of each kind's auth methods (`providers/auth.py`).
+  http.get('/v1/portal/inference/auth-methods', () => HttpResponse.json(AUTH_METHODS)),
 ]

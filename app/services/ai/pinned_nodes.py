@@ -22,6 +22,7 @@ from app.services.ai.fleet_schemas import (
 )
 from app.services.ai.node_registry import NodeRegistry
 from app.services.ai.pool_manager import PoolManager
+from app.services.ai.providers.auth import AuthMethod, METHODS
 from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.schemas import InferenceBackend
 
@@ -46,11 +47,18 @@ class PinnedNodes:
         """Store a node; it is routed to immediately and never expires.
 
         Raises a `NodeIdTaken` subclass naming the source that already
-        holds the id.
+        holds the id, and `NodeDefinitionInvalid` for a node the router
+        could not use — checked by the backend's own rules, so the portal
+        and the config file cannot disagree, and answered in its own words
+        rather than a validation error that would echo the body back.
         """
+        try:
+            backend = node.backend()
+        except ValueError as exc:
+            raise NodeDefinitionInvalid(node.node_id, str(exc), adding=True) from exc
         await self._refuse_if_taken(node.node_id)
         # The address as the router will use it: a Vertex node's is built from its project and region.
-        base_url = node.backend().base_url
+        base_url = backend.base_url
         try:
             created = await self._nodes.create(
                 node_id=node.node_id,
@@ -68,6 +76,10 @@ class PinnedNodes:
                 project=node.project,
                 credential=node.credential or None,
                 model_ids=dict(node.model_ids),
+                # The method the router resolved, stored by name: clearing a
+                # secret later must not quietly change what it means.
+                auth=backend.auth.value if backend.auth else None,
+                auth_settings=dict(node.auth_settings),
                 created_by_user_id=by.user_id,
             )
         except NodeIdAlreadyRegistered as exc:
@@ -95,10 +107,11 @@ class PinnedNodes:
         stored = await self._nodes.get_by_node_id(node_id)
         if stored is None:
             raise NodeNotAdded(node_id)
-        edited = self._routable(stored, changes)
+        edited, dropped = self._routable(stored, changes)
         if edited.base_url != stored.base_url:
             # A Vertex node's address follows its project and region.
-            changes = changes.model_copy(update={'base_url': edited.base_url})
+            dropped['base_url'] = edited.base_url
+        changes = changes.model_copy(update=dropped)
         node = await self._nodes.update(node_id, changes)
         if node is None:
             raise NodeNotAdded(node_id)
@@ -111,11 +124,34 @@ class PinnedNodes:
         self._fleet_changed()
         logger.info('Admin %s removed inference node %s', by.user_id, node_id)
 
-    def _routable(self, stored: InferenceNode, changes: NodeChanges) -> InferenceBackend:
-        """The node as it would be after *changes*. Raises `NodeDefinitionInvalid` if the router could not use it."""
-        fields = self._nodes.to_backend(stored).model_dump()
+    def _routable(self, stored: InferenceNode, changes: NodeChanges) -> tuple[InferenceBackend, dict]:
+        """The node as it would be after *changes*, and the further changes that implies.
+
+        A new auth method drops the old method's secret and settings
+        unless the edit gives them: switching an Azure node from its client
+        secret to its managed identity should not leave the secret stored,
+        nor be refused for still carrying it.
+
+        Raises `NodeDefinitionInvalid` if the router could not use the result.
+        """
+        current = self._nodes.to_backend(stored)
+        fields = current.model_dump()
         changed = changes.model_dump(exclude_unset=True)
-        for name, value in changed.items():
+        dropped: dict = {}
+        if changed.get('auth') and AuthMethod(changed['auth']) != current.auth:
+            spec = METHODS[current.kind].get(AuthMethod(changed['auth']))
+            for slot in ('api_key', 'credential'):
+                if spec is not None and slot != spec.secret and slot not in changed and fields[slot]:
+                    dropped[slot] = ''
+            if 'auth_settings' not in changed and fields['auth_settings']:
+                dropped['auth_settings'] = {}
+        elif 'auth' not in changed:
+            spec = METHODS[current.kind].get(current.auth) if current.auth else None
+            if spec is not None and spec.secret and changed.get(spec.secret) == '':
+                # Its secret cleared and no method named: what remains says
+                # which method it is now, as it did before methods had names.
+                fields['auth'] = None
+        for name, value in {**changed, **dropped}.items():
             if name in fields:
                 # An empty string clears a credential or a key, and clears a region.
                 fields[name] = value if value != '' else None
@@ -126,9 +162,12 @@ class PinnedNodes:
         ):
             fields['base_url'] = None
         try:
-            return backend_or_value_error(fields)
+            edited = backend_or_value_error(fields)
         except ValueError as exc:
             raise NodeDefinitionInvalid(str(stored.node_id), str(exc)) from exc
+        if edited.auth != current.auth and 'auth' not in changed:
+            dropped['auth'] = edited.auth.value if edited.auth else None
+        return edited, dropped
 
     def _fleet_changed(self) -> None:
         """This process just changed the fleet, so its backend cache is wrong.

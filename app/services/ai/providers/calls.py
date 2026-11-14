@@ -10,7 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.services.ai.providers.credentials import CloudCredentials, CredentialUnavailable
+from app.services.ai.providers.auth import AuthMethod
+from app.services.ai.providers.credentials import CloudCredentials, CredentialUnavailable, Signer
 from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.schemas import BackendLease
 from app.services.ai.upstream import UpstreamCredentialsUnavailable
@@ -43,24 +44,33 @@ def renews(lease: BackendLease) -> bool:
     Only for a token this server obtained. A static key refused is
     refused for good, and asking again would only repeat it.
     """
-    if lease.kind is BackendKind.AZURE_OPENAI:
-        return not lease.api_key
-    return lease.kind.is_cloud
+    return lease.auth.is_token
 
 
 def forget_token(lease: BackendLease, credentials: CloudCredentials) -> None:
     """Drop the token the provider just refused."""
-    credentials.invalidate(backend_id=lease.backend_id, kind=lease.kind, credential=lease.credential)
+    credentials.invalidate(signer_of(lease))
+
+
+def signer_of(lease: BackendLease) -> Signer:
+    """Who the token for this lease's backend is for."""
+    return Signer(
+        backend_id=lease.backend_id,
+        kind=lease.kind,
+        auth=lease.auth,
+        settings=lease.auth_settings,
+        secret=lease.credential,
+    )
 
 
 async def _headers(lease: BackendLease, credentials: CloudCredentials) -> dict[str, str]:
-    if lease.kind is BackendKind.OPENAI:
+    if not lease.auth.is_token:
+        if lease.kind is BackendKind.AZURE_OPENAI and lease.auth is AuthMethod.API_KEY:
+            # The resource's own key, in Azure's own header.
+            return {'Content-Type': 'application/json', 'api-key': lease.api_key or ''}
         return lease.auth_headers()
-    if lease.kind is BackendKind.AZURE_OPENAI and lease.api_key:
-        # The resource's own key, in Azure's own header.
-        return {'Content-Type': 'application/json', 'api-key': lease.api_key}
     try:
-        token = await credentials.bearer(backend_id=lease.backend_id, kind=lease.kind, credential=lease.credential)
+        token = await credentials.bearer(signer_of(lease))
     except CredentialUnavailable as exc:
         raise UpstreamCredentialsUnavailable(exc.kind.value) from exc
     return {'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'}

@@ -1,15 +1,14 @@
-"""A cloud backend's access token: obtained from the cloud's own identity, cached, renewed.
+"""A cloud backend's access token: obtained the way its auth method says, cached, renewed.
 
-Two sources per cloud, decided by whether the backend carries a stored
-credential:
+The methods (`providers/auth.py`) that sign with a token:
 
-* **ambient** (none stored) — the identity the server already runs as:
-  Workload Identity or a service account's metadata on GCP, a Managed
-  Identity on Azure, or whatever each SDK's default chain finds. Nothing
-  secret is kept by igni.
-* **stored** — for a server running outside that cloud: a GCP
-  service-account key, or an Azure app's client secret, kept encrypted on
-  the backend like an `api_key`.
+* **ambient** — the identity the server already runs as: Workload Identity
+  or an attached service account on GCP, the system Managed Identity on
+  Azure, through each SDK's default chain. Nothing secret is kept by igni.
+* **managed_identity** — Azure: a user-assigned Managed Identity, by client id.
+* **client_secret** — Azure: an app registration's tenant, client id and secret.
+* **impersonate** — GCP: the server's identity acting as another service account.
+* **service_account_key** — GCP: a service account's JSON key.
 
 The SDKs are imported inside the fetch, so a deployment with no cloud
 backend never loads them. A token is renewed `REFRESH_MARGIN_SECONDS`
@@ -29,6 +28,7 @@ import logging
 import time
 from typing import Any
 
+from app.services.ai.providers.auth import AuthMethod
 from app.services.ai.providers.kinds import BackendKind
 
 logger = logging.getLogger(__name__)
@@ -54,8 +54,8 @@ class AccessToken:
 #: Gets a fresh token. Built once per backend, called on each renewal.
 TokenFetch = Callable[[], Awaitable[AccessToken]]
 
-#: Builds a backend's `TokenFetch` from its stored credential, or None for ambient.
-FetchFactory = Callable[[dict[str, Any] | None], TokenFetch]
+#: Builds a backend's `TokenFetch` from its method's settings and its secret (or None).
+FetchFactory = Callable[[Mapping[str, str], str | None], TokenFetch]
 
 
 class CredentialUnavailable(Exception):
@@ -91,110 +91,148 @@ class CachedToken:
         self._token = None
 
 
-def google_fetch(stored: dict[str, Any] | None) -> TokenFetch:
-    """Vertex AI's token: the service-account key if one is stored, else Google's default chain."""
-    credentials: Any = None
+def google_fetch(method: AuthMethod) -> FetchFactory:
+    """Vertex AI's token for *method*: Google's default chain, an impersonated account, or a key."""
 
-    def refreshed() -> AccessToken:
-        nonlocal credentials
-        import google.auth
-        import google.auth.transport.requests
-        from google.oauth2 import service_account
+    def build(settings: Mapping[str, str], secret: str | None) -> TokenFetch:
+        credentials: Any = None
 
-        if credentials is None:
-            if stored is not None:
-                credentials = service_account.Credentials.from_service_account_info(stored, scopes=[GOOGLE_SCOPE])
-            else:
-                credentials, _project = google.auth.default(scopes=[GOOGLE_SCOPE])
-        credentials.refresh(google.auth.transport.requests.Request())
-        expiry = credentials.expiry
-        # google-auth's expiry is a naive UTC datetime.
-        expires_at = calendar.timegm(expiry.utctimetuple()) if expiry is not None else time.time() + 300
-        return AccessToken(value=credentials.token, expires_at=float(expires_at))
+        def refreshed() -> AccessToken:
+            nonlocal credentials
+            import google.auth
+            import google.auth.transport.requests
 
-    async def fetch() -> AccessToken:
-        # google-auth refreshes synchronously, over `requests`.
-        return await asyncio.to_thread(refreshed)
+            if credentials is None:
+                if method is AuthMethod.SERVICE_ACCOUNT_KEY:
+                    from google.oauth2 import service_account
 
-    return fetch
+                    info = json.loads(secret or '')
+                    credentials = service_account.Credentials.from_service_account_info(info, scopes=[GOOGLE_SCOPE])
+                else:
+                    credentials, _project = google.auth.default(scopes=[GOOGLE_SCOPE])
+                    if method is AuthMethod.IMPERSONATE:
+                        from google.auth import impersonated_credentials
 
+                        credentials = impersonated_credentials.Credentials(
+                            source_credentials=credentials,
+                            target_principal=settings['service_account'],
+                            target_scopes=[GOOGLE_SCOPE],
+                        )
+            credentials.refresh(google.auth.transport.requests.Request())
+            expiry = credentials.expiry
+            # google-auth's expiry is a naive UTC datetime.
+            expires_at = calendar.timegm(expiry.utctimetuple()) if expiry is not None else time.time() + 300
+            return AccessToken(value=credentials.token, expires_at=float(expires_at))
 
-def azure_fetch(stored: dict[str, Any] | None) -> TokenFetch:
-    """Azure's token: the app's client secret if one is stored, else the default chain (Managed Identity first)."""
-    credential: Any = None
+        async def fetch() -> AccessToken:
+            # google-auth refreshes synchronously, over `requests`.
+            return await asyncio.to_thread(refreshed)
 
-    async def fetch() -> AccessToken:
-        nonlocal credential
-        from azure.identity.aio import ClientSecretCredential, DefaultAzureCredential
+        return fetch
 
-        if credential is None:
-            if stored is not None:
-                credential = ClientSecretCredential(
-                    tenant_id=stored['tenant_id'],
-                    client_id=stored['client_id'],
-                    client_secret=stored['client_secret'],
-                )
-            else:
-                credential = DefaultAzureCredential()
-        token = await credential.get_token(AZURE_SCOPE)
-        return AccessToken(value=token.token, expires_at=float(token.expires_on))
-
-    return fetch
+    return build
 
 
-_FETCHES: dict[BackendKind, FetchFactory] = {
-    BackendKind.VERTEX_OPENAI: google_fetch,
-    BackendKind.AZURE_OPENAI: azure_fetch,
+def azure_fetch(method: AuthMethod) -> FetchFactory:
+    """Azure's token for *method*: the default chain, a user-assigned identity, or an app's secret."""
+
+    def build(settings: Mapping[str, str], secret: str | None) -> TokenFetch:
+        credential: Any = None
+
+        async def fetch() -> AccessToken:
+            nonlocal credential
+            from azure.identity.aio import ClientSecretCredential, DefaultAzureCredential, ManagedIdentityCredential
+
+            if credential is None:
+                if method is AuthMethod.CLIENT_SECRET:
+                    credential = ClientSecretCredential(
+                        tenant_id=settings['tenant_id'], client_id=settings['client_id'], client_secret=secret or ''
+                    )
+                elif method is AuthMethod.MANAGED_IDENTITY:
+                    credential = ManagedIdentityCredential(client_id=settings['client_id'])
+                else:
+                    credential = DefaultAzureCredential()
+            token = await credential.get_token(AZURE_SCOPE)
+            return AccessToken(value=token.token, expires_at=float(token.expires_on))
+
+        return fetch
+
+    return build
+
+
+_GOOGLE = (AuthMethod.AMBIENT, AuthMethod.IMPERSONATE, AuthMethod.SERVICE_ACCOUNT_KEY)
+_AZURE = (AuthMethod.AMBIENT, AuthMethod.MANAGED_IDENTITY, AuthMethod.CLIENT_SECRET)
+
+#: The token fetch for each kind and method that signs with a token.
+_FETCHES: dict[tuple[BackendKind, AuthMethod], FetchFactory] = {
+    **{(BackendKind.VERTEX_OPENAI, method): google_fetch(method) for method in _GOOGLE},
+    **{(BackendKind.AZURE_OPENAI, method): azure_fetch(method) for method in _AZURE},
 }
 
 
-class CloudCredentials:
-    """Every cloud backend's cached token, one per backend and credential.
+@dataclass(frozen=True)
+class Signer:
+    """Who a token is for: the backend, its kind and method, the method's settings and secret."""
 
-    Keyed by the backend, its kind and a digest of its stored credential,
-    so an operator replacing the credential gets a fresh token at once
-    rather than when the old one expires.
+    backend_id: str
+    kind: BackendKind
+    auth: AuthMethod
+    settings: Mapping[str, str]
+    secret: str | None
+
+    def key(self) -> tuple[str, BackendKind, AuthMethod, str]:
+        """A cache key that changes with any of them, without holding the secret itself."""
+        material = json.dumps([sorted(self.settings.items()), self.secret or ''])
+        return self.backend_id, self.kind, self.auth, hashlib.sha256(material.encode()).hexdigest()
+
+
+class CloudCredentials:
+    """Every cloud backend's cached token, one per backend, method, settings and secret.
+
+    An operator changing any of those gets a fresh token at once rather
+    than when the old one expires.
     """
 
     def __init__(
         self,
         *,
-        fetches: Mapping[BackendKind, FetchFactory] | None = None,
+        fetches: Mapping[tuple[BackendKind, AuthMethod], FetchFactory] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._fetches = dict(_FETCHES if fetches is None else fetches)
         self._clock = clock
-        self._tokens: dict[tuple[str, BackendKind, str], CachedToken] = {}
+        self._tokens: dict[tuple[str, BackendKind, AuthMethod, str], CachedToken] = {}
 
-    async def bearer(self, *, backend_id: str, kind: BackendKind, credential: str | None) -> str:
+    async def bearer(self, signer: Signer) -> str:
         """The backend's current token. Raises `CredentialUnavailable` when the cloud gives none."""
-        cached = self._cached(backend_id=backend_id, kind=kind, credential=credential)
         try:
+            cached = self._cached(signer)
             return await cached.value()
         except Exception as exc:  # noqa: BLE001 — every SDK has its own error family; all mean the same here
-            # The exception's type and text, never the credential: none of
-            # these SDKs put the secret in their messages.
+            # The exception's type and text, never the secret: none of these
+            # SDKs put it in their messages.
             logger.warning(
-                'Could not get a token for backend %s (%s): %s: %s', backend_id, kind.value, type(exc).__name__, exc
+                'Could not get a token for backend %s (%s, %s): %s: %s',
+                signer.backend_id,
+                signer.kind.value,
+                signer.auth.value,
+                type(exc).__name__,
+                exc,
             )
-            raise CredentialUnavailable(kind) from exc
+            raise CredentialUnavailable(signer.kind) from exc
 
-    def invalidate(self, *, backend_id: str, kind: BackendKind, credential: str | None) -> None:
+    def invalidate(self, signer: Signer) -> None:
         """Drop the backend's token after the provider refused it."""
-        key = _key(backend_id, kind, credential)
-        if key in self._tokens:
-            self._tokens[key].invalidate()
+        cached = self._tokens.get(signer.key())
+        if cached is not None:
+            cached.invalidate()
 
-    def _cached(self, *, backend_id: str, kind: BackendKind, credential: str | None) -> CachedToken:
-        key = _key(backend_id, kind, credential)
+    def _cached(self, signer: Signer) -> CachedToken:
+        key = signer.key()
         if key not in self._tokens:
-            stored = json.loads(credential) if credential else None
-            self._tokens[key] = CachedToken(self._fetches[kind](stored), clock=self._clock)
+            fetch = self._fetches[(signer.kind, signer.auth)](signer.settings, signer.secret)
+            self._tokens[key] = CachedToken(fetch, clock=self._clock)
         return self._tokens[key]
-
-
-def _key(backend_id: str, kind: BackendKind, credential: str | None) -> tuple[str, BackendKind, str]:
-    return backend_id, kind, hashlib.sha256((credential or '').encode()).hexdigest()
 
 
 _SHARED = CloudCredentials()

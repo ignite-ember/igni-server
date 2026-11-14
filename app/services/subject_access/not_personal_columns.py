@@ -104,6 +104,11 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'inference_nodes.region',
         'inference_nodes.project',
         'inference_nodes.model_ids',
+        # How a node authenticates and the method's settings: a managed
+        # identity's client id, a service account's address — the
+        # deployment's machine identities, not a person's.
+        'inference_nodes.auth',
+        'inference_nodes.auth_settings',
         'organizations.updated_at',
     }
     | {
