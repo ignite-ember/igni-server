@@ -54,7 +54,6 @@ from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.producer import ProducerCaller, ProducerRef
 from app.security.service_caller import ServiceCaller
 from app.services.auth.jwt_service import PERSON
-from app.services.cloud.event_rate_limit import EventRateLimit
 from app.services.cloud.producer_event_errors import (
     ExpiryPast,
     ExtensionOff,
@@ -81,7 +80,6 @@ class ProducerEvents:
         db: ProducerEventsDB | None = None,
         attachments: ServiceAttachmentsDB | None = None,
         tenants: TenantRegistryDB | None = None,
-        rate_limit: EventRateLimit | None = None,
         group_extensions: GroupExtensions | None = None,
         extension_of: ServiceExtensionOf | None = None,
         producers: ProducerLookup | None = None,
@@ -89,7 +87,6 @@ class ProducerEvents:
         self._db = db or ProducerEventsDB()
         self._attachments = attachments or ServiceAttachmentsDB()
         self._tenants = tenants or TenantRegistryDB()
-        self._rate_limit = rate_limit or EventRateLimit()
         self._group_extensions = group_extensions or GroupExtensions()
         self._extension_of = extension_of or ServiceExtensionOf()
         self._producers = producers or ProducerLookup()
@@ -150,7 +147,6 @@ class ProducerEvents:
     async def deliver(self, caller: ServiceCaller, body: DeliverItemRequest) -> EventAccepted:
         """Store one item for one producer, after every check, with its attachments bound to it."""
         self._within_limits(body)
-        await self._rate_limit.spend(caller.client_id)
         extension = await self._extension_of.caller(caller)
         ServiceGrants.require(extension, body.needs())
         await self._producers.exists(caller.org_id, body.producer)

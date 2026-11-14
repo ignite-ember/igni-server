@@ -1447,8 +1447,8 @@ its own credential — the person's session on the desktop, the VM's token
 - **Refused unless the producer has it on** — a person through their
   group, an app through its own list (403); a producer not in the
   token's organisation is a 404.
-- **Rate-limited per service:** `SERVICE_EVENTS_PER_MINUTE` (default
-  600, 0 off), a 429 with `Retry-After` past it.
+- **Not rate-limited:** igni server asks no service to slow down; every
+  event is stored until it is delivered.
 - **Recorded:** the audit trail has the request, refused or not; the
   stored event names the service, the extension and the producer.
 - **Stored until delivered.** The gateway, waking the producer's VM

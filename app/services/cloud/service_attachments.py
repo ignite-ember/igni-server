@@ -31,7 +31,6 @@ from app.db.sql.models.service_attachment import ServiceAttachment
 from app.db.sql.service_attachments import ServiceAttachmentsDB
 from app.security.producer import ProducerCaller
 from app.security.service_caller import ServiceCaller
-from app.services.cloud.event_rate_limit import EventRateLimit
 from app.services.cloud.service_grants import ServiceExtensionOf, ServiceGrants
 from app.services.identity.impact.grants import ServiceGrant
 
@@ -65,9 +64,8 @@ class AttachmentName:
 
 
 class ServiceAttachments:
-    def __init__(self, db: ServiceAttachmentsDB | None = None, *, rate_limit: EventRateLimit | None = None) -> None:
+    def __init__(self, db: ServiceAttachmentsDB | None = None) -> None:
         self._db = db if db is not None else ServiceAttachmentsDB()
-        self._rate_limit = rate_limit or EventRateLimit()
 
     async def upload(
         self, caller: ServiceCaller, *, filename: str, content_type: str | None, content: bytes
@@ -81,7 +79,6 @@ class ServiceAttachments:
                 status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                 detail=f'An attachment may be at most {MAX_ATTACHMENT_BYTES} bytes',
             )
-        await self._rate_limit.spend(caller.client_id)
         ServiceGrants.require(await ServiceExtensionOf.caller(caller), {ServiceGrant.ATTACHMENTS})
         stored = await self._db.put(
             caller.org_id,
