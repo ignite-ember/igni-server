@@ -5,6 +5,8 @@
  */
 import { http, HttpResponse } from 'msw'
 
+import type { AuthMethodInfo, BackendKindInfo } from '../types'
+
 const ME_DEFAULT = {
   user_id: 'demo-user-001',
   email: 'alex@ember.sh',
@@ -16,9 +18,7 @@ const ME_DEFAULT = {
   org_id: 'demo-org-001',
   org_slug: 'demo',
   org_display_name: 'Demo Org',
-  organizations: [
-    { id: 'demo-org-001', slug: 'demo', display_name: 'Demo Org', role: 'admin' },
-  ],
+  organizations: [{ id: 'demo-org-001', slug: 'demo', display_name: 'Demo Org', role: 'admin' }],
 }
 
 const UNLICENSED_MODULES = (
@@ -55,50 +55,47 @@ export const NO_LICENCE = {
   modules: UNLICENSED_MODULES,
 }
 
+const AZURE_METHODS: AuthMethodInfo[] = [
+  { method: 'ambient', settings: [], optional: [], secret: null },
+  { method: 'managed_identity', settings: ['client_id'], optional: [], secret: null },
+  { method: 'client_secret', settings: ['tenant_id', 'client_id'], optional: [], secret: 'credential' },
+  { method: 'api_key', settings: [], optional: [], secret: 'api_key' },
+]
+const VERTEX_METHODS: AuthMethodInfo[] = [
+  { method: 'ambient', settings: [], optional: [], secret: null },
+  { method: 'impersonate', settings: ['service_account'], optional: [], secret: null },
+  { method: 'service_account_key', settings: [], optional: [], secret: 'credential' },
+]
+
 /** What `GET /portal/inference/auth-methods` answers: the server's table, as it stands. */
 export const AUTH_METHODS = [
   {
     kind: 'openai',
     wire: 'openai',
     methods: [
-      { method: 'none', settings: [], secret: null },
-      { method: 'api_key', settings: [], secret: 'api_key' },
+      { method: 'none', settings: [], optional: [], secret: null },
+      { method: 'api_key', settings: [], optional: [], secret: 'api_key' },
     ],
   },
-  {
-    kind: 'azure_openai',
-    wire: 'openai',
-    methods: [
-      { method: 'ambient', settings: [], secret: null },
-      { method: 'managed_identity', settings: ['client_id'], secret: null },
-      { method: 'client_secret', settings: ['tenant_id', 'client_id'], secret: 'credential' },
-      { method: 'api_key', settings: [], secret: 'api_key' },
-    ],
-  },
-  {
-    kind: 'vertex_openai',
-    wire: 'openai',
-    methods: [
-      { method: 'ambient', settings: [], secret: null },
-      { method: 'impersonate', settings: ['service_account'], secret: null },
-      { method: 'service_account_key', settings: [], secret: 'credential' },
-    ],
-  },
+  { kind: 'azure_openai', wire: 'openai', methods: AZURE_METHODS },
+  { kind: 'vertex_openai', wire: 'openai', methods: VERTEX_METHODS },
   {
     kind: 'anthropic',
     wire: 'anthropic',
-    methods: [{ method: 'api_key', settings: [], secret: 'api_key' }],
+    methods: [{ method: 'api_key', settings: [], optional: [], secret: 'api_key' }],
   },
   {
     kind: 'bedrock',
     wire: 'anthropic',
     methods: [
-      { method: 'ambient', settings: [], secret: null },
+      { method: 'ambient', settings: [], optional: [], secret: null },
       { method: 'assume_role', settings: ['role_arn'], optional: ['external_id'], secret: null },
-      { method: 'access_keys', settings: ['access_key_id'], secret: 'credential' },
+      { method: 'access_keys', settings: ['access_key_id'], optional: [], secret: 'credential' },
     ],
   },
-]
+  { kind: 'vertex_anthropic', wire: 'anthropic', methods: VERTEX_METHODS },
+  { kind: 'azure_anthropic', wire: 'anthropic', methods: AZURE_METHODS },
+] satisfies BackendKindInfo[]
 
 export const defaultHandlers = [
   http.get('/v1/portal/me', () => HttpResponse.json(ME_DEFAULT)),
@@ -115,9 +112,7 @@ export const defaultHandlers = [
 
   // The free base with no paid modules: nothing to say about a licence,
   // and nobody to name as its licensee.
-  http.get('/v1/portal/licence/notice', () =>
-    HttpResponse.json({ warnings: [], customer: null, licence_id: null }),
-  ),
+  http.get('/v1/portal/licence/notice', () => HttpResponse.json({ warnings: [], customer: null, licence_id: null })),
   // What a super admin sees there: no file, and every module unlicensed.
   http.get('/v1/portal/licence', () => HttpResponse.json(NO_LICENCE)),
 
@@ -145,9 +140,7 @@ export const defaultHandlers = [
     }),
   ),
 
-  http.get('/v1/portal/groups', () =>
-    HttpResponse.json({ groups: [], total: 0 }),
-  ),
+  http.get('/v1/portal/groups', () => HttpResponse.json({ groups: [], total: 0 })),
   http.get('/v1/portal/groups/:groupId', () =>
     HttpResponse.json({
       id: 'g-1',
@@ -161,13 +154,9 @@ export const defaultHandlers = [
       entry_count: 0,
     }),
   ),
-  http.get('/v1/portal/groups/:groupId/members', () =>
-    HttpResponse.json({ members: [], total: 0 }),
-  ),
+  http.get('/v1/portal/groups/:groupId/members', () => HttpResponse.json({ members: [], total: 0 })),
   http.get('/v1/portal/group-memberships', () => HttpResponse.json({ memberships: [] })),
-  http.get('/v1/portal/groups/:groupId/entries', () =>
-    HttpResponse.json({ entries: [], total: 0 }),
-  ),
+  http.get('/v1/portal/groups/:groupId/entries', () => HttpResponse.json({ entries: [], total: 0 })),
   http.get('/v1/portal/me/group', () => HttpResponse.json(null)),
   // No app or extension has asked for a VM profile.
   http.get('/v1/portal/orgs/:orgId/vm-profile-requests', () => HttpResponse.json({ requests: [] })),

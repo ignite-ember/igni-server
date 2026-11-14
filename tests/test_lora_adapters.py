@@ -20,10 +20,11 @@ import json
 
 import pytest
 
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.backend_pool import InferenceBackendPool
 from app.services.ai.backend_provider import InferenceBackendProvider
-from app.services.ai.schemas import InferenceBackend, ModelNotAvailableError
-from tests.test_inference_backend_pool import FakeRedis, FakeRegistry
+from app.services.ai.schemas import ModelNotAvailableError
+from tests.backend_pool_fakes import FakeRedis, FakeRegistry
 
 
 def _lora_node(node_id='gpu-01', base='base-27b', adapters=('sql-expert', 'docs-writer')) -> InferenceBackend:

@@ -55,9 +55,11 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.db.redis.keys import key as redis_key
 from app.services.ai import metrics as node_metrics
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.providers.auth import AuthMethod
-from app.services.ai.providers.credentials import CloudCredentials, CredentialUnavailable, shared_credentials, Signer
-from app.services.ai.schemas import HealthState, InferenceBackend, NodeHealth, NodeMetrics, ProbedNode
+from app.services.ai.providers.credentials import CloudCredentials
+from app.services.ai.providers.tokens import CredentialUnavailable
+from app.services.ai.schemas import HealthState, NodeHealth, NodeMetrics, ProbedNode
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +95,9 @@ _METHOD_NAMES = {
 class NodeHealthProbe:
     """Asks nodes whether they are answering, and remembers briefly."""
 
-    def __init__(self, *, timeout: float = _PROBE_TIMEOUT_SECONDS, credentials: CloudCredentials | None = None) -> None:
+    def __init__(self, *, credentials: CloudCredentials, timeout: float = _PROBE_TIMEOUT_SECONDS) -> None:
         self._timeout = timeout
-        self._credentials = credentials if credentials is not None else shared_credentials()
+        self._credentials = credentials
         # One client per loop, for the reason `NodeRegistry` documents:
         # Redis clients are loop-bound.
         self._redis_by_loop: dict[int, aioredis.Redis] = {}
@@ -200,15 +202,8 @@ class NodeHealthProbe:
             # A static key (an Azure resource's) is checked by the first request, not here.
             return NodeHealth(state=HealthState.HEALTHY, detail='Uses a stored key; checked on its first request')
         started = time.monotonic()
-        signer = Signer(
-            backend_id=backend.id,
-            kind=backend.kind,
-            auth=backend.auth,
-            settings=backend.auth_settings,
-            secret=backend.credential,
-        )
         try:
-            await self._credentials.bearer(signer)
+            await self._credentials.bearer(backend.signer)
         except CredentialUnavailable:
             return NodeHealth(
                 state=HealthState.DEGRADED,

@@ -1,10 +1,11 @@
-"""A cloud backend's access token: obtained the way its auth method says, cached, renewed.
+"""Every cloud backend's credential, cached and renewed, behind one object built at startup.
 
-The methods (`providers/auth.py`) that sign with a token:
+The methods (`providers/auth.py`) that sign with a credential the server
+obtains, and the source each one reads (`google.py`, `azure.py`):
 
 * **ambient** — the identity the server already runs as: Workload Identity
   or an attached service account on GCP, the system Managed Identity on
-  Azure, through each SDK's default chain. Nothing secret is kept by igni.
+  Azure. Nothing secret is kept by igni.
 * **managed_identity** — Azure: a user-assigned Managed Identity, by client id.
 * **client_secret** — Azure: an app registration's tenant, client id and secret.
 * **impersonate** — GCP: the server's identity acting as another service account.
@@ -13,250 +14,85 @@ The methods (`providers/auth.py`) that sign with a token:
   with an external ID when the role's trust policy asks for one.
 * **access_keys** — AWS: an IAM user's access key, stored encrypted.
 
-AWS does not take a bearer token: a Bedrock request is signed (SigV4)
-with the keys `aws` returns. They are cached and renewed the same way.
+A Bedrock request is signed with keys rather than a token (`aws.py`), so
+those come from `aws` and the rest from `bearer`, each from its own cache.
 
-The SDKs are imported inside the fetch, so a deployment with no cloud
-backend never loads them. A token is renewed `REFRESH_MARGIN_SECONDS`
-before it runs out, and `invalidate` drops it after the provider refuses
-it, so one 401 costs one renewal and not a failed request.
+One `CloudCredentials` is built by the chat services, the app's
+composition root, and handed to everything that signs or probes, so the
+proxy and the health probe share one cache without a module global.
 """
 
 from __future__ import annotations
 
-import asyncio
-import calendar
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 import hashlib
 import json
 import logging
 import time
-from typing import Any
+from types import MappingProxyType
+from typing import TypeVar
+
+from starlette.applications import Starlette
 
 from app.services.ai.providers.auth import AuthMethod
+from app.services.ai.providers.aws import AwsAccessKeysSource, AwsAssumedRoleSource, AwsDefaultSource, AwsKeys
+from app.services.ai.providers.azure import (
+    AzureClientSecretSource,
+    AzureDefaultSource,
+    AzureManagedIdentitySource,
+)
+from app.services.ai.providers.google import GoogleDefaultSource, GoogleImpersonatedSource, GoogleKeySource
 from app.services.ai.providers.kinds import BackendKind
+from app.services.ai.providers.tokens import CachedToken, CredentialUnavailable, TokenSource
+
+T = TypeVar('T')
+
+#: A credential's cache key: the backend, its kind and method, and a digest of its settings and secret.
+SignerKey = tuple[str, BackendKind, AuthMethod, str]
 
 logger = logging.getLogger(__name__)
 
-#: Renew a token this many seconds before it expires.
-REFRESH_MARGIN_SECONDS = 300
-
-#: The OAuth scope Vertex AI accepts.
-GOOGLE_SCOPE = 'https://www.googleapis.com/auth/cloud-platform'
-
-#: The Entra ID scope Azure OpenAI (and Foundry) accept.
-AZURE_SCOPE = 'https://cognitiveservices.azure.com/.default'
-
-
-@dataclass(frozen=True)
-class AccessToken:
-    """A credential — a bearer token, or AWS keys — and the moment it stops working, in epoch seconds."""
-
-    value: Any
-    expires_at: float
-
-
-@dataclass(frozen=True)
-class AwsKeys:
-    """What a Bedrock request is signed with. Never in a repr: these are the secret."""
-
-    access_key_id: str
-    secret_access_key: str = field(repr=False)
-    session_token: str | None = field(default=None, repr=False)
-
-
-#: Gets a fresh token. Built once per backend, called on each renewal.
-TokenFetch = Callable[[], Awaitable[AccessToken]]
-
-#: Builds a backend's `TokenFetch` from its method's settings and its secret (or None).
-FetchFactory = Callable[[Mapping[str, str], str | None], TokenFetch]
-
-
-class CredentialUnavailable(Exception):
-    """The server could not get a token for a cloud backend.
-
-    The message names the kind and never the credential: it reaches logs
-    and, through `UpstreamCredentialsUnavailable`, a caller's error.
-    """
-
-    def __init__(self, kind: BackendKind) -> None:
-        self.kind = kind
-        super().__init__(f'No credentials for the {kind.value} backend')
-
-
-class CachedToken:
-    """One backend's token, fetched when missing or about to run out."""
-
-    def __init__(self, fetch: TokenFetch, *, clock: Callable[[], float] = time.time) -> None:
-        self._fetch = fetch
-        self._clock = clock
-        self._token: AccessToken | None = None
-        self._lock = asyncio.Lock()
-
-    async def value(self) -> Any:
-        """The current token, renewed first if it is within the margin of expiring."""
-        async with self._lock:
-            if self._token is None or self._token.expires_at - REFRESH_MARGIN_SECONDS <= self._clock():
-                self._token = await self._fetch()
-            return self._token.value
-
-    def invalidate(self) -> None:
-        """Forget the token, so the next `value` fetches a new one."""
-        self._token = None
-
-
-def google_fetch(method: AuthMethod) -> FetchFactory:
-    """Vertex AI's token for *method*: Google's default chain, an impersonated account, or a key."""
-
-    def build(settings: Mapping[str, str], secret: str | None) -> TokenFetch:
-        credentials: Any = None
-
-        def refreshed() -> AccessToken:
-            nonlocal credentials
-            import google.auth
-            import google.auth.transport.requests
-
-            if credentials is None:
-                if method is AuthMethod.SERVICE_ACCOUNT_KEY:
-                    from google.oauth2 import service_account
-
-                    info = json.loads(secret or '')
-                    credentials = service_account.Credentials.from_service_account_info(info, scopes=[GOOGLE_SCOPE])
-                else:
-                    credentials, _project = google.auth.default(scopes=[GOOGLE_SCOPE])
-                    if method is AuthMethod.IMPERSONATE:
-                        from google.auth import impersonated_credentials
-
-                        credentials = impersonated_credentials.Credentials(
-                            source_credentials=credentials,
-                            target_principal=settings['service_account'],
-                            target_scopes=[GOOGLE_SCOPE],
-                        )
-            credentials.refresh(google.auth.transport.requests.Request())
-            expiry = credentials.expiry
-            # google-auth's expiry is a naive UTC datetime.
-            expires_at = calendar.timegm(expiry.utctimetuple()) if expiry is not None else time.time() + 300
-            return AccessToken(value=credentials.token, expires_at=float(expires_at))
-
-        async def fetch() -> AccessToken:
-            # google-auth refreshes synchronously, over `requests`.
-            return await asyncio.to_thread(refreshed)
-
-        return fetch
-
-    return build
-
-
-def azure_fetch(method: AuthMethod) -> FetchFactory:
-    """Azure's token for *method*: the default chain, a user-assigned identity, or an app's secret."""
-
-    def build(settings: Mapping[str, str], secret: str | None) -> TokenFetch:
-        credential: Any = None
-
-        async def fetch() -> AccessToken:
-            nonlocal credential
-            from azure.identity.aio import ClientSecretCredential, DefaultAzureCredential, ManagedIdentityCredential
-
-            if credential is None:
-                if method is AuthMethod.CLIENT_SECRET:
-                    credential = ClientSecretCredential(
-                        tenant_id=settings['tenant_id'], client_id=settings['client_id'], client_secret=secret or ''
-                    )
-                elif method is AuthMethod.MANAGED_IDENTITY:
-                    credential = ManagedIdentityCredential(client_id=settings['client_id'])
-                else:
-                    credential = DefaultAzureCredential()
-            token = await credential.get_token(AZURE_SCOPE)
-            return AccessToken(value=token.token, expires_at=float(token.expires_on))
-
-        return fetch
-
-    return build
-
-
-#: How long the server's own AWS identity is reused when it says nothing of its expiry
-#: (keys in the environment): re-read every few minutes rather than never.
-_AWS_REREAD_SECONDS = 900
-
-#: A role session, as long as STS gives by default.
-_ROLE_SESSION_SECONDS = 3600
-
-
-def aws_fetch(method: AuthMethod) -> FetchFactory:
-    """Bedrock's keys for *method*: the server's own role, a role it assumes, or stored access keys."""
-
-    def build(settings: Mapping[str, str], secret: str | None) -> TokenFetch:
-        def obtained() -> AccessToken:
-            if method is AuthMethod.ACCESS_KEYS:
-                return AccessToken(
-                    value=AwsKeys(access_key_id=settings['access_key_id'], secret_access_key=secret or ''),
-                    expires_at=float('inf'),
-                )
-            import boto3
-
-            session = boto3.Session()
-            if method is AuthMethod.ASSUME_ROLE:
-                request: dict[str, Any] = {
-                    'RoleArn': settings['role_arn'],
-                    'RoleSessionName': 'igni-server',
-                    'DurationSeconds': _ROLE_SESSION_SECONDS,
-                }
-                if settings.get('external_id'):
-                    request['ExternalId'] = settings['external_id']
-                issued = session.client('sts').assume_role(**request)['Credentials']
-                return AccessToken(
-                    value=AwsKeys(
-                        access_key_id=issued['AccessKeyId'],
-                        secret_access_key=issued['SecretAccessKey'],
-                        session_token=issued['SessionToken'],
-                    ),
-                    expires_at=issued['Expiration'].timestamp(),
-                )
-            found = session.get_credentials()
-            if found is None:
-                raise RuntimeError("AWS's default chain found no credentials for the server")
-            frozen = found.get_frozen_credentials()
-            expiry = getattr(found, '_expiry_time', None)
-            return AccessToken(
-                value=AwsKeys(
-                    access_key_id=frozen.access_key, secret_access_key=frozen.secret_key, session_token=frozen.token
-                ),
-                expires_at=expiry.timestamp() if expiry is not None else time.time() + _AWS_REREAD_SECONDS,
-            )
-
-        async def fetch() -> AccessToken:
-            # boto3 is synchronous: STS and the instance metadata service are network calls.
-            return await asyncio.to_thread(obtained)
-
-        return fetch
-
-    return build
-
-
-_GOOGLE = (AuthMethod.AMBIENT, AuthMethod.IMPERSONATE, AuthMethod.SERVICE_ACCOUNT_KEY)
-_AZURE = (AuthMethod.AMBIENT, AuthMethod.MANAGED_IDENTITY, AuthMethod.CLIENT_SECRET)
-_AWS = (AuthMethod.AMBIENT, AuthMethod.ASSUME_ROLE, AuthMethod.ACCESS_KEYS)
-
-#: The fetch for each kind and method that signs with credentials the server obtains.
-_FETCHES: dict[tuple[BackendKind, AuthMethod], FetchFactory] = {
-    **{
-        (kind, method): google_fetch(method)
-        for kind in (BackendKind.VERTEX_OPENAI, BackendKind.VERTEX_ANTHROPIC)
-        for method in _GOOGLE
-    },
-    **{
-        (kind, method): azure_fetch(method)
-        for kind in (BackendKind.AZURE_OPENAI, BackendKind.AZURE_ANTHROPIC)
-        for method in _AZURE
-    },
-    **{(BackendKind.BEDROCK, method): aws_fetch(method) for method in _AWS},
+_GOOGLE: Mapping[AuthMethod, type[TokenSource[str]]] = {
+    AuthMethod.AMBIENT: GoogleDefaultSource,
+    AuthMethod.IMPERSONATE: GoogleImpersonatedSource,
+    AuthMethod.SERVICE_ACCOUNT_KEY: GoogleKeySource,
 }
+_AZURE: Mapping[AuthMethod, type[TokenSource[str]]] = {
+    AuthMethod.AMBIENT: AzureDefaultSource,
+    AuthMethod.MANAGED_IDENTITY: AzureManagedIdentitySource,
+    AuthMethod.CLIENT_SECRET: AzureClientSecretSource,
+}
+
+#: The bearer-token source for each kind and method that signs with one.
+TOKEN_SOURCES: Mapping[tuple[BackendKind, AuthMethod], type[TokenSource[str]]] = MappingProxyType(
+    {
+        **{
+            (kind, method): source
+            for kind in (BackendKind.VERTEX_OPENAI, BackendKind.VERTEX_ANTHROPIC)
+            for method, source in _GOOGLE.items()
+        },
+        **{
+            (kind, method): source
+            for kind in (BackendKind.AZURE_OPENAI, BackendKind.AZURE_ANTHROPIC)
+            for method, source in _AZURE.items()
+        },
+    }
+)
+
+#: The AWS key source for each Bedrock method.
+KEY_SOURCES: Mapping[tuple[BackendKind, AuthMethod], type[TokenSource[AwsKeys]]] = MappingProxyType(
+    {
+        (BackendKind.BEDROCK, AuthMethod.AMBIENT): AwsDefaultSource,
+        (BackendKind.BEDROCK, AuthMethod.ASSUME_ROLE): AwsAssumedRoleSource,
+        (BackendKind.BEDROCK, AuthMethod.ACCESS_KEYS): AwsAccessKeysSource,
+    }
+)
 
 
 @dataclass(frozen=True)
 class Signer:
-    """Who a token is for: the backend, its kind and method, the method's settings and secret."""
+    """Who a credential is for: the backend, its kind and method, the method's settings and secret."""
 
     backend_id: str
     kind: BackendKind
@@ -264,48 +100,77 @@ class Signer:
     settings: Mapping[str, str]
     secret: str | None
 
-    def key(self) -> tuple[str, BackendKind, AuthMethod, str]:
+    def key(self) -> SignerKey:
         """A cache key that changes with any of them, without holding the secret itself."""
         material = json.dumps([sorted(self.settings.items()), self.secret or ''])
         return self.backend_id, self.kind, self.auth, hashlib.sha256(material.encode()).hexdigest()
 
 
 class CloudCredentials:
-    """Every cloud backend's cached token, one per backend, method, settings and secret.
+    """Every cloud backend's cached credential, one per backend, method, settings and secret.
 
-    An operator changing any of those gets a fresh token at once rather
-    than when the old one expires.
+    An operator changing any of those gets a fresh credential at once
+    rather than when the old one expires.
     """
 
     def __init__(
         self,
         *,
-        fetches: Mapping[tuple[BackendKind, AuthMethod], FetchFactory] | None = None,
+        sources: Mapping[tuple[BackendKind, AuthMethod], type[TokenSource[str]]] = TOKEN_SOURCES,
+        key_sources: Mapping[tuple[BackendKind, AuthMethod], type[TokenSource[AwsKeys]]] = KEY_SOURCES,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        self._fetches = dict(_FETCHES if fetches is None else fetches)
+        self._sources = sources
+        self._key_sources = key_sources
         self._clock = clock
-        self._tokens: dict[tuple[str, BackendKind, AuthMethod, str], CachedToken] = {}
+        self._tokens: dict[SignerKey, CachedToken[str]] = {}
+        self._keys: dict[SignerKey, CachedToken[AwsKeys]] = {}
+
+    @classmethod
+    def of_app(cls, app: Starlette) -> CloudCredentials:
+        """The app's one cache, built on first use: the proxy signs with it and the health probe asks it.
+
+        Its own slot on the app rather than a part of the chat services, so
+        the fleet page asking for a token builds nothing else.
+        """
+        credentials: CloudCredentials | None = getattr(app.state, 'cloud_credentials', None)
+        if credentials is None:
+            credentials = app.state.cloud_credentials = cls()
+        return credentials
 
     async def bearer(self, signer: Signer) -> str:
         """The backend's current token. Raises `CredentialUnavailable` when the cloud gives none."""
-        return str(await self._obtain(signer))
+        return await self._value(signer, self._tokens, self._sources)
 
     async def aws(self, signer: Signer) -> AwsKeys:
         """A Bedrock backend's current keys. Raises `CredentialUnavailable` when AWS gives none."""
-        keys = await self._obtain(signer)
-        assert isinstance(keys, AwsKeys)
-        return keys
+        return await self._value(signer, self._keys, self._key_sources)
 
-    async def _obtain(self, signer: Signer) -> Any:
+    def invalidate(self, signer: Signer) -> None:
+        """Drop the backend's credential after the provider refused it."""
+        key = signer.key()
+        for cache in (self._tokens, self._keys):
+            cached = cache.get(key)
+            if cached is not None:
+                cached.invalidate()
+
+    async def _value(
+        self,
+        signer: Signer,
+        cache: dict[SignerKey, CachedToken[T]],
+        sources: Mapping[tuple[BackendKind, AuthMethod], type[TokenSource[T]]],
+    ) -> T:
+        key = signer.key()
         try:
-            cached = self._cached(signer)
-            return await cached.value()
+            if key not in cache:
+                source = sources[(signer.kind, signer.auth)](settings=signer.settings, secret=signer.secret)
+                cache[key] = CachedToken(source, clock=self._clock)
+            return await cache[key].value()
         except Exception as exc:  # noqa: BLE001 — every SDK has its own error family; all mean the same here
             # The exception's type and text, never the secret: none of these
             # SDKs put it in their messages.
             logger.warning(
-                'Could not get a token for backend %s (%s, %s): %s: %s',
+                'Could not get a credential for backend %s (%s, %s): %s: %s',
                 signer.backend_id,
                 signer.kind.value,
                 signer.auth.value,
@@ -313,24 +178,3 @@ class CloudCredentials:
                 exc,
             )
             raise CredentialUnavailable(signer.kind) from exc
-
-    def invalidate(self, signer: Signer) -> None:
-        """Drop the backend's token after the provider refused it."""
-        cached = self._tokens.get(signer.key())
-        if cached is not None:
-            cached.invalidate()
-
-    def _cached(self, signer: Signer) -> CachedToken:
-        key = signer.key()
-        if key not in self._tokens:
-            fetch = self._fetches[(signer.kind, signer.auth)](signer.settings, signer.secret)
-            self._tokens[key] = CachedToken(fetch, clock=self._clock)
-        return self._tokens[key]
-
-
-_SHARED = CloudCredentials()
-
-
-def shared_credentials() -> CloudCredentials:
-    """The process's one cache, so the chat proxy and the health probe share tokens."""
-    return _SHARED

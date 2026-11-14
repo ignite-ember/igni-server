@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.api.base_v1.schema.chat import ChatCompletionRequest
 from app.config import settings
 from app.db.sql.chat_usage import ChatUsageDB
+from app.services.ai.backend import BackendLease
 from app.services.ai.chat.admission import ChatAdmission
 from app.services.ai.chat.answers import CallerLeft, ChatAnswer, CompletedAnswer, StreamedAnswer
 from app.services.ai.chat.callers import ChatCallerResolver
@@ -15,7 +16,6 @@ from app.services.ai.chat.schemas import ChatCaller, UpstreamChatRequest
 from app.services.ai.chat.streaming import ChatStreamer
 from app.services.ai.fair_queue import FairQueue
 from app.services.ai.pool_manager import PoolManager
-from app.services.ai.schemas import BackendLease
 
 
 class ChatProxy:

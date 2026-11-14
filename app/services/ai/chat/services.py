@@ -19,6 +19,7 @@ from app.services.ai.fair_queue import FairQueue
 from app.services.ai.messages.proxy import MessagesProxy
 from app.services.ai.messages.upstream import MessagesUpstream
 from app.services.ai.pool_manager import PoolManager
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.token_estimate import TokenEstimator
 from app.services.ai.upstream import RetryPolicy
 from app.services.auth.org_context import OrgContexts
@@ -47,6 +48,7 @@ class ChatServices:
         retry: RetryPolicy | None = None,
         callers: ChatCallerResolver | None = None,
         catalog: ChatModelCatalog | None = None,
+        credentials: CloudCredentials | None = None,
         messages_upstream: MessagesUpstream | None = None,
     ) -> None:
         pools = pools or PoolManager()
@@ -55,7 +57,8 @@ class ChatServices:
             producers=Producers(), orgs=OrgContexts(), group_models=GroupModelService()
         )
         self._catalog = catalog or ChatModelCatalog(pools=pools)
-        upstream = upstream or UpstreamChatClient()
+        credentials = credentials or CloudCredentials()
+        upstream = upstream or UpstreamChatClient(credentials=credentials)
         estimator = estimator or TokenEstimator()
         retry = retry or RetryPolicy()
         # One queue for both APIs: a replica's waiting requests are fair to each other whichever they speak.
@@ -66,10 +69,11 @@ class ChatServices:
             pools=pools,
             queue=queue,
             usage_db=usage_db,
-            upstream=messages_upstream or MessagesUpstream(),
+            upstream=messages_upstream or MessagesUpstream(credentials=credentials),
             estimator=estimator,
             tails=self._tails,
             retry=retry,
+            max_wait=settings.chat_queue_max_wait_seconds,
         )
         self._proxy = ChatProxy(
             callers=self._callers,
@@ -85,7 +89,7 @@ class ChatServices:
         """The app's instance, built on first use, so it works with or without a lifespan."""
         services: ChatServices | None = getattr(app.state, 'chat_services', None)
         if services is None:
-            services = app.state.chat_services = cls()
+            services = app.state.chat_services = cls(credentials=CloudCredentials.of_app(app))
         return services
 
     @property

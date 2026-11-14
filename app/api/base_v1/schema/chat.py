@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.ai.providers.kinds import Wire
+
 
 class ToolCallFunction(BaseModel):
     """The function an assistant's tool call names. Extra fields are passed through."""
@@ -105,7 +107,7 @@ class ChatModelEntry(BaseModel):
 
     id: str
     #: The API it is served on: ``openai`` here, ``anthropic`` on ``/v1/messages``.
-    api: str = 'openai'
+    api: Wire = Wire.OPENAI
 
 
 class ChatModelsResponse(BaseModel):

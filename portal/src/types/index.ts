@@ -71,26 +71,32 @@ export type AuthMethod =
   | 'assume_role'
   | 'access_keys'
 
+/** A setting an auth method needs — not secret, shown back in the portal. */
+export type AuthSetting = 'client_id' | 'tenant_id' | 'service_account' | 'role_arn' | 'external_id' | 'access_key_id'
+
+/** The API a backend speaks, and so the endpoint its models are served on. */
+export type Wire = 'openai' | 'anthropic'
+
 /** One method a kind offers: the settings it needs (not secret) and where its secret goes. */
 export interface AuthMethodInfo {
   method: AuthMethod
-  settings: string[]
+  settings: AuthSetting[]
   /** Settings it takes but does not need, such as a role's external ID. */
-  optional?: string[]
+  optional: AuthSetting[]
   secret: 'api_key' | 'credential' | null
 }
 
 /** A kind and its methods, from the server's own table — the first is its default. */
 export interface BackendKindInfo {
   kind: BackendKind
-  wire: string
+  wire: Wire
   methods: AuthMethodInfo[]
 }
 
 export interface NodeStatus {
   id: string
   base_url: string
-  kind?: BackendKind
+  kind: BackendKind
   /** Every id this node answers to: the base model, plus any LoRA adapters. */
   models: string[]
   multimodal: boolean
@@ -132,9 +138,29 @@ export interface PinnedNode {
   project: string | null
   model_ids: Record<string, string>
   auth: AuthMethod
-  auth_settings: Record<string, string>
+  auth_settings: Partial<Record<AuthSetting, string>>
   /** Whether a credential is stored — never what it is. */
   has_credential: boolean
+}
+
+/**
+ * A partial edit of a node added here. Absent leaves a field alone; an
+ * empty `api_key` or `credential` clears it, and an absent one keeps the
+ * stored secret, which is never sent back.
+ */
+export interface PinnedNodeUpdate {
+  base_url?: string
+  models?: string[]
+  max_concurrent?: number
+  multimodal?: boolean
+  enabled?: boolean
+  region?: string
+  project?: string
+  model_ids?: Record<string, string>
+  auth?: AuthMethod
+  auth_settings?: Partial<Record<AuthSetting, string>>
+  api_key?: string
+  credential?: string
 }
 
 export interface PinnedNodeInput {
@@ -149,7 +175,7 @@ export interface PinnedNodeInput {
   project?: string
   model_ids?: Record<string, string>
   auth?: AuthMethod
-  auth_settings?: Record<string, string>
+  auth_settings?: Partial<Record<AuthSetting, string>>
   credential?: string
 }
 

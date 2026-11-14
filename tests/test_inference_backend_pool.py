@@ -18,116 +18,17 @@ import json
 
 import pytest
 
-from app.services.ai.backend_pool import InferenceBackendPool
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.backend_provider import BackendConfigError, InferenceBackendProvider
-from app.services.ai.providers.kinds import BackendKind
+from app.services.ai.providers.auth import AuthMethod
+from app.services.ai.providers.kinds import BackendKind, Wire
 from app.services.ai.schemas import (
-    InferenceBackend,
     ModelNotAvailableError,
     NoBackendAvailableError,
+    NoBackendForWireError,
     RegisteredNode,
 )
-
-
-class FakeRedis:
-    """Enough Redis for the pool: strings, sorted sets, hashes, scan."""
-
-    def __init__(self):
-        self._strings: dict[str, str] = {}
-        self._zsets: dict[str, dict[str, float]] = {}
-        self._hashes: dict[str, dict[str, str]] = {}
-
-    async def hgetall(self, key):
-        return dict(self._hashes.get(key, {}))
-
-    async def hset(self, key, mapping):
-        self._hashes.setdefault(key, {}).update(mapping)
-
-    async def hdel(self, key, *fields):
-        for field in fields:
-            self._hashes.get(key, {}).pop(field, None)
-
-    async def get(self, key):
-        return self._strings.get(key)
-
-    async def set(self, key, value, ex=None):
-        self._strings[key] = value
-
-    async def delete(self, key):
-        self._strings.pop(key, None)
-        self._zsets.pop(key, None)
-        self._hashes.pop(key, None)
-
-    async def zadd(self, key, mapping):
-        self._zsets.setdefault(key, {}).update(mapping)
-
-    async def zrem(self, key, member):
-        self._zsets.get(key, {}).pop(member, None)
-
-    async def zcard(self, key):
-        return len(self._zsets.get(key, {}))
-
-    async def zremrangebyscore(self, key, min_score, max_score):
-        zset = self._zsets.get(key, {})
-        for member in [m for m, score in zset.items() if score <= max_score]:
-            del zset[member]
-
-    async def expire(self, key, ttl):
-        pass
-
-    async def scan_iter(self, match=None, count=None):
-        prefix = (match or '').replace('*', '')
-        for key in list(self._strings.keys()):
-            if key.startswith(prefix):
-                yield key
-
-    def pipeline(self):
-        return FakePipeline(self)
-
-
-class FakePipeline:
-    def __init__(self, redis):
-        self._redis = redis
-        self._ops = []
-
-    def zadd(self, key, mapping):
-        self._ops.append(('zadd', key, mapping))
-        return self
-
-    def expire(self, key, ttl):
-        return self
-
-    def hset(self, key, mapping):
-        self._ops.append(('hset', key, mapping))
-        return self
-
-    def hdel(self, key, *fields):
-        self._ops.append(('hdel', key, fields))
-        return self
-
-    async def execute(self):
-        for op in self._ops:
-            if op[0] == 'zadd':
-                await self._redis.zadd(op[1], op[2])
-            elif op[0] == 'hset':
-                await self._redis.hset(op[1], mapping=op[2])
-            elif op[0] == 'hdel':
-                await self._redis.hdel(op[1], *op[2])
-        self._ops.clear()
-
-
-class FakeRegistry:
-    """A registry holding whatever the test put in it.
-
-    Defaults to empty so the static-config tests describe only the file,
-    and so nothing in this module depends on a live Redis.
-    """
-
-    def __init__(self, nodes=()):
-        self.nodes = list(nodes)
-
-    async def list_nodes(self):
-        return list(self.nodes)
+from tests.backend_pool_fakes import FakeRegistry, pool_over
 
 
 def _registered(backend: InferenceBackend) -> RegisteredNode:
@@ -153,17 +54,7 @@ def _backend(backend_id: str, *, model='igni-1.0-27b', max_concurrent=2) -> Infe
 @pytest.fixture
 def pool_and_redis(tmp_path):
     def build(backends, **kwargs):
-        path = tmp_path / f'backends-{len(backends)}-{id(backends)}.json'
-        path.write_text(json.dumps([b.model_dump() for b in backends]))
-        provider = InferenceBackendProvider(path=str(path), registry=FakeRegistry())
-        pool = InferenceBackendPool(provider=provider, **kwargs)
-        redis = FakeRedis()
-
-        async def _stub_redis():
-            return redis
-
-        pool._get_redis = _stub_redis  # type: ignore[method-assign]
-        return pool, redis
+        return pool_over(backends, tmp_path, **kwargs)
 
     return build
 
@@ -388,12 +279,18 @@ class TestACloudBackendsLease:
 
         lease = await pool.acquire('alice', model='gemini-pro')
 
-        assert (lease.kind, lease.credential, lease.model_ids, lease.base_url) == (
-            BackendKind.VERTEX_OPENAI,
-            credential,
-            {'gemini-pro': 'google/gemini-2.5-pro'},
-            vertex.base_url,
-        )
+        assert lease.model_dump(exclude={'lease_id'}) == {
+            'backend_id': 'vertex-eu',
+            'base_url': vertex.base_url,
+            'model': 'gemini-pro',
+            'api_key': None,
+            'kind': BackendKind.VERTEX_OPENAI,
+            'region': 'europe-west4',
+            'auth': AuthMethod.SERVICE_ACCOUNT_KEY,
+            'auth_settings': {},
+            'credential': credential,
+            'model_ids': {'gemini-pro': 'google/gemini-2.5-pro'},
+        }
         assert lease.upstream_model(lease.model) == 'google/gemini-2.5-pro'
 
 
@@ -426,3 +323,47 @@ class TestModelAdvertising:
         # Three nodes, three URLs, but only two models.
         assert len({model for model, _ in pairs}) == 2
         assert len(pairs) == 3
+
+
+class TestAModelIsServedOnItsOwnApi:
+    @pytest.fixture
+    def mixed(self, pool_and_redis):
+        """A GPU node and a Claude backend that both answer to `shared`."""
+        pool, _ = pool_and_redis(
+            [
+                InferenceBackend(id='gpu', base_url='http://gpu/v1', models=['shared', 'vllm-only']),
+                InferenceBackend(id='claude', kind='anthropic', api_key='k', models=['claude', 'shared']),
+            ]
+        )
+        return pool
+
+    async def test_each_api_is_handed_only_its_own_backends(self, mixed):
+        assert (await mixed.acquire('u', model='shared')).backend_id == 'gpu'
+        assert (await mixed.acquire('u', model='shared', wire=Wire.ANTHROPIC)).backend_id == 'claude'
+        assert (await mixed.acquire('u')).backend_id == 'gpu'
+        assert (await mixed.acquire('u', wire=Wire.ANTHROPIC)).backend_id == 'claude'
+
+    async def test_a_model_on_the_other_api_is_refused_naming_the_right_endpoint(self, mixed):
+        with pytest.raises(ModelNotAvailableError) as on_chat:
+            await mixed.acquire('u', model='claude')
+        with pytest.raises(ModelNotAvailableError) as on_messages:
+            await mixed.acquire('u', model='vllm-only', wire=Wire.ANTHROPIC)
+        assert str(on_chat.value) == (
+            "Model 'claude' is served on /v1/messages, not here. Available here: shared, vllm-only"
+        )
+        assert str(on_messages.value) == (
+            "Model 'vllm-only' is served on /v1/chat/completions, not here. Available here: claude, shared"
+        )
+
+    async def test_an_api_no_backend_speaks_is_its_own_refusal(self, pool_and_redis):
+        pool, _ = pool_and_redis([InferenceBackend(id='gpu', base_url='http://gpu/v1', models=['m'])])
+        with pytest.raises(NoBackendForWireError) as refused:
+            await pool.acquire('u', wire=Wire.ANTHROPIC)
+        assert str(refused.value) == 'No backend serves /v1/messages on this deployment'
+
+    async def test_the_models_listing_says_which_api_serves_each(self, mixed):
+        assert await mixed.models_by_wire() == {
+            'shared': Wire.OPENAI,
+            'vllm-only': Wire.OPENAI,
+            'claude': Wire.ANTHROPIC,
+        }

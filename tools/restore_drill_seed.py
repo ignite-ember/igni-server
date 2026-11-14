@@ -139,6 +139,7 @@ class DrillSeed:
                     base_url='http://gpu.example.invalid:8000',
                     models=['drill-base', 'drill-adapter-zürich'],
                     api_key=NODE_API_KEY,
+                    auth='api_key',
                     created_by_user_id='drill-user',
                     created_at=self.now,
                     updated_at=self.now,

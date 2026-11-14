@@ -24,11 +24,11 @@ class FleetStatus:
         *,
         manager: PoolManager | None = None,
         registry: NodeRegistry | None = None,
-        probe: NodeHealthProbe | None = None,
+        probe: NodeHealthProbe,
     ) -> None:
         self._manager = manager or PoolManager()
         self._registry = registry or NodeRegistry()
-        self._probe = probe or NodeHealthProbe()
+        self._probe = probe
 
     async def snapshot(self) -> FleetSnapshot:
         """Every node with its load, health and the node's own gauges.

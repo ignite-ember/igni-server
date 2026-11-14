@@ -17,9 +17,10 @@ import json
 
 import pytest
 
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.backend_provider import BackendConfigError, InferenceBackendProvider
 from app.services.ai.node_registry import NodeRegistry
-from app.services.ai.schemas import InferenceBackend, RegisteredNode
+from app.services.ai.schemas import RegisteredNode
 
 
 class FakeRedis:

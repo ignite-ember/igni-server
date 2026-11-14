@@ -27,14 +27,12 @@ from __future__ import annotations
 
 import pytest
 
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.node_drain import NodeDrainRegistry
 from app.services.ai.node_registry import NodeRegistry
 from app.services.ai.pool_manager import PoolManager
-from app.services.ai.schemas import (
-    AllBackendsDrainedError,
-    InferenceBackend,
-)
+from app.services.ai.schemas import AllBackendsDrainedError
 from tests.conftest import add_member, audit_rows, auth_header, create_org, create_user, make_token
 
 pytestmark = pytest.mark.anyio
