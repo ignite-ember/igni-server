@@ -36,7 +36,7 @@ class NodeEdit:
         written = self._changes.model_copy(update=self._implied().model_dump(exclude_unset=True))
         edited = InferenceBackend.validated(**self._current.model_copy(update=self._overrides(written)).model_dump())
         derived = NodeChanges()
-        if written.base_url is None and edited.base_url != self._current.base_url:
+        if not written.base_url and edited.base_url != self._current.base_url:
             derived.base_url = edited.base_url
         if written.auth is None and edited.auth != self._current.auth:
             derived.auth = edited.auth

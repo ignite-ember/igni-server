@@ -184,6 +184,7 @@ class TestEditing:
         resp = await client.patch('/portal/inference/nodes/anthropic', json={'base_url': ''}, headers=headers)
 
         assert resp.status_code == 200, resp.text
+        assert resp.json()['base_url'] == 'https://api.anthropic.com', 'stored as the address it means, not blank'
         assert (await routed())['anthropic'].base_url == 'https://api.anthropic.com'
 
     async def test_a_blank_address_is_refused_for_a_kind_that_has_none_of_its_own(self, client, fleet_admin):
