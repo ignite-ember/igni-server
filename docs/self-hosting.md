@@ -104,9 +104,11 @@ Inference, or in the static backend list:
 | `anthropic` | `api_key` | — |
 
 A cloud backend makes that cloud a processor of prompts: see R-A in
-[SUPPLIERS.md](SUPPLIERS.md). `tools/smoke_provider.py` sends one real
-request through a configured backend, to prove its identity and model
-before users rely on it.
+[SUPPLIERS.md](SUPPLIERS.md). To prove a backend's identity and model
+before users rely on it, send it one real request from inside the API
+container, where the server's own identity is:
+`python tools/smoke_provider.py <backend-id>` (`--stream` to stream, as
+igni clients do).
 
 ## 2. Object storage — changesets
 

@@ -191,6 +191,6 @@ kind of waiting from a decision: the content exists and nobody has adopted it.
 
 **Anything an engineer can settle.** If a question has a right answer that
 evidence establishes, it belongs in the review as a finding rather than here as a
-choice. Five of the six entries above were re-checked while writing this file and
+choice. When this file was first written, its first six entries were re-checked and
 one of them turned out to have been settled by code — which is the failure mode a
-list of open questions has, and the reason this one is checked.
+list of open questions has, and the reason each one is checked.

@@ -183,14 +183,20 @@ def token_lifetime_was_revisited() -> bool:
 
 def cloud_providers_are_proxied_natively() -> bool:
     """DEC-16. Answered when igni server serves both APIs natively and signs
-    for the clouds itself: the Anthropic endpoint exists, Bedrock is a
-    backend kind with its role-based methods, and nothing translates
-    between the two APIs."""
-    ai = _ROOT / 'app/services/ai'
-    auth = (ai / 'providers/auth.py').read_text()
-    messages = _ROOT / 'app/api/base_v1/endpoints/client/messages.py'
-    translating = any('translat' in py.name for py in ai.rglob('*.py'))
-    return messages.exists() and 'BackendKind.BEDROCK' in auth and 'ASSUME_ROLE' in auth and not translating
+    for the clouds itself: both endpoints are served, every Claude kind
+    speaks Anthropic's API and every other kind OpenAI's — so nothing is
+    translated between them — and Bedrock can assume a role."""
+    from app.main import app
+    from app.services.ai.providers.auth import AuthMethod, METHODS
+    from app.services.ai.providers.kinds import BackendKind, Wire
+
+    served = set(app.openapi()['paths'])
+    claude = {BackendKind.ANTHROPIC, BackendKind.BEDROCK, BackendKind.VERTEX_ANTHROPIC, BackendKind.AZURE_ANTHROPIC}
+    return (
+        {'/v1/chat/completions', '/v1/messages'} <= served
+        and all(kind.wire is (Wire.ANTHROPIC if kind in claude else Wire.OPENAI) for kind in BackendKind)
+        and AuthMethod.ASSUME_ROLE in METHODS[BackendKind.BEDROCK]
+    )
 
 
 RESOLVERS = {
@@ -613,9 +619,9 @@ def render() -> str:
     out.append('')
     out.append('**Anything an engineer can settle.** If a question has a right answer that')
     out.append('evidence establishes, it belongs in the review as a finding rather than here as a')
-    out.append('choice. Five of the six entries above were re-checked while writing this file and')
+    out.append('choice. When this file was first written, its first six entries were re-checked and')
     out.append('one of them turned out to have been settled by code — which is the failure mode a')
-    out.append('list of open questions has, and the reason this one is checked.')
+    out.append('list of open questions has, and the reason each one is checked.')
     out.append('')
     return '\n'.join(out)
 

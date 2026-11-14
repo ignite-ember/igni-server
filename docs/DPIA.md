@@ -169,8 +169,8 @@ has to paper.
 **The model endpoint is the one that matters.** `base_url` accepts any absolute
 URL: the product is built for the customer's own vLLM nodes, and the whole
 inference stack — routing, drain, health — is about GPUs they run. Nothing stops a
-customer pointing it at a third-party API — or choosing a cloud kind: Azure OpenAI,
-Vertex AI, AWS Bedrock, Anthropic, Microsoft Foundry (DEC-16) — and if they do, that provider
+customer pointing it at a third-party API, or choosing one of the cloud kinds R-A in
+SUPPLIERS.md lists (DEC-16), and if they do, that provider
 receives their developers' source code and becomes a processor they must assess,
 contract with under Article 28, and possibly list as a recipient. The software
 cannot make that decision for them and does not try to. For a cloud backend, its

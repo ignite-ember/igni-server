@@ -112,6 +112,10 @@ COPY alembic_tenant ./alembic_tenant
 # the image because the runbook runs it here, against this deployment's
 # own settings (charts/igni/README.md, docs/self-hosting.md).
 COPY tools/rotate_secret_key.py ./tools/rotate_secret_key.py
+# Sends one real request through a configured backend, to prove a cloud
+# backend's identity and model where the server's own identity lives
+# (docs/self-hosting.md §1).
+COPY tools/smoke_provider.py ./tools/smoke_provider.py
 
 # ── Run as a non-root user ────────────────────────────────────────────
 #

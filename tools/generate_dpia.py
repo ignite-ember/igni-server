@@ -48,7 +48,7 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TRACKER = _ROOT / 'docs/COMPLIANCE_TRACKER.md'
 _READINESS = _ROOT / 'docs/REVIEW_FINDINGS.md'
 _ROP_GENERATOR = _ROOT / 'tools/generate_records_of_processing.py'
-_SCHEMAS = _ROOT / 'app/services/ai/backend.py'
+_BACKEND = _ROOT / 'app/services/ai/backend.py'
 _OUTPUT = _ROOT / 'docs/DPIA.md'
 
 PLACEHOLDER = '`__CONTROLLER_TO_COMPLETE__`'
@@ -308,7 +308,7 @@ def base_url_is_still_unrestricted() -> bool:
     restricts the URL to private ranges, the document is wrong and this
     is what says so.
     """
-    source = _SCHEMAS.read_text()
+    source = _BACKEND.read_text()
     if 'base_url must start with http:// or https://' not in source:
         return False
     for marker in ('is_private', 'ip_address(', 'RFC1918', 'loopback'):
@@ -490,8 +490,8 @@ def render() -> str:
     out.append('**The model endpoint is the one that matters.** `base_url` accepts any absolute')
     out.append("URL: the product is built for the customer's own vLLM nodes, and the whole")
     out.append('inference stack — routing, drain, health — is about GPUs they run. Nothing stops a')
-    out.append('customer pointing it at a third-party API — or choosing a cloud kind: Azure OpenAI,')
-    out.append('Vertex AI, AWS Bedrock, Anthropic, Microsoft Foundry (DEC-16) — and if they do, that provider')
+    out.append('customer pointing it at a third-party API, or choosing one of the cloud kinds R-A in')
+    out.append('SUPPLIERS.md lists (DEC-16), and if they do, that provider')
     out.append("receives their developers' source code and becomes a processor they must assess,")
     out.append('contract with under Article 28, and possibly list as a recipient. The software')
     out.append('cannot make that decision for them and does not try to. For a cloud backend, its')
