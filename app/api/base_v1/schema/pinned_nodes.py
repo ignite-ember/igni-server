@@ -36,7 +36,8 @@ class PinnedNodeCreate(BaseModel):
     )
     kind: BackendKind = Field(
         default=BackendKind.OPENAI,
-        description='openai (a GPU node or any OpenAI-compatible API), azure_openai, or vertex_openai',
+        description='openai (a GPU node or any OpenAI-compatible API), or a cloud: azure_openai, vertex_openai, '
+        'anthropic, bedrock, vertex_anthropic, azure_anthropic',
     )
     base_url: str = Field(
         default='',
@@ -54,8 +55,10 @@ class PinnedNodeCreate(BaseModel):
     )
     max_concurrent: int = Field(default=64, gt=0, description="Roughly the vLLM instance's --max-num-seqs")
     multimodal: bool = False
-    region: str | None = Field(default=None, description='vertex_openai: where the model runs, e.g. europe-west4')
-    project: str | None = Field(default=None, description='vertex_openai: the Google Cloud project')
+    region: str | None = Field(
+        default=None, description='Vertex AI or Bedrock: where the model runs, e.g. europe-west4, eu-central-1'
+    )
+    project: str | None = Field(default=None, description='Vertex AI: the Google Cloud project')
     auth: AuthMethod | None = Field(
         default=None,
         description='How requests are authenticated; GET /inference/auth-methods lists what each kind offers',
@@ -97,6 +100,8 @@ class PinnedNodeUpdate(BaseModel):
     # Never echo a value in a 422: it may be a key or a credential.
     model_config = ConfigDict(hide_input_in_errors=True)
 
+    # An empty string goes back to the kind's own address — Anthropic's API —
+    # and is refused for a kind that has none.
     base_url: str | None = None
     models: list[str] | None = Field(default=None, min_length=1)
     # Absent leaves the stored credential alone; an explicit empty string
@@ -122,7 +127,7 @@ class PinnedNodeUpdate(BaseModel):
     def _base_url_is_absolute(cls, base_url: str | None) -> str | None:
         # A field validator, so a 422 carries this field's value and not the
         # whole body, whose api_key or credential it would echo.
-        if base_url is not None and not base_url.startswith(('http://', 'https://')):
+        if base_url and not base_url.startswith(('http://', 'https://')):
             raise ValueError('base_url must start with http:// or https://')
         return base_url
 
@@ -186,6 +191,8 @@ class AuthMethodView(BaseModel):
     method: AuthMethod
     #: Settings the method needs, not secret.
     settings: list[str]
+    #: Settings it takes but does not need: a role's external ID.
+    optional: list[str]
     #: Where its secret goes, or none.
     secret: SecretSlot
 
@@ -205,7 +212,9 @@ class BackendKindView(BaseModel):
                 kind=kind,
                 wire=kind.wire,
                 methods=[
-                    AuthMethodView(method=method, settings=list(spec.settings), secret=spec.secret)
+                    AuthMethodView(
+                        method=method, settings=list(spec.settings), optional=list(spec.optional), secret=spec.secret
+                    )
                     for method, spec in methods.items()
                 ],
             )

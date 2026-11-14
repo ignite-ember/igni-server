@@ -13,7 +13,7 @@ from app.services.ai.chat.errors import (
 )
 from app.services.ai.chat.schemas import ChatCaller
 from app.services.ai.fair_queue import FairQueue, QueueFull, QueueTimeout
-from app.services.ai.schemas import ModelNotAvailableError
+from app.services.ai.schemas import ModelNotAvailableError, NoBackendForWireError
 
 
 class ChatAdmission:
@@ -40,7 +40,7 @@ class ChatAdmission:
                 release=self._pool.release,
                 max_wait=self._max_wait,
             )
-        except ModelNotAvailableError as exc:
+        except (ModelNotAvailableError, NoBackendForWireError) as exc:
             raise ModelUnavailableRefusal(str(exc)) from exc
         except BackendConfigError as exc:
             raise BackendMisconfiguredRefusal(str(exc)) from exc

@@ -1,7 +1,11 @@
 import type { BackendKind } from '../../types'
 
-/** How a kind is addressed: a URL the admin pastes, or a cloud project and region the server builds one from. */
-export type AddressShape = 'url' | 'project-region'
+/**
+ * How a kind is addressed: a URL the admin pastes, one that may be left out
+ * for the provider's own, or a cloud region (and project) the server builds
+ * the URL from.
+ */
+export type AddressShape = 'url' | 'url-optional' | 'region' | 'project-region'
 
 /** Everything the portal says and asks about one kind of backend, in one row. */
 export interface KindForm {
@@ -52,6 +56,50 @@ export const KINDS: Record<BackendKind, KindForm> = {
     modelPlaceholder: 'gemini-pro',
     providerNameExample: 'gemini-pro = google/gemini-2.5-pro',
     providerNameHint: 'the publisher/model id',
+  },
+  anthropic: {
+    label: 'Anthropic (Claude)',
+    cloud: true,
+    address: 'url-optional',
+    endpointPlaceholder: 'https://api.anthropic.com',
+    endpointCaption: "Leave blank for Anthropic's own API, or give your gateway's address.",
+    regionPlaceholder: '',
+    modelPlaceholder: 'claude-opus-5-5',
+    providerNameExample: 'claude-opus = claude-opus-5-5',
+    providerNameHint: 'the model id, if your gateway names it differently',
+  },
+  bedrock: {
+    label: 'AWS Bedrock (Claude)',
+    cloud: true,
+    address: 'region',
+    endpointPlaceholder: '',
+    endpointCaption: '',
+    regionPlaceholder: 'eu-central-1',
+    modelPlaceholder: 'claude-opus-5-5',
+    providerNameExample: 'claude-opus-5-5 = eu.anthropic.claude-opus-5-5-v1:0',
+    providerNameHint: 'the model ID or inference profile, which Bedrock needs for most Claude models',
+  },
+  vertex_anthropic: {
+    label: 'Google Vertex AI (Claude)',
+    cloud: true,
+    address: 'project-region',
+    endpointPlaceholder: '',
+    endpointCaption: '',
+    regionPlaceholder: 'us-east5',
+    modelPlaceholder: 'claude-opus-5-5',
+    providerNameExample: 'claude-opus-5-5 = claude-opus-5-5@20261101',
+    providerNameHint: 'the model version, such as claude-opus-5-5@20261101',
+  },
+  azure_anthropic: {
+    label: 'Microsoft Foundry (Claude)',
+    cloud: true,
+    address: 'url',
+    endpointPlaceholder: 'https://my-resource.services.ai.azure.com/anthropic',
+    endpointCaption: "The Foundry resource's Anthropic endpoint.",
+    regionPlaceholder: '',
+    modelPlaceholder: 'claude-opus-5-5',
+    providerNameExample: 'claude-opus-5-5 = my-claude-deployment',
+    providerNameHint: 'the Foundry deployment',
   },
 }
 

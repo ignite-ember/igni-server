@@ -7,9 +7,9 @@
 import { describe, expect, test } from 'vitest'
 
 import type { AuthMethodInfo, NodeProbeResult } from '../../../types'
-import { draftProblem, EMPTY_DRAFT, type NodeDraft, parseModelIds, pinnedNodeOf } from '../nodeDraft'
+import { addressOf, draftProblem, EMPTY_DRAFT, type NodeDraft, parseModelIds, pinnedNodeOf } from '../nodeDraft'
 
-const AMBIENT: AuthMethodInfo = { method: 'ambient', settings: [], secret: null }
+const AMBIENT: AuthMethodInfo = { method: 'ambient', settings: [], optional: [], secret: null }
 const PROBED: NodeProbeResult = {
   reachable: true,
   models: ['qwen'],
@@ -66,7 +66,7 @@ describe('draftProblem', () => {
   })
 
   test('a stored secret counts as given on edit, and not on add', () => {
-    const key: AuthMethodInfo = { method: 'api_key', settings: [], secret: 'api_key' }
+    const key: AuthMethodInfo = { method: 'api_key', settings: [], optional: [], secret: 'api_key' }
     const draft: NodeDraft = { ...AZURE, auth: { method: 'api_key', settings: {}, secret: '' } }
     expect(draftProblem(draft, key, { adding: false, secretStored: true })).toBeNull()
     expect(draftProblem(draft, key, { adding: true })).toBe('The chosen authentication needs every field filled in.')
@@ -91,5 +91,26 @@ describe('pinnedNodeOf', () => {
     expect(pinnedNodeOf({ ...AZURE, modelIdsText: 'gpt-5 = acme-gpt5' }, AMBIENT).model_ids).toEqual({
       'gpt-5': 'acme-gpt5',
     })
+  })
+})
+
+describe('addressOf', () => {
+  const anthropic: NodeDraft = { ...EMPTY_DRAFT, kind: 'anthropic', baseUrl: '  ' }
+
+  test('a blank optional address is left out when adding, and sent empty when editing', () => {
+    expect(addressOf(anthropic, true)).toEqual({})
+    expect(addressOf(anthropic, false)).toEqual({ base_url: '' })
+  })
+
+  test('a region-addressed kind sends its region and no address', () => {
+    expect(addressOf({ ...EMPTY_DRAFT, kind: 'bedrock', baseUrl: 'x', region: ' eu-central-1 ' }, true)).toEqual({
+      region: 'eu-central-1',
+    })
+  })
+
+  test('a missing region is named by the kind it belongs to', () => {
+    expect(draftProblem({ ...AZURE, kind: 'bedrock', region: '' }, AMBIENT, { adding: true })).toBe(
+      'AWS Bedrock (Claude) needs its region.',
+    )
   })
 })

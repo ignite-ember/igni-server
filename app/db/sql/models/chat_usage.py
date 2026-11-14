@@ -23,6 +23,10 @@ class ChatUsage(TenantBase):
     # usage is billed by the cloud, a GPU node's is not. Null before t0030.
     backend_id: Mapped[str | None] = Column(String(255), nullable=True)
     kind: Mapped[str | None] = Column(String(64), nullable=True)
+    # How much of ``input_tokens`` the prompt cache read and wrote, where
+    # the backend reports it (Anthropic's API does). Null otherwise.
+    cache_read_tokens: Mapped[int | None] = Column(Integer, nullable=True)
+    cache_write_tokens: Mapped[int | None] = Column(Integer, nullable=True)
     input_tokens: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))
     output_tokens: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))
     total_tokens: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))

@@ -32,27 +32,11 @@ Validation errors (422) are deliberately **not** converted: FastAPI's
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
-from typing import Any
-
-from fastapi import HTTPException, Request, Response
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
 
+from app.api.base_v1.endpoints.client.shaped_errors import message_of, ShapedErrorRoute
 from app.api.base_v1.schema.openai_error import error_envelope, OpenAIErrorBody
-
-
-def _message_of(detail: Any) -> str:
-    """The sentence to show, out of whatever was raised.
-
-    Almost always a string. A dict or a list is a structured detail
-    that has no single sentence in it, so it is rendered rather than
-    dropped — an unreadable message beats an empty one, and the
-    original is still under ``detail``.
-    """
-    if isinstance(detail, str):
-        return detail
-    return str(detail) if detail is not None else ''
 
 
 def openai_error(exc: HTTPException) -> JSONResponse:
@@ -60,30 +44,18 @@ def openai_error(exc: HTTPException) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content=OpenAIErrorBody(
-            error=error_envelope(message=_message_of(exc.detail), status_code=exc.status_code),
+            error=error_envelope(message=message_of(exc.detail), status_code=exc.status_code),
             detail=exc.detail,
         ).model_dump(),
         headers=exc.headers,
     )
 
 
-class OpenAICompatibleRoute(APIRoute):
-    """A route whose ``HTTPException``\\ s come back OpenAI-shaped.
+class OpenAICompatibleRoute(ShapedErrorRoute):
+    """A route whose ``HTTPException``\\ s come back OpenAI-shaped, dependencies' included.
 
-    Wrapping the route handler rather than registering an app-level
-    handler is what catches **dependency** failures too: FastAPI runs
-    the dependency tree inside this handler, so the 401 from a bad
-    token lands here, which is the error an OpenAI SDK is most likely
-    to meet and least able to read.
+    The 401 from a bad token is the error an OpenAI SDK is most likely to
+    meet and least able to read; `ShapedErrorRoute` catches it.
     """
 
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        original = super().get_route_handler()
-
-        async def answer_in_openai_shape(request: Request) -> Response:
-            try:
-                return await original(request)
-            except HTTPException as exc:
-                return openai_error(exc)
-
-        return answer_in_openai_shape
+    render = staticmethod(openai_error)

@@ -37,8 +37,9 @@ export const METHODS: Record<AuthMethod, MethodForm> = {
   ambient: {
     label: "The server's own identity",
     caption:
-      'Nothing to enter: the identity igni server runs as — Workload Identity or its service account on Google ' +
-      'Cloud, its system-assigned managed identity on Azure. Grant that identity access to the model.',
+      'Nothing to enter: the identity igni server runs as — its IAM role on AWS (instance profile, task role ' +
+      'or IRSA), Workload Identity or its service account on Google Cloud, its system-assigned managed ' +
+      'identity on Azure. Grant that identity access to the model.',
     secretLabel: '',
     secretIsMultiline: false,
   },
@@ -67,6 +68,20 @@ export const METHODS: Record<AuthMethod, MethodForm> = {
     secretLabel: 'Service-account key (JSON)',
     secretIsMultiline: true,
   },
+  assume_role: {
+    label: 'Assume an IAM role',
+    caption:
+      "The server's own AWS identity assumes this role, which may be in another account. Nothing secret is " +
+      "stored. The role's trust policy must allow the server's identity, and the role needs bedrock:InvokeModel.",
+    secretLabel: '',
+    secretIsMultiline: false,
+  },
+  access_keys: {
+    label: 'Access keys',
+    caption: "For a server outside AWS: an IAM user's access key ID and secret access key, stored encrypted.",
+    secretLabel: 'Secret access key',
+    secretIsMultiline: false,
+  },
 }
 
 /** Each setting's label and an example of its value. */
@@ -74,6 +89,9 @@ export const SETTINGS: Record<AuthSetting, { label: string; placeholder: string 
   client_id: { label: 'Client ID', placeholder: '00000000-0000-0000-0000-000000000000' },
   tenant_id: { label: 'Tenant ID', placeholder: '00000000-0000-0000-0000-000000000000' },
   service_account: { label: 'Service account', placeholder: 'igni-server@my-project.iam.gserviceaccount.com' },
+  role_arn: { label: 'Role ARN', placeholder: 'arn:aws:iam::123456789012:role/igni-bedrock' },
+  external_id: { label: 'External ID', placeholder: "only if the role's trust policy asks for one" },
+  access_key_id: { label: 'Access key ID', placeholder: 'AKIA...' },
 }
 
 /** What a secret field says when one is already stored and need not be typed again. */
@@ -126,6 +144,11 @@ export function authComplete(info: AuthMethodInfo | undefined, draft: AuthDraft,
 export function authFields(info: AuthMethodInfo, draft: AuthDraft): AuthFields {
   const auth_settings: Partial<Record<AuthSetting, string>> = {}
   for (const name of info.settings) auth_settings[name] = (draft.settings[name] ?? '').trim()
+  // An optional setting left blank is not sent at all.
+  for (const name of info.optional) {
+    const value = (draft.settings[name] ?? '').trim()
+    if (value) auth_settings[name] = value
+  }
   const fields: AuthFields = { auth: draft.method, auth_settings }
   if (info.secret === 'api_key' && draft.secret) fields.api_key = draft.secret
   if (info.secret === 'credential' && draft.secret) fields.credential = draft.secret

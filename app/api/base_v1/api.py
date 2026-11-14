@@ -5,6 +5,7 @@ from .endpoints.client import (
     auth_exchange,
     auth_methods,
     chat,
+    messages,
     nodes,
     notifications,
     oauth,
@@ -78,6 +79,7 @@ router.include_router(auth_methods.router, tags=['Authentication'])
 router.include_router(auth_exchange.router, tags=['Authentication'])
 router.include_router(oauth.router, tags=['Authentication - OAuth'])
 router.include_router(chat.router, tags=['Chat'])
+router.include_router(messages.router, tags=['Chat'])
 # igni as the identity provider for its own services: registration, the
 # token endpoint, and the directory a service reads with its token. The
 # discovery documents are at the root, in `app.main`. See

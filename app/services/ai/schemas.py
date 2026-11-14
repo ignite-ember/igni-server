@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from app.services.ai.backend import InferenceBackend
 from app.services.ai.node_drain import NodeDrain
-from app.services.ai.providers.kinds import BackendKind
+from app.services.ai.providers.kinds import BackendKind, Wire
 
 # How long a lease may be held before the pool assumes its holder died.
 # Generous, because a large summarisation request against a loaded node
@@ -213,11 +213,37 @@ class AllBackendsDrainedError(Exception):
         )
 
 
-class ModelNotAvailableError(Exception):
-    """The requested model is not served by any backend in this pool."""
+#: The endpoint each API is served on, for a refusal that names the right one.
+ENDPOINTS: dict[Wire, str] = {Wire.OPENAI: '/v1/chat/completions', Wire.ANTHROPIC: '/v1/messages'}
 
-    def __init__(self, model: str, available: list[str]) -> None:
+
+class NoBackendForWireError(Exception):
+    """No routable backend speaks the API a request came in on, and it named no model.
+
+    Distinct from a model nobody serves: the fix is a backend of that kind
+    — a Claude provider for ``/v1/messages`` — not a model name.
+    """
+
+    def __init__(self, wire: Wire) -> None:
+        self.wire = wire
+        super().__init__(f'No backend serves {ENDPOINTS[wire]} on this deployment')
+
+
+class ModelNotAvailableError(Exception):
+    """The requested model is not served by any backend speaking this API.
+
+    *served_on* is the other API when a backend there serves it: Claude
+    asked for on ``/chat/completions`` is told to use ``/v1/messages``
+    rather than that it does not exist.
+    """
+
+    def __init__(self, model: str, available: list[str], served_on: Wire | None = None) -> None:
         self.model = model
         self.available = available
+        self.served_on = served_on
         listed = ', '.join(sorted(set(available))) if available else 'none'
-        super().__init__(f'Model {model!r} is not served by this deployment. Available: {listed}')
+        if served_on is not None:
+            message = f'Model {model!r} is served on {ENDPOINTS[served_on]}, not here. Available here: {listed}'
+        else:
+            message = f'Model {model!r} is not served by this deployment. Available: {listed}'
+        super().__init__(message)

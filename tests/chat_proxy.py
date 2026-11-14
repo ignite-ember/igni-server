@@ -21,6 +21,7 @@ from app.services.ai.chat.tails import TailRunner
 from app.services.ai.chat.upstream_client import UpstreamChatClient
 from app.services.ai.fair_queue import FairQueue
 from app.services.ai.providers.credentials import CloudCredentials
+from app.services.ai.providers.kinds import Wire
 from app.services.ai.token_estimate import TokenEstimator
 from app.services.ai.upstream import RetryPolicy
 from app.services.auth.org_context import OrgContext
@@ -41,11 +42,25 @@ class SpyPool:
 
     acquired: list[str] = field(default_factory=lambda: ['lease-1'])
     released: list[str] = field(default_factory=list)
+    #: The API each acquire asked for.
+    wires: list[Wire] = field(default_factory=list)
     model: str = 'fake-model'
+    #: The backend every lease is on, numbered per acquire; a GPU node at `node.invalid` when None.
+    on: BackendLease | None = None
 
-    async def acquire(self, user_id: str, *, model: str | None = None, exclude_backend_id: str | None = None):
+    async def acquire(
+        self,
+        user_id: str,
+        *,
+        model: str | None = None,
+        exclude_backend_id: str | None = None,
+        wire: Wire = Wire.OPENAI,
+    ) -> BackendLease:
+        self.wires.append(wire)
         nxt = len(self.acquired) + 1
         self.acquired.append(f'lease-{nxt}')
+        if self.on is not None:
+            return self.on.model_copy(update={'lease_id': f'lease-{nxt}', 'backend_id': f'{self.on.backend_id}-{nxt}'})
         return lease(nxt, model=self.model)
 
     async def release(self, held: BackendLease) -> None:

@@ -100,23 +100,40 @@ export function modelIdsText(modelIds: Record<string, string>): string {
     .join('\n')
 }
 
-/** Where a backend is: a URL, or a cloud project and region the server builds the URL from. */
-export function addressOf(draft: NodeDraft): Pick<PinnedNodeInput, 'base_url' | 'region' | 'project'> {
-  if (KINDS[draft.kind].address === 'project-region') {
-    return { region: draft.region.trim(), project: draft.project.trim() }
+/**
+ * Where a backend is: a URL, or a cloud project and region the server builds the URL from. A
+ * blank optional URL means the provider's own: left out when adding, sent empty when editing,
+ * so that clearing a gateway goes back to the provider rather than keeping the old one.
+ */
+export function addressOf(draft: NodeDraft, adding: boolean): Pick<PinnedNodeInput, 'base_url' | 'region' | 'project'> {
+  switch (KINDS[draft.kind].address) {
+    case 'project-region':
+      return { region: draft.region.trim(), project: draft.project.trim() }
+    case 'region':
+      return { region: draft.region.trim() }
+    case 'url-optional':
+      return draft.baseUrl.trim() || !adding ? { base_url: draft.baseUrl.trim() } : {}
+    case 'url':
+      return { base_url: draft.baseUrl.trim() }
   }
-  return { base_url: draft.baseUrl.trim() }
 }
 
 /** Why the address cannot be saved, or null when it can. */
 export function addressProblem(draft: NodeDraft): string | null {
-  if (KINDS[draft.kind].address === 'project-region') {
-    return draft.project.trim() && draft.region.trim() ? null : 'A Vertex backend needs its project and region.'
-  }
   const url = draft.baseUrl.trim()
-  return url.startsWith('http://') || url.startsWith('https://')
-    ? null
-    : 'The address has to start with http:// or https://'
+  const absolute = url.startsWith('http://') || url.startsWith('https://')
+  switch (KINDS[draft.kind].address) {
+    case 'project-region':
+      return draft.project.trim() && draft.region.trim()
+        ? null
+        : `${KINDS[draft.kind].label} needs its project and region.`
+    case 'region':
+      return draft.region.trim() ? null : `${KINDS[draft.kind].label} needs its region.`
+    case 'url-optional':
+      return !url || absolute ? null : 'The address has to start with http:// or https://'
+    case 'url':
+      return absolute ? null : 'The address has to start with http:// or https://'
+  }
 }
 
 /** What the form checking a draft knows: whether it adds, the GPU node's probe, whether a secret is stored. */
@@ -178,7 +195,7 @@ export function pinnedNodeOf(draft: NodeDraft, method: AuthMethodInfo | undefine
     model_ids: parseModelIds(draft.modelIdsText).pairs,
     max_concurrent: draft.maxConcurrent,
     multimodal: draft.multimodal,
-    ...addressOf(draft),
+    ...addressOf(draft, true),
     ...authFields(method, draft.auth),
   }
 }
@@ -193,7 +210,7 @@ export function pinnedNodeUpdateOf(draft: NodeDraft, method: AuthMethodInfo | un
     max_concurrent: draft.maxConcurrent,
     multimodal: draft.multimodal,
     enabled: draft.enabled,
-    ...addressOf(draft),
+    ...addressOf(draft, false),
   }
   if (!isCloud(draft.kind)) return draft.apiKey ? { ...update, api_key: draft.apiKey } : update
   if (!method) throw new Error('A cloud backend cannot be saved before its auth methods have loaded')

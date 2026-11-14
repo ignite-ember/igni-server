@@ -172,6 +172,10 @@ _VALID_REQUESTS: dict[tuple[str, str], dict] = {
     ('POST', '/v1/chat/completions'): {
         'json': {'model': 'any-model', 'messages': [{'role': 'user', 'content': 'hello'}]}
     },
+    # Anthropic's Messages API requires max_tokens as well.
+    ('POST', '/v1/messages'): {
+        'json': {'model': 'any-model', 'max_tokens': 16, 'messages': [{'role': 'user', 'content': 'hello'}]}
+    },
     # Document search. `q` has a minimum length, so without one the
     # request is refused as malformed before anybody asks who sent it.
     # Lineage. Both bodies are constrained — a state that is not a

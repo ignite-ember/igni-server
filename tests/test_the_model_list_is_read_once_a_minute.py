@@ -1,4 +1,4 @@
-"""`ChatModelCatalog`: the pool's distinct model ids, read once per TTL.
+"""`ChatModelCatalog`: each model the pool serves and the API it is served on, read once per TTL.
 
 `/chat/models` is called by every client on start; the listing is
 cached so that does not reach the pool each time. A failed read is not
@@ -8,40 +8,52 @@ cached, and `clear` forgets.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
 from app.api.base_v1.schema.chat import ChatModelEntry
 from app.services.ai.chat.catalog import ChatModelCatalog
+from app.services.ai.providers.kinds import Wire
+from tests.chat_proxy import pools
 
 
 class _Pool:
-    def __init__(self, *answers: object) -> None:
+    """A pool whose `models_by_wire` answers each read in turn; an exception answer is raised."""
+
+    def __init__(self, *answers: dict[str, Wire] | Exception) -> None:
         self._answers = list(answers)
         self.reads = 0
 
-    async def list_available_models(self) -> list[tuple[str, str]]:
+    async def models_by_wire(self) -> dict[str, Wire]:
         answer = self._answers[min(self.reads, len(self._answers) - 1)]
         self.reads += 1
         if isinstance(answer, Exception):
             raise answer
-        return answer  # type: ignore[return-value]
+        return answer
 
 
 def _catalog(pool: _Pool, *, ttl: float = 60) -> ChatModelCatalog:
-    return ChatModelCatalog(pools=SimpleNamespace(get_pool=lambda: pool), ttl=ttl)  # type: ignore[arg-type]
+    return ChatModelCatalog(pools=pools(pool), ttl=ttl)  # type: ignore[arg-type]
 
 
-_TWO = [('m-a', 'http://n1/v1'), ('m-b', 'http://n1/v1'), ('m-a', 'http://n2/v1')]
+_TWO = {'m-a': Wire.OPENAI, 'm-b': Wire.OPENAI}
+_LATER = {'m-c': Wire.OPENAI}
 
 
 async def test_each_model_is_listed_once_in_the_order_first_named():
     assert await _catalog(_Pool(_TWO)).models() == [ChatModelEntry(id='m-a'), ChatModelEntry(id='m-b')]
 
 
+async def test_each_model_says_which_api_serves_it():
+    pool = _Pool({'gpt': Wire.OPENAI, 'claude': Wire.ANTHROPIC})
+    assert await _catalog(pool).models() == [
+        ChatModelEntry(id='gpt', api=Wire.OPENAI),
+        ChatModelEntry(id='claude', api=Wire.ANTHROPIC),
+    ]
+
+
 async def test_a_second_call_within_the_ttl_does_not_reach_the_pool():
-    pool = _Pool(_TWO, [('m-c', 'http://n3/v1')])
+    pool = _Pool(_TWO, _LATER)
     catalog = _catalog(pool)
 
     await catalog.models()
@@ -52,7 +64,7 @@ async def test_a_second_call_within_the_ttl_does_not_reach_the_pool():
 
 
 async def test_after_the_ttl_the_pool_is_read_again():
-    pool = _Pool(_TWO, [('m-c', 'http://n3/v1')])
+    pool = _Pool(_TWO, _LATER)
     catalog = _catalog(pool, ttl=0.05)
 
     await catalog.models()
@@ -63,7 +75,7 @@ async def test_after_the_ttl_the_pool_is_read_again():
 
 
 async def test_clear_forgets_the_listing():
-    pool = _Pool(_TWO, [('m-c', 'http://n3/v1')])
+    pool = _Pool(_TWO, _LATER)
     catalog = _catalog(pool)
     await catalog.models()
 

@@ -34,6 +34,8 @@ class ChatUsageDB(TenantData):
         stream: bool,
         backend_id: str | None = None,
         kind: str | None = None,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
     ) -> None:
         """Insert a single usage row. Fire-and-forget safe."""
         if org_id is None:
@@ -51,6 +53,8 @@ class ChatUsageDB(TenantData):
                 stream=1 if stream else 0,
                 backend_id=backend_id,
                 kind=kind,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
             )
             session.add(row)
 

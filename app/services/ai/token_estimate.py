@@ -57,6 +57,13 @@ class TokenEstimator:
                 logger.warning('cl100k_base could not be loaded; estimated usage will read zero', exc_info=True)
         return self._encoder
 
+    def count(self, prompt: str, output: str) -> tuple[int, int]:
+        """The tokens in *prompt* and in *output*, or zeros if there is no encoder."""
+        encoder = self.encoder
+        if encoder is None:
+            return 0, 0
+        return len(encoder.encode(prompt, disallowed_special=())), len(encoder.encode(output, disallowed_special=()))
+
     def estimate(self, *, messages: list[ChatMessage], output_pieces: list[str]) -> CompletionUsage:
         """The prompt's and the output's token counts, or zeros if there is no encoder.
 

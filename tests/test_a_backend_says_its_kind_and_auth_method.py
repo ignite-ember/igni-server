@@ -31,6 +31,10 @@ class TestABackendSaysWhatItIs:
             BackendKind.OPENAI: Wire.OPENAI,
             BackendKind.AZURE_OPENAI: Wire.OPENAI,
             BackendKind.VERTEX_OPENAI: Wire.OPENAI,
+            BackendKind.ANTHROPIC: Wire.ANTHROPIC,
+            BackendKind.BEDROCK: Wire.ANTHROPIC,
+            BackendKind.VERTEX_ANTHROPIC: Wire.ANTHROPIC,
+            BackendKind.AZURE_ANTHROPIC: Wire.ANTHROPIC,
         }
 
     def test_a_vertex_backend_is_addressed_by_its_project_and_region(self):
@@ -56,7 +60,7 @@ class TestABackendSaysWhatItIs:
     def test_a_region_on_a_backend_that_is_not_vertex_is_refused(self):
         with pytest.raises(BackendInvalid) as refused:
             backend(base_url='http://g/v1', region='r')
-        assert refused.value.reasons == ["Backend 'b' (openai): project and region are for a Vertex backend only"]
+        assert refused.value.reasons == ["Backend 'b' (openai): region is for a Vertex or Bedrock backend only"]
 
     def test_a_backend_with_no_address_is_refused(self):
         with pytest.raises(BackendInvalid) as refused:
@@ -67,6 +71,21 @@ class TestABackendSaysWhatItIs:
         with pytest.raises(BackendInvalid) as refused:
             backend(**AZURE, model_ids={'other': 'x'})
         assert refused.value.reasons == ["Backend 'b' (azure_openai): model_ids names models it does not serve: other"]
+
+
+class TestEachMethodIsNamed:
+    def test_every_method_has_a_label_for_a_sentence(self):
+        assert {method: method.label for method in AuthMethod} == {
+            AuthMethod.NONE: 'no credentials',
+            AuthMethod.API_KEY: 'the stored key',
+            AuthMethod.AMBIENT: "the server's own cloud identity",
+            AuthMethod.MANAGED_IDENTITY: 'the user-assigned managed identity',
+            AuthMethod.CLIENT_SECRET: "the app registration's client secret",
+            AuthMethod.IMPERSONATE: 'the impersonated service account',
+            AuthMethod.SERVICE_ACCOUNT_KEY: 'the stored service-account key',
+            AuthMethod.ASSUME_ROLE: 'the assumed IAM role',
+            AuthMethod.ACCESS_KEYS: 'the stored access keys',
+        }
 
 
 class TestEachKindOffersItsMethods:
@@ -80,6 +99,19 @@ class TestEachKindOffersItsMethods:
                 AuthMethod.API_KEY,
             ],
             BackendKind.VERTEX_OPENAI: [AuthMethod.AMBIENT, AuthMethod.IMPERSONATE, AuthMethod.SERVICE_ACCOUNT_KEY],
+            BackendKind.ANTHROPIC: [AuthMethod.API_KEY],
+            BackendKind.BEDROCK: [AuthMethod.AMBIENT, AuthMethod.ASSUME_ROLE, AuthMethod.ACCESS_KEYS],
+            BackendKind.VERTEX_ANTHROPIC: [
+                AuthMethod.AMBIENT,
+                AuthMethod.IMPERSONATE,
+                AuthMethod.SERVICE_ACCOUNT_KEY,
+            ],
+            BackendKind.AZURE_ANTHROPIC: [
+                AuthMethod.AMBIENT,
+                AuthMethod.MANAGED_IDENTITY,
+                AuthMethod.CLIENT_SECRET,
+                AuthMethod.API_KEY,
+            ],
         }
 
     def test_the_table_cannot_be_changed_at_run_time(self):
@@ -204,6 +236,7 @@ class TestALeaseCarriesWhatSigningNeeds:
             'model': 'm',
             'api_key': None,
             'kind': BackendKind.AZURE_OPENAI,
+            'region': None,
             'auth': AuthMethod.CLIENT_SECRET,
             'auth_settings': {'tenant_id': 't', 'client_id': 'c'},
             'credential': 'shh',
@@ -223,8 +256,12 @@ class TestALeaseCarriesWhatSigningNeeds:
 
     @pytest.mark.parametrize(
         ('auth', 'renews'),
-        [(AuthMethod.NONE, False), (AuthMethod.API_KEY, False)]
-        + [(method, True) for method in AuthMethod if method not in (AuthMethod.NONE, AuthMethod.API_KEY)],
+        [(AuthMethod.NONE, False), (AuthMethod.API_KEY, False), (AuthMethod.ACCESS_KEYS, False)]
+        + [
+            (method, True)
+            for method in AuthMethod
+            if method not in (AuthMethod.NONE, AuthMethod.API_KEY, AuthMethod.ACCESS_KEYS)
+        ],
     )
     def test_only_a_credential_the_server_obtained_is_worth_renewing(self, auth, renews):
         lease = BackendLease(lease_id='l', backend_id='b', base_url='http://x', model='m', auth=auth)
@@ -248,3 +285,67 @@ class TestALeaseCarriesWhatSigningNeeds:
             lease_id='l', backend_id='b', base_url='http://x', model='m', kind=kind, auth=auth, api_key=api_key
         )
         assert lease.auth_headers() == headers
+
+
+class TestClaudesBackends:
+    def test_bedrock_offers_the_servers_role_an_assumed_role_and_access_keys(self):
+        bedrock = METHODS[BackendKind.BEDROCK]
+        role = bedrock[AuthMethod.ASSUME_ROLE]
+        assert (role.settings, role.optional, role.secret) == (('role_arn',), ('external_id',), None)
+        assert (bedrock[AuthMethod.ACCESS_KEYS].settings, bedrock[AuthMethod.ACCESS_KEYS].secret) == (
+            ('access_key_id',),
+            'credential',
+        )
+
+    @pytest.mark.parametrize(
+        ('fields', 'base_url'),
+        [
+            ({'kind': 'bedrock', 'region': 'eu-central-1'}, 'https://bedrock-runtime.eu-central-1.amazonaws.com'),
+            (
+                {'kind': 'vertex_anthropic', 'project': 'p', 'region': 'us-east5'},
+                'https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models',
+            ),
+            ({'kind': 'anthropic', 'api_key': 'k'}, 'https://api.anthropic.com'),
+            ({'kind': 'anthropic', 'api_key': 'k', 'base_url': 'https://gw.internal'}, 'https://gw.internal'),
+        ],
+    )
+    def test_an_address_its_kind_fixes_is_built(self, fields, base_url):
+        assert backend(**fields).base_url == base_url
+
+    @pytest.mark.parametrize(
+        ('fields', 'reason'),
+        [
+            ({'kind': 'bedrock'}, "Backend 'b' (bedrock): a Bedrock backend needs its region"),
+            (
+                {'kind': 'anthropic', 'api_key': 'k', 'region': 'r'},
+                "Backend 'b' (anthropic): region is for a Vertex or Bedrock backend only",
+            ),
+            (
+                {'kind': 'bedrock', 'region': 'r', 'project': 'p'},
+                "Backend 'b' (bedrock): project is for a Vertex backend only",
+            ),
+            (
+                {'kind': 'bedrock', 'region': 'r', 'auth': 'assume_role'},
+                "Backend 'b' (bedrock) with assume_role auth: needs role_arn",
+            ),
+            (
+                {'kind': 'bedrock', 'region': 'r', 'auth': 'access_keys', 'auth_settings': {'access_key_id': 'A'}},
+                "Backend 'b' (bedrock) with access_keys auth: needs its credential",
+            ),
+            ({'kind': 'anthropic'}, "Backend 'b' (anthropic) with api_key auth: needs its key"),
+        ],
+    )
+    def test_a_claude_backend_missing_what_it_needs_is_refused_saying_what(self, fields, reason):
+        with pytest.raises(BackendInvalid) as refused:
+            backend(**fields)
+        assert refused.value.reasons == [reason]
+
+    def test_an_assumed_roles_external_id_is_optional_and_kept_when_given(self):
+        role = {'kind': 'bedrock', 'region': 'r', 'auth': 'assume_role'}
+        assert backend(**role, auth_settings={'role_arn': 'arn:aws:iam::1:role/r'}).auth is AuthMethod.ASSUME_ROLE
+        with_id = backend(**role, auth_settings={'role_arn': 'arn:aws:iam::1:role/r', 'external_id': 'x'})
+        assert with_id.auth_settings == {'role_arn': 'arn:aws:iam::1:role/r', 'external_id': 'x'}
+
+    def test_a_bedrock_lease_carries_its_region_for_signing(self):
+        source = backend(kind='bedrock', region='eu-central-1')
+        assert BackendLease.for_backend(source, lease_id='l', model='m').region == 'eu-central-1'

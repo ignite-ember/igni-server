@@ -116,6 +116,9 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         # its kind. The person is `chat_usage.user_id`, classified elsewhere.
         'chat_usage.backend_id',
         'chat_usage.kind',
+        # How much of the prompt the cache read and wrote: counts, of a turn.
+        'chat_usage.cache_read_tokens',
+        'chat_usage.cache_write_tokens',
     }
     | {
         # Credentials belonging to a *system* — a GPU node's proxy key.

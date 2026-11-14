@@ -419,6 +419,8 @@ _SECRET_NAMED_BUT_NOT_A_SECRET = {
     ('chat_usage', 'input_tokens'): 'a count',
     ('chat_usage', 'output_tokens'): 'a count',
     ('chat_usage', 'total_tokens'): 'a count',
+    ('chat_usage', 'cache_read_tokens'): 'a count',
+    ('chat_usage', 'cache_write_tokens'): 'a count',
 }
 
 _SECRET_NAME = re.compile(r'token|secret|passw|api_?key|private|credential|hash')

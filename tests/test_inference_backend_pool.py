@@ -21,8 +21,13 @@ import pytest
 from app.services.ai.backend import InferenceBackend
 from app.services.ai.backend_provider import BackendConfigError, InferenceBackendProvider
 from app.services.ai.providers.auth import AuthMethod
-from app.services.ai.providers.kinds import BackendKind
-from app.services.ai.schemas import ModelNotAvailableError, NoBackendAvailableError, RegisteredNode
+from app.services.ai.providers.kinds import BackendKind, Wire
+from app.services.ai.schemas import (
+    ModelNotAvailableError,
+    NoBackendAvailableError,
+    NoBackendForWireError,
+    RegisteredNode,
+)
 from tests.backend_pool_fakes import FakeRegistry, pool_over
 
 
@@ -280,6 +285,7 @@ class TestACloudBackendsLease:
             'model': 'gemini-pro',
             'api_key': None,
             'kind': BackendKind.VERTEX_OPENAI,
+            'region': 'europe-west4',
             'auth': AuthMethod.SERVICE_ACCOUNT_KEY,
             'auth_settings': {},
             'credential': credential,
@@ -317,3 +323,47 @@ class TestModelAdvertising:
         # Three nodes, three URLs, but only two models.
         assert len({model for model, _ in pairs}) == 2
         assert len(pairs) == 3
+
+
+class TestAModelIsServedOnItsOwnApi:
+    @pytest.fixture
+    def mixed(self, pool_and_redis):
+        """A GPU node and a Claude backend that both answer to `shared`."""
+        pool, _ = pool_and_redis(
+            [
+                InferenceBackend(id='gpu', base_url='http://gpu/v1', models=['shared', 'vllm-only']),
+                InferenceBackend(id='claude', kind='anthropic', api_key='k', models=['claude', 'shared']),
+            ]
+        )
+        return pool
+
+    async def test_each_api_is_handed_only_its_own_backends(self, mixed):
+        assert (await mixed.acquire('u', model='shared')).backend_id == 'gpu'
+        assert (await mixed.acquire('u', model='shared', wire=Wire.ANTHROPIC)).backend_id == 'claude'
+        assert (await mixed.acquire('u')).backend_id == 'gpu'
+        assert (await mixed.acquire('u', wire=Wire.ANTHROPIC)).backend_id == 'claude'
+
+    async def test_a_model_on_the_other_api_is_refused_naming_the_right_endpoint(self, mixed):
+        with pytest.raises(ModelNotAvailableError) as on_chat:
+            await mixed.acquire('u', model='claude')
+        with pytest.raises(ModelNotAvailableError) as on_messages:
+            await mixed.acquire('u', model='vllm-only', wire=Wire.ANTHROPIC)
+        assert str(on_chat.value) == (
+            "Model 'claude' is served on /v1/messages, not here. Available here: shared, vllm-only"
+        )
+        assert str(on_messages.value) == (
+            "Model 'vllm-only' is served on /v1/chat/completions, not here. Available here: claude, shared"
+        )
+
+    async def test_an_api_no_backend_speaks_is_its_own_refusal(self, pool_and_redis):
+        pool, _ = pool_and_redis([InferenceBackend(id='gpu', base_url='http://gpu/v1', models=['m'])])
+        with pytest.raises(NoBackendForWireError) as refused:
+            await pool.acquire('u', wire=Wire.ANTHROPIC)
+        assert str(refused.value) == 'No backend serves /v1/messages on this deployment'
+
+    async def test_the_models_listing_says_which_api_serves_each(self, mixed):
+        assert await mixed.models_by_wire() == {
+            'shared': Wire.OPENAI,
+            'vllm-only': Wire.OPENAI,
+            'claude': Wire.ANTHROPIC,
+        }

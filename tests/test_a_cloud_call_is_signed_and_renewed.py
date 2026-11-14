@@ -24,7 +24,7 @@ from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.schemas import HealthState, NodeHealth
 from app.services.ai.upstream import UpstreamCredentialsUnavailable, UpstreamError
 from tests.chat_proxy import drain, request
-from tests.cloud_fakes import AZURE, backend, FakeCloud, lease_of, SERVICE_ACCOUNT, VERTEX
+from tests.cloud_fakes import AZURE, backend, FakeCloud, lease_of, ScriptedProvider, SERVICE_ACCOUNT, VERTEX
 
 
 class TestTheCallIsAddressedAndSigned:
@@ -79,25 +79,8 @@ class TestTheCallIsAddressedAndSigned:
         assert str(raised.value) == 'No credentials for the vertex_openai backend'
 
 
-class _Provider:
-    """A provider that refuses the first *refusals* calls with *status*, then answers."""
-
-    def __init__(self, *, refusals: int, status: int = 401, stream: bool = False) -> None:
-        self.refusals = refusals
-        self.status = status
-        self.stream = stream
-        self.seen: list[str | None] = []
-
-    def __call__(self, **kwargs) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
-
-    def _answer(self, sent: httpx.Request) -> httpx.Response:
-        self.seen.append(sent.headers.get('authorization'))
-        if len(self.seen) <= self.refusals:
-            return httpx.Response(self.status, text='refused')
-        if self.stream:
-            return httpx.Response(200, text='data: {"choices": []}\n\ndata: [DONE]\n\n')
-        return httpx.Response(200, json={'id': 'x', 'choices': [], 'usage': {}})
+_COMPLETION = httpx.Response(200, json={'id': 'x', 'choices': [], 'usage': {}})
+_STREAM = httpx.Response(200, text='data: {"choices": []}\n\ndata: [DONE]\n\n')
 
 
 _VERTEX_LEASE = lease_of(BackendKind.VERTEX_OPENAI, AuthMethod.AMBIENT)
@@ -107,52 +90,52 @@ _AZURE_LEASE = lease_of(BackendKind.AZURE_OPENAI, AuthMethod.MANAGED_IDENTITY, a
 class TestARefusedTokenIsRenewedOnce:
     @pytest.mark.parametrize('status', [401, 403])
     async def test_a_completion_is_retried_once_with_a_new_token(self, status):
-        provider = _Provider(refusals=1, status=status)
+        provider = ScriptedProvider.refusing(1, _COMPLETION, status=status)
         client = UpstreamChatClient(credentials=FakeCloud().credentials(), client_factory=provider)
 
         completion = await client.complete(lease=_VERTEX_LEASE, request=request())
 
-        assert provider.seen == ['Bearer tok-1', 'Bearer tok-2']
+        assert provider.authorizations() == ['Bearer tok-1', 'Bearer tok-2']
         assert completion.id == 'x'
 
     async def test_a_second_refusal_counts_as_the_refusal_it_is(self):
-        provider = _Provider(refusals=2)
+        provider = ScriptedProvider.refusing(2, _COMPLETION)
         client = UpstreamChatClient(credentials=FakeCloud().credentials(), client_factory=provider)
 
         with pytest.raises(UpstreamError) as raised:
             await client.complete(lease=_VERTEX_LEASE, request=request())
 
         assert raised.value.status_code == 401
-        assert provider.seen == ['Bearer tok-1', 'Bearer tok-2']
+        assert provider.authorizations() == ['Bearer tok-1', 'Bearer tok-2']
 
     async def test_a_static_key_refused_is_not_asked_again(self):
-        provider = _Provider(refusals=1)
+        provider = ScriptedProvider.refusing(1, _COMPLETION)
         client = UpstreamChatClient(credentials=FakeCloud().credentials(), client_factory=provider)
 
         with pytest.raises(UpstreamError) as raised:
             await client.complete(lease=lease_of(auth=AuthMethod.API_KEY, api_key='sk'), request=request())
 
         assert raised.value.status_code == 401
-        assert provider.seen == ['Bearer sk']
+        assert provider.authorizations() == ['Bearer sk']
 
     async def test_a_stream_is_retried_once_with_a_new_token(self):
-        provider = _Provider(refusals=1, stream=True)
+        provider = ScriptedProvider.refusing(1, _STREAM)
         client = UpstreamChatClient(credentials=FakeCloud().credentials(), client_factory=provider)
 
         lines = await drain(client.stream(lease=_AZURE_LEASE, request=request(stream=True)))
 
-        assert provider.seen == ['Bearer tok-1', 'Bearer tok-2']
+        assert provider.authorizations() == ['Bearer tok-1', 'Bearer tok-2']
         assert [line.frame for line in lines] == ['data: {"choices": []}\n\n', 'data: [DONE]\n\n']
 
     async def test_a_stream_refused_twice_raises_the_401(self):
-        provider = _Provider(refusals=2, stream=True)
+        provider = ScriptedProvider.refusing(2, _STREAM)
         client = UpstreamChatClient(credentials=FakeCloud().credentials(), client_factory=provider)
 
         with pytest.raises(UpstreamError) as raised:
             await drain(client.stream(lease=_AZURE_LEASE, request=request(stream=True)))
 
         assert raised.value.status_code == 401
-        assert provider.seen == ['Bearer tok-1', 'Bearer tok-2']
+        assert provider.authorizations() == ['Bearer tok-1', 'Bearer tok-2']
 
 
 def _unique(fields: dict) -> dict:
@@ -168,17 +151,17 @@ class TestACloudBackendsHealthIsItsToken:
         health = await NodeHealthProbe(credentials=cloud.credentials()).check_all([probed])
 
         assert health[probed.id].state is HealthState.HEALTHY
-        assert health[probed.id].detail == 'The server holds a token for this provider'
+        assert health[probed.id].detail == 'The server holds credentials for this provider'
         assert len(cloud.fetches) == 1
 
     @pytest.mark.parametrize(
         ('fields', 'detail'),
         [
-            ({}, "Could not get a token with the server's own cloud identity"),
-            ({'credential': SERVICE_ACCOUNT}, 'Could not get a token with the stored service-account key'),
+            ({}, "Could not get credentials with the server's own cloud identity"),
+            ({'credential': SERVICE_ACCOUNT}, 'Could not get credentials with the stored service-account key'),
             (
                 {'auth': 'impersonate', 'auth_settings': {'service_account': 'sa@p.iam'}},
-                'Could not get a token with the impersonated service account',
+                'Could not get credentials with the impersonated service account',
             ),
         ],
     )
@@ -188,6 +171,27 @@ class TestACloudBackendsHealthIsItsToken:
         health = await NodeHealthProbe(credentials=FakeCloud(fail=True).credentials()).check_all([probed])
 
         assert health[probed.id] == NodeHealth(state=HealthState.DEGRADED, detail=detail)
+
+    @pytest.mark.parametrize(
+        ('fields', 'detail'),
+        [
+            ({'auth': 'ambient'}, "Could not get credentials with the server's own cloud identity"),
+            (
+                {'auth': 'assume_role', 'auth_settings': {'role_arn': 'arn:aws:iam::1:role/r'}},
+                'Could not get credentials with the assumed IAM role',
+            ),
+        ],
+    )
+    async def test_bedrock_on_a_role_is_healthy_with_its_keys_and_degraded_without(self, fields, detail):
+        # Two backends, as the probe caches each one's verdict by its id.
+        working, refused = (backend(**_unique({'kind': 'bedrock', 'region': 'eu-central-1', **fields})) for _ in '12')
+
+        healthy = await NodeHealthProbe(credentials=FakeCloud().credentials()).check_all([working])
+        failing = await NodeHealthProbe(credentials=FakeCloud(fail=True).credentials()).check_all([refused])
+
+        assert healthy[working.id].state is HealthState.HEALTHY
+        assert healthy[working.id].detail == 'The server holds credentials for this provider'
+        assert failing[refused.id] == NodeHealth(state=HealthState.DEGRADED, detail=detail)
 
     async def test_a_resource_key_is_not_probed_for_a_token(self):
         cloud = FakeCloud()

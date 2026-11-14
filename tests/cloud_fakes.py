@@ -9,12 +9,19 @@ request was signed with and how often the cloud was asked.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
+
+import httpx
 
 from app.services.ai.backend import BackendLease, InferenceBackend
 from app.services.ai.providers.auth import AuthMethod, METHODS
+from app.services.ai.providers.aws import AwsKeys
 from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.providers.kinds import BackendKind
 from app.services.ai.providers.tokens import AccessToken, TokenSource
+
+#: The keys every fake Bedrock source hands out; the secret is easy to spot if it leaks.
+AWS_KEYS = AwsKeys(access_key_id='AKIDEXAMPLE', secret_access_key='SECRET-MATERIAL', session_token='SESSION')
 
 #: A service-account key whose secret part is easy to spot if it leaks.
 SERVICE_ACCOUNT = '{"type": "service_account", "private_key": "PRIVATE-KEY-MATERIAL", "client_email": "x"}'
@@ -69,6 +76,19 @@ class FakeCloud:
 
         return Source
 
+    def key_source(self, method: AuthMethod) -> type[TokenSource[AwsKeys]]:
+        """Bedrock's key source for *method*: `AWS_KEYS`, recorded like a token fetch."""
+        cloud = self
+
+        class Source(TokenSource[AwsKeys]):
+            async def fetch(self) -> AccessToken[AwsKeys]:
+                cloud.fetches.append((BackendKind.BEDROCK, method, dict(self._settings), self._secret))
+                if cloud.fail:
+                    raise RuntimeError('no identity here')
+                return AccessToken(value=AWS_KEYS, expires_at=cloud.clock() + cloud.lifetime)
+
+        return Source
+
     def credentials(self) -> CloudCredentials:
         """A credentials cache whose every source is this cloud's."""
         return CloudCredentials(
@@ -76,7 +96,37 @@ class FakeCloud:
                 (kind, method): self.source(kind, method)
                 for kind, methods in METHODS.items()
                 for method in methods
-                if method.is_token
+                if method.is_token and kind is not BackendKind.BEDROCK
+            },
+            key_sources={
+                (BackendKind.BEDROCK, method): self.key_source(method) for method in METHODS[BackendKind.BEDROCK]
             },
             clock=self.clock,
         )
+
+
+class ScriptedProvider:
+    """A provider behind a mock transport: answers each request in turn from *answers*, the last from then on.
+
+    It records every request it was sent, so a test says exactly what reached it.
+    """
+
+    def __init__(self, *answers: httpx.Response) -> None:
+        self.answers = answers
+        self.sent: list[httpx.Request] = []
+
+    @classmethod
+    def refusing(cls, times: int, then: httpx.Response, *, status: int = 401) -> ScriptedProvider:
+        """Refuses the first *times* requests with *status*, then answers *then*."""
+        return cls(*(httpx.Response(status, text='refused') for _ in range(times)), then)
+
+    def __call__(self, **kwargs: Any) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
+
+    def authorizations(self) -> list[str | None]:
+        """The `authorization` header of each request, in order."""
+        return [request.headers.get('authorization') for request in self.sent]
+
+    def _answer(self, request: httpx.Request) -> httpx.Response:
+        self.sent.append(request)
+        return self.answers[min(len(self.sent), len(self.answers)) - 1]

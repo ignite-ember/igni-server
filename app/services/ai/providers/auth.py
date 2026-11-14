@@ -42,11 +42,38 @@ class AuthMethod(StrEnum):
     IMPERSONATE = 'impersonate'
     #: GCP: a service account's JSON key.
     SERVICE_ACCOUNT_KEY = 'service_account_key'
+    #: AWS: the server's identity assumes an IAM role, by its ARN (and an
+    #: external ID when the role's trust policy asks for one). Nothing secret
+    #: is stored, and the role may be in another account.
+    ASSUME_ROLE = 'assume_role'
+    #: AWS: an IAM user's access key ID and secret access key.
+    ACCESS_KEYS = 'access_keys'
+
+    @property
+    def label(self) -> str:
+        """The method as a sentence names it, for the person reading a health detail."""
+        return _LABELS[self]
 
     @property
     def is_token(self) -> bool:
-        """Signed with a token the server obtains, rather than a static key or nothing."""
-        return self not in (AuthMethod.NONE, AuthMethod.API_KEY)
+        """Signed with credentials the server obtains and renews, rather than static ones or nothing."""
+        return self not in (AuthMethod.NONE, AuthMethod.API_KEY, AuthMethod.ACCESS_KEYS)
+
+
+#: How a sentence names each method.
+_LABELS: Mapping[AuthMethod, str] = MappingProxyType(
+    {
+        AuthMethod.NONE: 'no credentials',
+        AuthMethod.API_KEY: 'the stored key',
+        AuthMethod.AMBIENT: "the server's own cloud identity",
+        AuthMethod.MANAGED_IDENTITY: 'the user-assigned managed identity',
+        AuthMethod.CLIENT_SECRET: "the app registration's client secret",
+        AuthMethod.IMPERSONATE: 'the impersonated service account',
+        AuthMethod.SERVICE_ACCOUNT_KEY: 'the stored service-account key',
+        AuthMethod.ASSUME_ROLE: 'the assumed IAM role',
+        AuthMethod.ACCESS_KEYS: 'the stored access keys',
+    }
+)
 
 
 #: Where a method's secret lives on the backend, if it has one.
@@ -60,6 +87,8 @@ class MethodSpec(BaseModel):
 
     settings: tuple[str, ...] = ()
     secret: SecretSlot = None
+    #: Settings it takes but does not need: a role's external ID.
+    optional: tuple[str, ...] = ()
 
 
 def _offered(*methods: tuple[AuthMethod, MethodSpec]) -> Mapping[AuthMethod, MethodSpec]:
@@ -88,6 +117,15 @@ METHODS: Mapping[BackendKind, Mapping[AuthMethod, MethodSpec]] = MappingProxyTyp
         ),
         BackendKind.AZURE_OPENAI: _AZURE,
         BackendKind.VERTEX_OPENAI: _VERTEX,
+        BackendKind.ANTHROPIC: _offered((AuthMethod.API_KEY, MethodSpec(secret='api_key'))),
+        BackendKind.BEDROCK: _offered(
+            (AuthMethod.AMBIENT, MethodSpec()),
+            (AuthMethod.ASSUME_ROLE, MethodSpec(settings=('role_arn',), optional=('external_id',))),
+            (AuthMethod.ACCESS_KEYS, MethodSpec(settings=('access_key_id',), secret='credential')),
+        ),
+        # Claude on Vertex and in Foundry signs in exactly as the OpenAI-wire models there do.
+        BackendKind.VERTEX_ANTHROPIC: _VERTEX,
+        BackendKind.AZURE_ANTHROPIC: _AZURE,
     }
 )
 

@@ -65,6 +65,9 @@ _ALLOWED_HOSTS: dict[str, str] = {
     # is no default backend of any cloud kind.
     'aiplatform.googleapis.com': "Vertex AI's global endpoint, only for a vertex_openai backend in region global",
     'cognitiveservices.azure.com': 'the Entra ID scope Azure OpenAI tokens are issued for, never fetched',
+    'api.anthropic.com': "Anthropic's API, only for an anthropic backend that names no other address",
+    'bedrock-runtime.{}.amazonaws.com': "a region's Bedrock host, only for a bedrock backend in that region",
+    '{}-aiplatform.googleapis.com': "a region's Vertex AI host, only for a Vertex backend in that region",
     # Not hosts.
     'www.w3.org': 'an XML namespace in an SVG, never fetched',
     # Examples in docstrings, schema descriptions and log samples.
@@ -159,7 +162,7 @@ _JS_TELEMETRY_PACKAGES = (
     '@fullstory/browser',
 )
 
-_HOST_IN_URL = re.compile(r'https?://([A-Za-z0-9._%-]+)')
+_HOST_IN_URL = re.compile(r'https?://([A-Za-z0-9._%{}-]+)')
 
 
 def _code_strings(source: str) -> list[str]:
@@ -184,11 +187,27 @@ def _code_strings(source: str) -> list[str]:
             ):
                 docstrings.add(id(body[0].value))
 
+    # An f-string is read whole, a `{}` where each value goes, so the host it
+    # builds — `https://bedrock-runtime.{}.amazonaws.com` — is seen as one,
+    # rather than as fragments the allow-list would have to name.
+    in_fstrings: set[int] = set()
+    rendered: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            parts = []
+            for value in node.values:
+                in_fstrings.add(id(value))
+                parts.append(str(value.value) if isinstance(value, ast.Constant) else '{}')
+            rendered.append(''.join(parts))
+
     return [
         node.value
         for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
-    ]
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+        and id(node) not in in_fstrings
+    ] + rendered
 
 
 def _hosts_named_in_app() -> dict[str, list[str]]:

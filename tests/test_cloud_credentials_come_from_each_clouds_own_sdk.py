@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+import time
 import types
 
 import google.auth
@@ -19,13 +20,21 @@ from google.auth import impersonated_credentials
 from google.oauth2 import service_account
 import pytest
 
+from app.services.ai.providers import aws
 from app.services.ai.providers.auth import AuthMethod
+from app.services.ai.providers.aws import (
+    AMBIENT_REREAD_SECONDS,
+    AwsAccessKeysSource,
+    AwsAssumedRoleSource,
+    AwsDefaultSource,
+    AwsKeys,
+)
 from app.services.ai.providers.azure import (
     AzureClientSecretSource,
     AzureDefaultSource,
     AzureManagedIdentitySource,
 )
-from app.services.ai.providers.credentials import Signer, TOKEN_SOURCES
+from app.services.ai.providers.credentials import KEY_SOURCES, Signer, TOKEN_SOURCES
 from app.services.ai.providers.google import (
     GOOGLE_SCOPE,
     GoogleDefaultSource,
@@ -43,13 +52,34 @@ def _signer(auth: AuthMethod = AuthMethod.AMBIENT, settings: dict | None = None,
 
 class TestEachKindAndMethodHasItsSource:
     def test_the_sources_cover_every_method_that_signs_with_a_token(self):
+        google = {
+            AuthMethod.AMBIENT: GoogleDefaultSource,
+            AuthMethod.IMPERSONATE: GoogleImpersonatedSource,
+            AuthMethod.SERVICE_ACCOUNT_KEY: GoogleKeySource,
+        }
+        azure = {
+            AuthMethod.AMBIENT: AzureDefaultSource,
+            AuthMethod.MANAGED_IDENTITY: AzureManagedIdentitySource,
+            AuthMethod.CLIENT_SECRET: AzureClientSecretSource,
+        }
         assert dict(TOKEN_SOURCES) == {
-            (BackendKind.VERTEX_OPENAI, AuthMethod.AMBIENT): GoogleDefaultSource,
-            (BackendKind.VERTEX_OPENAI, AuthMethod.IMPERSONATE): GoogleImpersonatedSource,
-            (BackendKind.VERTEX_OPENAI, AuthMethod.SERVICE_ACCOUNT_KEY): GoogleKeySource,
-            (BackendKind.AZURE_OPENAI, AuthMethod.AMBIENT): AzureDefaultSource,
-            (BackendKind.AZURE_OPENAI, AuthMethod.MANAGED_IDENTITY): AzureManagedIdentitySource,
-            (BackendKind.AZURE_OPENAI, AuthMethod.CLIENT_SECRET): AzureClientSecretSource,
+            **{
+                (kind, method): source
+                for kind in (BackendKind.VERTEX_OPENAI, BackendKind.VERTEX_ANTHROPIC)
+                for method, source in google.items()
+            },
+            **{
+                (kind, method): source
+                for kind in (BackendKind.AZURE_OPENAI, BackendKind.AZURE_ANTHROPIC)
+                for method, source in azure.items()
+            },
+        }
+
+    def test_bedrock_signs_with_keys_from_its_own_sources(self):
+        assert dict(KEY_SOURCES) == {
+            (BackendKind.BEDROCK, AuthMethod.AMBIENT): AwsDefaultSource,
+            (BackendKind.BEDROCK, AuthMethod.ASSUME_ROLE): AwsAssumedRoleSource,
+            (BackendKind.BEDROCK, AuthMethod.ACCESS_KEYS): AwsAccessKeysSource,
         }
 
 
@@ -152,6 +182,86 @@ class TestGoogleMethodsBuildTheirOwnCredential:
         token = await GoogleKeySource(settings={}, secret=SERVICE_ACCOUNT).fetch()
         assert google_sdk == [('key', {'email': 'x', 'scopes': [GOOGLE_SCOPE]})]
         assert token.value == 'key-token'
+
+
+@pytest.fixture
+def aws_sdk(monkeypatch):
+    """boto3's Session: a default chain with frozen keys, and an STS that records each assume_role."""
+    assumed: list[dict] = []
+
+    class Chain:
+        def get_frozen_credentials(self):
+            return types.SimpleNamespace(access_key='AKIA-ROLE', secret_key='role-secret', token='role-token')
+
+    class Sts:
+        def assume_role(self, **request):
+            assumed.append(request)
+            return {
+                'Credentials': {
+                    'AccessKeyId': 'ASIA-ASSUMED',
+                    'SecretAccessKey': 'assumed-secret',
+                    'SessionToken': 'assumed-token',
+                    'Expiration': dt.datetime(2033, 5, 18, 3, 33, 20, tzinfo=dt.timezone.utc),
+                }
+            }
+
+    class Session:
+        def get_credentials(self):
+            return Chain()
+
+        def client(self, name):
+            assert name == 'sts'
+            return Sts()
+
+    monkeypatch.setattr(aws.boto3, 'Session', Session)
+    return assumed
+
+
+class TestAwsMethodsGetTheirOwnKeys:
+    async def test_the_servers_role_is_read_from_the_default_chain_and_read_again_soon(self, aws_sdk):
+        token = await AwsDefaultSource(settings={}, secret=None).fetch()
+        assert token.value == AwsKeys(
+            access_key_id='AKIA-ROLE', secret_access_key='role-secret', session_token='role-token'
+        )
+        assert token.expires_at <= time.time() + AMBIENT_REREAD_SECONDS
+        assert aws_sdk == []
+
+    @pytest.mark.parametrize(
+        ('settings', 'request_'),
+        [
+            (
+                {'role_arn': 'arn:aws:iam::1:role/r'},
+                {'RoleArn': 'arn:aws:iam::1:role/r', 'RoleSessionName': 'igni-server', 'DurationSeconds': 3600},
+            ),
+            (
+                {'role_arn': 'arn:aws:iam::1:role/r', 'external_id': 'shared-ext'},
+                {
+                    'RoleArn': 'arn:aws:iam::1:role/r',
+                    'RoleSessionName': 'igni-server',
+                    'DurationSeconds': 3600,
+                    'ExternalId': 'shared-ext',
+                },
+            ),
+        ],
+    )
+    async def test_an_assumed_role_is_asked_of_sts_with_its_external_id_only_when_set(
+        self, aws_sdk, settings, request_
+    ):
+        token = await AwsAssumedRoleSource(settings=settings, secret=None).fetch()
+        assert aws_sdk == [request_]
+        assert token.value == AwsKeys(
+            access_key_id='ASIA-ASSUMED', secret_access_key='assumed-secret', session_token='assumed-token'
+        )
+        assert token.expires_at == 2_000_000_000.0
+
+    async def test_stored_access_keys_are_the_keys_and_do_not_expire(self, aws_sdk):
+        token = await AwsAccessKeysSource(settings={'access_key_id': 'AKIA-USER'}, secret='user-secret').fetch()
+        assert token.value == AwsKeys(access_key_id='AKIA-USER', secret_access_key='user-secret')
+        assert token.expires_at == float('inf')
+        assert aws_sdk == []
+
+    def test_the_secret_never_reaches_a_repr(self):
+        assert 'user-secret' not in repr(AwsKeys(access_key_id='A', secret_access_key='user-secret', session_token='t'))
 
 
 class TestATokenIsCachedAndRenewed:

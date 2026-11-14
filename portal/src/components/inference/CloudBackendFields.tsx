@@ -67,39 +67,47 @@ export function CloudBackendFields({
 /** A project and region, or an endpoint — whichever the kind is addressed by. */
 function AddressFields({ draft, onChange }: { draft: NodeDraft; onChange: (change: Partial<NodeDraft>) => void }) {
   const kind = KINDS[draft.kind]
-  if (kind.address === 'project-region') {
-    return (
-      <Stack direction="horizontal" gap="normal">
-        <FormControl required>
-          <FormControl.Label>Project</FormControl.Label>
-          <TextInput
-            value={draft.project}
-            placeholder="my-project"
-            onChange={(e) => onChange({ project: e.target.value })}
-          />
-        </FormControl>
-        <FormControl required>
-          <FormControl.Label>Region</FormControl.Label>
-          <TextInput
-            value={draft.region}
-            placeholder={kind.regionPlaceholder}
-            onChange={(e) => onChange({ region: e.target.value })}
-          />
-          <FormControl.Caption>Or global.</FormControl.Caption>
-        </FormControl>
-      </Stack>
-    )
-  }
-  return (
+  const region = (
     <FormControl required>
-      <FormControl.Label>Endpoint</FormControl.Label>
+      <FormControl.Label>Region</FormControl.Label>
       <TextInput
-        value={draft.baseUrl}
-        placeholder={kind.endpointPlaceholder}
-        onChange={(e) => onChange({ baseUrl: e.target.value })}
-        block
+        value={draft.region}
+        placeholder={kind.regionPlaceholder}
+        onChange={(e) => onChange({ region: e.target.value })}
       />
-      <FormControl.Caption>{kind.endpointCaption}</FormControl.Caption>
+      {kind.address === 'project-region' && <FormControl.Caption>Or global.</FormControl.Caption>}
     </FormControl>
   )
+  switch (kind.address) {
+    case 'project-region':
+      return (
+        <Stack direction="horizontal" gap="normal">
+          <FormControl required>
+            <FormControl.Label>Project</FormControl.Label>
+            <TextInput
+              value={draft.project}
+              placeholder="my-project"
+              onChange={(e) => onChange({ project: e.target.value })}
+            />
+          </FormControl>
+          {region}
+        </Stack>
+      )
+    case 'region':
+      return region
+    case 'url':
+    case 'url-optional':
+      return (
+        <FormControl required={kind.address === 'url'}>
+          <FormControl.Label>Endpoint</FormControl.Label>
+          <TextInput
+            value={draft.baseUrl}
+            placeholder={kind.endpointPlaceholder}
+            onChange={(e) => onChange({ baseUrl: e.target.value })}
+            block
+          />
+          <FormControl.Caption>{kind.endpointCaption}</FormControl.Caption>
+        </FormControl>
+      )
+  }
 }

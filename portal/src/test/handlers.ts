@@ -5,7 +5,7 @@
  */
 import { http, HttpResponse } from 'msw'
 
-import type { BackendKindInfo } from '../types'
+import type { AuthMethodInfo, BackendKindInfo } from '../types'
 
 const ME_DEFAULT = {
   user_id: 'demo-user-001',
@@ -55,35 +55,46 @@ export const NO_LICENCE = {
   modules: UNLICENSED_MODULES,
 }
 
+const AZURE_METHODS: AuthMethodInfo[] = [
+  { method: 'ambient', settings: [], optional: [], secret: null },
+  { method: 'managed_identity', settings: ['client_id'], optional: [], secret: null },
+  { method: 'client_secret', settings: ['tenant_id', 'client_id'], optional: [], secret: 'credential' },
+  { method: 'api_key', settings: [], optional: [], secret: 'api_key' },
+]
+const VERTEX_METHODS: AuthMethodInfo[] = [
+  { method: 'ambient', settings: [], optional: [], secret: null },
+  { method: 'impersonate', settings: ['service_account'], optional: [], secret: null },
+  { method: 'service_account_key', settings: [], optional: [], secret: 'credential' },
+]
+
 /** What `GET /portal/inference/auth-methods` answers: the server's table, as it stands. */
 export const AUTH_METHODS = [
   {
     kind: 'openai',
     wire: 'openai',
     methods: [
-      { method: 'none', settings: [], secret: null },
-      { method: 'api_key', settings: [], secret: 'api_key' },
+      { method: 'none', settings: [], optional: [], secret: null },
+      { method: 'api_key', settings: [], optional: [], secret: 'api_key' },
     ],
+  },
+  { kind: 'azure_openai', wire: 'openai', methods: AZURE_METHODS },
+  { kind: 'vertex_openai', wire: 'openai', methods: VERTEX_METHODS },
+  {
+    kind: 'anthropic',
+    wire: 'anthropic',
+    methods: [{ method: 'api_key', settings: [], optional: [], secret: 'api_key' }],
   },
   {
-    kind: 'azure_openai',
-    wire: 'openai',
+    kind: 'bedrock',
+    wire: 'anthropic',
     methods: [
-      { method: 'ambient', settings: [], secret: null },
-      { method: 'managed_identity', settings: ['client_id'], secret: null },
-      { method: 'client_secret', settings: ['tenant_id', 'client_id'], secret: 'credential' },
-      { method: 'api_key', settings: [], secret: 'api_key' },
+      { method: 'ambient', settings: [], optional: [], secret: null },
+      { method: 'assume_role', settings: ['role_arn'], optional: ['external_id'], secret: null },
+      { method: 'access_keys', settings: ['access_key_id'], optional: [], secret: 'credential' },
     ],
   },
-  {
-    kind: 'vertex_openai',
-    wire: 'openai',
-    methods: [
-      { method: 'ambient', settings: [], secret: null },
-      { method: 'impersonate', settings: ['service_account'], secret: null },
-      { method: 'service_account_key', settings: [], secret: 'credential' },
-    ],
-  },
+  { kind: 'vertex_anthropic', wire: 'anthropic', methods: VERTEX_METHODS },
+  { kind: 'azure_anthropic', wire: 'anthropic', methods: AZURE_METHODS },
 ] satisfies BackendKindInfo[]
 
 export const defaultHandlers = [

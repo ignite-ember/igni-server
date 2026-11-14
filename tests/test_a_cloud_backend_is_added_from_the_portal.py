@@ -20,7 +20,7 @@ from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.providers.kinds import BackendKind
 from tests.chat_proxy import context, lease, SpyPool
 from tests.cloud_fakes import SERVICE_ACCOUNT
-from tests.portal_backends import routed, VERTEX
+from tests.portal_backends import ANTHROPIC, AZURE as AZURE_BODY, BEDROCK, routed, VERTEX, VERTEX_CLAUDE
 
 pytestmark = pytest.mark.usefixtures('no_probing', 'only_pinned_nodes')
 
@@ -149,6 +149,56 @@ class TestEditing:
         assert resp.status_code == 200, resp.text
         assert resp.json()['base_url'] == moved
         assert (await routed())['vertex-eu'].base_url == moved
+
+    @pytest.mark.parametrize(
+        ('added', 'move', 'moved'),
+        [
+            pytest.param(
+                BEDROCK, {'region': 'us-east-1'}, 'https://bedrock-runtime.us-east-1.amazonaws.com', id='bedrock'
+            ),
+            pytest.param(
+                VERTEX_CLAUDE,
+                {'project': 'acme-two'},
+                'https://us-east5-aiplatform.googleapis.com/v1/projects/acme-two/locations/us-east5/publishers/anthropic/models',
+                id='claude on vertex',
+            ),
+        ],
+    )
+    async def test_moving_any_backend_addressed_by_its_region_moves_its_address(
+        self, client, fleet_admin, added, move, moved
+    ):
+        headers, _org = fleet_admin
+        await client.post('/portal/inference/nodes', json=added, headers=headers)
+
+        resp = await client.patch(f'/portal/inference/nodes/{added["node_id"]}', json=move, headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        assert (await routed())[added['node_id']].base_url == moved
+
+    async def test_a_blank_address_sends_an_anthropic_backend_back_to_anthropics_own_api(self, client, fleet_admin):
+        headers, _org = fleet_admin
+        await client.post(
+            '/portal/inference/nodes', json={**ANTHROPIC, 'base_url': 'https://gateway.acme.internal'}, headers=headers
+        )
+
+        resp = await client.patch('/portal/inference/nodes/anthropic', json={'base_url': ''}, headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()['base_url'] == 'https://api.anthropic.com', 'stored as the address it means, not blank'
+        assert (await routed())['anthropic'].base_url == 'https://api.anthropic.com'
+
+    async def test_a_blank_address_is_refused_for_a_kind_that_has_none_of_its_own(self, client, fleet_admin):
+        headers, _org = fleet_admin
+        await client.post('/portal/inference/nodes', json=AZURE_BODY, headers=headers)
+
+        resp = await client.patch('/portal/inference/nodes/azure-eu', json={'base_url': ''}, headers=headers)
+
+        assert resp.status_code == 422
+        assert resp.json()['detail'] == (
+            "Node 'azure-eu' was not changed: Backend 'azure-eu' (azure_openai): "
+            'base_url must start with http:// or https://'
+        )
+        assert (await routed())['azure-eu'].base_url == AZURE_BODY['base_url']
 
     async def test_an_edit_that_would_break_the_backend_is_refused_and_writes_nothing(self, client, fleet_admin):
         headers, _org = fleet_admin

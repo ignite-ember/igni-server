@@ -56,22 +56,33 @@ export interface NodeMetrics {
 }
 
 /** Who serves a backend: the customer's own (or anything OpenAI-compatible), or a cloud's. */
-export type BackendKind = 'openai' | 'azure_openai' | 'vertex_openai'
+export type BackendKind =
+  'openai' | 'azure_openai' | 'vertex_openai' | 'anthropic' | 'bedrock' | 'vertex_anthropic' | 'azure_anthropic'
 
 /** How requests to a backend are authenticated. Each kind offers its own set. */
 export type AuthMethod =
-  'none' | 'api_key' | 'ambient' | 'managed_identity' | 'client_secret' | 'impersonate' | 'service_account_key'
+  | 'none'
+  | 'api_key'
+  | 'ambient'
+  | 'managed_identity'
+  | 'client_secret'
+  | 'impersonate'
+  | 'service_account_key'
+  | 'assume_role'
+  | 'access_keys'
 
 /** A setting an auth method needs — not secret, shown back in the portal. */
-export type AuthSetting = 'client_id' | 'tenant_id' | 'service_account'
+export type AuthSetting = 'client_id' | 'tenant_id' | 'service_account' | 'role_arn' | 'external_id' | 'access_key_id'
 
 /** The API a backend speaks, and so the endpoint its models are served on. */
-export type Wire = 'openai'
+export type Wire = 'openai' | 'anthropic'
 
 /** One method a kind offers: the settings it needs (not secret) and where its secret goes. */
 export interface AuthMethodInfo {
   method: AuthMethod
   settings: AuthSetting[]
+  /** Settings it takes but does not need, such as a role's external ID. */
+  optional: AuthSetting[]
   secret: 'api_key' | 'credential' | null
 }
 

@@ -16,6 +16,8 @@ from app.services.ai.chat.streaming import ChatStreamer
 from app.services.ai.chat.tails import TailRunner
 from app.services.ai.chat.upstream_client import UpstreamChatClient
 from app.services.ai.fair_queue import FairQueue
+from app.services.ai.messages.proxy import MessagesProxy
+from app.services.ai.messages.upstream import MessagesUpstream
 from app.services.ai.pool_manager import PoolManager
 from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.token_estimate import TokenEstimator
@@ -47,6 +49,7 @@ class ChatServices:
         callers: ChatCallerResolver | None = None,
         catalog: ChatModelCatalog | None = None,
         credentials: CloudCredentials | None = None,
+        messages_upstream: MessagesUpstream | None = None,
     ) -> None:
         pools = pools or PoolManager()
         self._tails = tails or TailRunner()
@@ -58,11 +61,24 @@ class ChatServices:
         upstream = upstream or UpstreamChatClient(credentials=credentials)
         estimator = estimator or TokenEstimator()
         retry = retry or RetryPolicy()
+        # One queue for both APIs: a replica's waiting requests are fair to each other whichever they speak.
+        queue = queue or FairQueue(max_length=settings.chat_queue_max_length)
+        usage_db = usage_db or ChatUsageDB()
+        self._messages = MessagesProxy(
+            pools=pools,
+            queue=queue,
+            usage_db=usage_db,
+            upstream=messages_upstream or MessagesUpstream(credentials=credentials),
+            estimator=estimator,
+            tails=self._tails,
+            retry=retry,
+            max_wait=settings.chat_queue_max_wait_seconds,
+        )
         self._proxy = ChatProxy(
             callers=self._callers,
             pools=pools,
-            queue=queue or FairQueue(max_length=settings.chat_queue_max_length),
-            usage_db=usage_db or ChatUsageDB(),
+            queue=queue,
+            usage_db=usage_db,
             streamer=ChatStreamer(upstream=upstream, estimator=estimator, tails=self._tails, retry=retry),
             completions=ChatCompletionService(upstream=upstream, estimator=estimator, tails=self._tails, retry=retry),
         )
@@ -90,6 +106,11 @@ class ChatServices:
     @property
     def proxy(self) -> ChatProxy:
         return self._proxy
+
+    @property
+    def messages(self) -> MessagesProxy:
+        """`/v1/messages`: the Anthropic API's proxy, sharing this replica's queue and usage table."""
+        return self._messages
 
 
 def chat_services(request: Request) -> ChatServices:
