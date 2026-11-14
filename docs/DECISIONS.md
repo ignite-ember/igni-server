@@ -48,7 +48,7 @@ register that reads as though it had always agreed.
 |---|---|---|
 | `open` | 0 | Nobody has decided |
 | `decided` | 3 | A person chose; the code does not show it yet |
-| `answered` | 3 | The check says the code has settled it |
+| `answered` | 4 | The check says the code has settled it |
 | `unknown` | 0 | The check could not look, or cannot tell |
 
 | | Question | State | Touches |
@@ -59,6 +59,7 @@ register that reads as though it had always agreed.
 | DEC-13 | The Celery worker and Flower serve a queue nothing writes to. Wire it or remove it? | `answered` | — |
 | DEC-14 | Should the CLI keep defaulting `api_url` to a vendor host? | `decided` | `DP-5` |
 | DEC-15 | Is thirty days the right token lifetime, now that revocation exists? | `decided` | — |
+| DEC-16 | Where may inference go, and who holds the cloud credentials? | `answered` | — |
 
 ## DEC-10 — Should a signed token be revocable while the account exists?
 
@@ -160,6 +161,23 @@ It does not close the gap. Recovering from missed webhooks is still a real need 
 
 **On checking this one.** A decision to keep thirty days deliberately looks identical in the code to never having asked. This is the one entry whose `answered` state a check cannot establish, and saying so is better than a resolver that lies.
 
+## DEC-16 — Where may inference go, and who holds the cloud credentials?
+
+**`answered`.** Raised in §100.
+
+**What waiting costs.** Customers on AWS, Google Cloud and Azure want Claude and their cloud's own models through the identity they already run under — a Bedrock role, Workload Identity, a managed identity. Without an answer each igni client signs for the cloud itself, so every laptop and every Fleet VM holds cloud credentials, and a Fleet VM cannot reach the host's instance role at all.
+
+**Options.**
+
+* **Each client signs for the cloud** — Native providers in igni-core. Puts cloud credentials on every laptop and VM, and the VM cannot use the node's role.
+* **A proxy the customer runs** — LiteLLM or a gateway in their account. Works today; one more thing to operate, and usage and access control live outside igni.
+* **igni server is the proxy, natively** — The server signs for each cloud with its own identity (or a stored credential); clients keep `cloud_token`. Each model is served on its own API — `/v1/messages` for Claude, `/v1/chat/completions` for the rest — so nothing is lost in translation.
+* **igni server, translating between the APIs** — Any client on any model; prompt caching, thinking and tool details lost or approximated in conversion, at twice the surface.
+
+**Recommendation.** igni server is the proxy, natively, with the cloud's ambient identity by default.
+
+**Decided.** igni server is the proxy, natively; no translation between the two APIs. Credentials are the cloud's ambient chain by default (an IAM role, Workload Identity, a managed identity), a role or service account it assumes, or a stored credential encrypted like a node key — each a named method set in the portal. A cloud backend makes that cloud a processor (R-A in SUPPLIERS.md); its region is the data-residency control.
+
 ## What is not here
 
 **Decisions that are the customer's.** Where inference runs, whether the audit
@@ -173,6 +191,6 @@ kind of waiting from a decision: the content exists and nobody has adopted it.
 
 **Anything an engineer can settle.** If a question has a right answer that
 evidence establishes, it belongs in the review as a finding rather than here as a
-choice. Five of the six entries above were re-checked while writing this file and
+choice. When this file was first written, its first six entries were re-checked and
 one of them turned out to have been settled by code — which is the failure mode a
-list of open questions has, and the reason this one is checked.
+list of open questions has, and the reason each one is checked.

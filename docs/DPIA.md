@@ -169,10 +169,13 @@ has to paper.
 **The model endpoint is the one that matters.** `base_url` accepts any absolute
 URL: the product is built for the customer's own vLLM nodes, and the whole
 inference stack — routing, drain, health — is about GPUs they run. Nothing stops a
-customer pointing it at a third-party API instead, and if they do, that provider
+customer pointing it at a third-party API, or choosing one of the cloud kinds R-A in
+SUPPLIERS.md lists (DEC-16), and if they do, that provider
 receives their developers' source code and becomes a processor they must assess,
 contract with under Article 28, and possibly list as a recipient. The software
-cannot make that decision for them and does not try to.
+cannot make that decision for them and does not try to. For a cloud backend, its
+`region` is where the prompt is processed, and the cloud's own credentials stay on the
+server: no client and no Fleet VM holds them.
 
 A DPIA for a deployment using self-hosted nodes and a DPIA for one calling a
 public API are different documents. This is the fact that decides which one you

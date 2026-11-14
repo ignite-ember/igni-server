@@ -33,6 +33,7 @@ the one thing it exists to describe.
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import dataclass
 import pathlib
 import re
@@ -40,7 +41,8 @@ import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TRACKER = _ROOT / 'docs/COMPLIANCE_TRACKER.md'
-_AI_SCHEMAS = _ROOT / 'app/services/ai/backend.py'
+_BACKEND = _ROOT / 'app/services/ai/backend.py'
+_KINDS = _ROOT / 'app/services/ai/providers/kinds.py'
 _OUTPUT = _ROOT / 'docs/SUPPLIERS.md'
 
 PLACEHOLDER = '`__ORGANISATION_TO_COMPLETE__`'
@@ -185,20 +187,40 @@ class Recipient:
     obligation: str
 
 
+def cloud_kinds() -> tuple[str, ...]:
+    """Every `BackendKind` but `openai`, as the code declares them: each one sends prompts to a cloud."""
+    module = ast.parse(_KINDS.read_text())
+    kind = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == 'BackendKind')
+    values = (
+        statement.value.value
+        for statement in kind.body
+        if isinstance(statement, ast.Assign)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+    )
+    return tuple(value for value in values if value != 'openai')
+
+
 RECIPIENTS: tuple[Recipient, ...] = (
     Recipient(
         'R-A',
         'The model endpoint',
         "**Prompts — the developer's source code and their words.** This is the one that would change a DPIA.",
-        '`InferenceBackend.base_url`, which validates only that the URL is absolute. The product '
-        "is built for the customer's own vLLM nodes and the whole inference stack is about GPUs "
-        'they run.',
+        '`InferenceBackend.base_url`, which validates only that the URL is absolute, and its '
+        '`kind`: a GPU node or OpenAI-compatible API (`openai`), or a cloud — '
+        + ', '.join(f'`{kind}`' for kind in cloud_kinds())
+        + " — signed by igni server with the cloud's own identity or a stored credential "
+        '(DEC-16). The product is built for the '
+        "customer's own vLLM nodes; the cloud kinds exist for customers who choose a cloud.",
         'Nothing. There is no default endpoint; an unconfigured deployment serves a '
         '`NoModelConfigured` placeholder rather than calling anywhere.',
-        '**A customer who points this at a third-party API acquires a processor** and needs an '
-        'Article 28 agreement, a recipient entry in their own Article 30 record, and probably a '
-        'transfer assessment. A customer running their own nodes acquires nothing. Same '
-        'software, two different compliance positions, decided by one configuration value.',
+        '**A customer who points this at a third-party API or a cloud kind acquires a processor** '
+        "and needs an Article 28 agreement (the cloud's own DPA covers Bedrock, Vertex AI and "
+        'Azure), a recipient entry in their own Article 30 record, and probably a transfer '
+        "assessment. A cloud backend's `region` is where the prompt is processed: pin it to keep "
+        'data in the EU. A customer running their own nodes acquires nothing. Same software, two '
+        "different compliance positions, decided by the backend's configuration: where it points "
+        'and which kind it is.',
     ),
     Recipient(
         'R-B',
@@ -321,7 +343,7 @@ def register_rows() -> dict[str, str]:
 
 def model_endpoint_is_unrestricted() -> bool:
     """R-A says a customer can point inference anywhere. Keep it true."""
-    source = _AI_SCHEMAS.read_text()
+    source = _BACKEND.read_text()
     if 'base_url must start with http:// or https://' not in source:
         return False
     return not any(marker in source for marker in ('is_private', 'ip_address(', 'loopback'))

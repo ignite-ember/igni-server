@@ -77,6 +77,11 @@ marketplace
 # in no image: the step that re-encrypts what is stored could not be run
 # where the documentation said to run it.
 !tools/rotate_secret_key.py
+
+# …and the tool that proves a cloud backend's identity and model with one
+# real request, which has to run where the server's own identity is: in
+# the API container (docs/self-hosting.md §1).
+!tools/smoke_provider.py
 **/*.md
 **/*.log
 

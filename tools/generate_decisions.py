@@ -181,7 +181,26 @@ def token_lifetime_was_revisited() -> bool:
     return 'timedelta(days=30)' not in source
 
 
+def cloud_providers_are_proxied_natively() -> bool:
+    """DEC-16. Answered when igni server serves both APIs natively and signs
+    for the clouds itself: both endpoints are served, every Claude kind
+    speaks Anthropic's API and every other kind OpenAI's — so nothing is
+    translated between them — and Bedrock can assume a role."""
+    from app.main import app
+    from app.services.ai.providers.auth import AuthMethod, METHODS
+    from app.services.ai.providers.kinds import BackendKind, Wire
+
+    served = set(app.openapi()['paths'])
+    claude = {BackendKind.ANTHROPIC, BackendKind.BEDROCK, BackendKind.VERTEX_ANTHROPIC, BackendKind.AZURE_ANTHROPIC}
+    return (
+        {'/v1/chat/completions', '/v1/messages'} <= served
+        and all(kind.wire is (Wire.ANTHROPIC if kind in claude else Wire.OPENAI) for kind in BackendKind)
+        and AuthMethod.ASSUME_ROLE in METHODS[BackendKind.BEDROCK]
+    )
+
+
 RESOLVERS = {
+    'cloud_providers_are_proxied_natively': cloud_providers_are_proxied_natively,
     'revocation_is_built': revocation_is_built,
     'updater_endpoint_is_configurable': updater_endpoint_is_configurable,
     'old_landing_route_is_gone': old_landing_route_is_gone,
@@ -378,6 +397,47 @@ DECISIONS: tuple[Decision, ...] = (
         'never having asked. This is the one entry whose `answered` state a check cannot '
         'establish, and saying so is better than a resolver that lies.',
     ),
+    Decision(
+        'DEC-16',
+        'Where may inference go, and who holds the cloud credentials?',
+        ('§100',),
+        'Customers on AWS, Google Cloud and Azure want Claude and their cloud\'s own models '
+        'through the identity they already run under — a Bedrock role, Workload Identity, a '
+        'managed identity. Without an answer each igni client signs for the cloud itself, so '
+        'every laptop and every Fleet VM holds cloud credentials, and a Fleet VM cannot reach the '
+        'host\'s instance role at all.',
+        (
+            (
+                'Each client signs for the cloud',
+                'Native providers in igni-core. Puts cloud credentials on every '
+                'laptop and VM, and the VM cannot use the node\'s role.',
+            ),
+            (
+                'A proxy the customer runs',
+                'LiteLLM or a gateway in their account. Works today; one more thing to '
+                'operate, and usage and access control live outside igni.',
+            ),
+            (
+                'igni server is the proxy, natively',
+                'The server signs for each cloud with its own identity (or a stored '
+                'credential); clients keep `cloud_token`. Each model is served on its own API — '
+                '`/v1/messages` for Claude, `/v1/chat/completions` for the rest — so nothing is lost '
+                'in translation.',
+            ),
+            (
+                'igni server, translating between the APIs',
+                'Any client on any model; prompt caching, thinking '
+                'and tool details lost or approximated in conversion, at twice the surface.',
+            ),
+        ),
+        'igni server is the proxy, natively, with the cloud\'s ambient identity by default.',
+        'cloud_providers_are_proxied_natively',
+        decided='igni server is the proxy, natively; no translation between the two APIs. Credentials '
+        'are the cloud\'s ambient chain by default (an IAM role, Workload Identity, a managed '
+        'identity), a role or service account it assumes, or a stored credential encrypted like a '
+        'node key — each a named method set in the portal. A cloud backend makes that cloud a '
+        'processor (R-A in SUPPLIERS.md); its region is the data-residency control.',
+    ),
 )
 
 
@@ -559,9 +619,9 @@ def render() -> str:
     out.append('')
     out.append('**Anything an engineer can settle.** If a question has a right answer that')
     out.append('evidence establishes, it belongs in the review as a finding rather than here as a')
-    out.append('choice. Five of the six entries above were re-checked while writing this file and')
+    out.append('choice. When this file was first written, its first six entries were re-checked and')
     out.append('one of them turned out to have been settled by code — which is the failure mode a')
-    out.append('list of open questions has, and the reason this one is checked.')
+    out.append('list of open questions has, and the reason each one is checked.')
     out.append('')
     return '\n'.join(out)
 
