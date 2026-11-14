@@ -290,10 +290,14 @@ class PinnedNodeView(BaseModel):
             region=node.region,
             project=node.project,
             model_ids=dict(node.model_ids or {}),
-            auth=AuthMethod(node.auth)
-            if node.auth
-            else default_method(
-                BackendKind(node.kind or 'openai'), has_api_key=bool(node.api_key), has_credential=bool(node.credential)
+            auth=(
+                AuthMethod(node.auth)
+                if node.auth
+                else default_method(
+                    BackendKind(node.kind or 'openai'),
+                    has_api_key=bool(node.api_key),
+                    has_credential=bool(node.credential),
+                )
             ),
             auth_settings=dict(node.auth_settings or {}),
             has_credential=bool(node.credential),
