@@ -252,8 +252,8 @@ class TestTheFleetOutlivesTheOrgThatAddedIt:
                 )
                 conn.execute(
                     text(
-                        'INSERT INTO inference_nodes (id, node_id, org_id, base_url, models, '
-                        'created_at, updated_at) VALUES (:i, :nid, :o, :u, :m, :n, :n)'
+                        'INSERT INTO inference_nodes (id, node_id, org_id, base_url, models, auth, '
+                        "created_at, updated_at) VALUES (:i, :nid, :o, :u, :m, 'none', :n, :n)"
                     ),
                     {
                         'i': str(uuid.uuid4()),

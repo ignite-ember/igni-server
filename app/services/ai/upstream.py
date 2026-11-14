@@ -19,6 +19,8 @@ import re
 import httpx
 from pydantic import BaseModel, ConfigDict
 
+from app.services.ai.providers.kinds import BackendKind
+
 #: Attempts per request, including the first.
 MAX_RETRIES = 3
 
@@ -176,9 +178,9 @@ class UpstreamCredentialsUnavailable(UpstreamFailure):
     server's configuration, not the provider.
     """
 
-    def __init__(self, kind: str):
+    def __init__(self, kind: BackendKind):
         self.kind = kind
-        super().__init__(f'No credentials for the {kind} backend')
+        super().__init__(f'No credentials for the {kind.value} backend')
 
     @property
     def label(self) -> str:

@@ -1,17 +1,17 @@
 /**
- * Editing one GPU node, on its own page.
+ * Editing one node — a GPU node or a cloud backend — on its own page.
  *
  * The fleet list used to be editable in place: two checkboxes that
  * PATCHed on change, with no Save. That is a defensible shape for a
- * single toggle and the wrong one here — a node has seven fields, and
+ * single toggle and the wrong one here — a node has many fields, and
  * changing "what it serves" without changing "how many at once" is not
  * the common case. Half-applied edits are also unreviewable: you cannot
  * see what you are about to do before it is done.
  *
  * So: the row is read-only, Edit comes here, everything changes
- * together, Save writes once. The same shape as a group entry
- * (`EditEntryPage`), which is the pattern this portal already uses for
- * anything with more than one field.
+ * together, Save writes once. The form is the add dialog's draft
+ * (`nodeDraft.ts`) and, for a cloud backend, its fields
+ * (`CloudBackendFields`), so the two cannot drift apart.
  *
  * ## Only nodes added here
  *
@@ -30,7 +30,6 @@ import {
   Button,
   Checkbox,
   FormControl,
-  Textarea,
   PageHeader,
   Spinner,
   Stack,
@@ -38,33 +37,40 @@ import {
   TextInput,
 } from "@primer/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 import { useState } from "react";
 import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 
 import client from "../api/client";
+import { refusalOf } from "../api/refusal";
 import {
-  type AuthDraft,
   authComplete,
-  authFields,
-  KIND_LABEL,
   methodsOf,
-  modelIdsText,
-  parseModelIds,
+  SECRET_STORED,
   useAuthMethods,
 } from "../components/inference/auth";
-import { AuthFields } from "../components/inference/AuthFields";
+import { CloudBackendFields } from "../components/inference/CloudBackendFields";
+import { INFERENCE_STATUS_KEY } from "../components/inference/fleet";
+import { isCloud, KINDS } from "../components/inference/kinds";
+import {
+  addressProblem,
+  draftOf,
+  modelsIn,
+  type NodeDraft,
+  pinnedNodeUpdateOf,
+} from "../components/inference/nodeDraft";
 import type { PinnedNode } from "../types";
 import "./EditNodePage.css";
-
-type StoredNode = PinnedNode;
 
 export function EditNodePage() {
   const { nodeId = "" } = useParams<{ nodeId: string }>();
 
-  const query = useQuery<StoredNode>({
+  const query = useQuery<PinnedNode>({
     queryKey: ["inference-node", nodeId],
     queryFn: () =>
-      client.get(`/portal/inference/nodes/${nodeId}`).then((r) => r.data),
+      client
+        .get<PinnedNode>(`/portal/inference/nodes/${nodeId}`)
+        .then((r) => r.data),
     retry: false,
   });
 
@@ -73,24 +79,35 @@ export function EditNodePage() {
   }
 
   if (query.isError || !query.data) {
+    const notHere =
+      isAxiosError(query.error) && query.error.response?.status === 404;
     return (
       <Stack gap="normal">
         <Breadcrumbs>
           <Breadcrumbs.Item href="/inference">Inference</Breadcrumbs.Item>
           <Breadcrumbs.Item selected>{nodeId}</Breadcrumbs.Item>
         </Breadcrumbs>
-        <Banner
-          variant="warning"
-          title="This node cannot be edited here"
-          description={
-            <Text size="small">
-              It was not added from the portal. A registered node is defined by
-              whatever started the cluster and re-announces itself every minute;
-              a configured one lives in this deployment&apos;s settings. You can
-              still take it out of rotation from the fleet list.
-            </Text>
-          }
-        />
+        {notHere ? (
+          <Banner
+            variant="warning"
+            title="This node cannot be edited here"
+            description={
+              <Text size="small">
+                It was not added from the portal. A registered node is defined
+                by whatever started the cluster and re-announces itself every
+                minute; a configured one lives in this deployment&apos;s
+                settings. You can still take it out of rotation from the fleet
+                list.
+              </Text>
+            }
+          />
+        ) : (
+          <Banner
+            variant="critical"
+            title="The node could not be loaded"
+            description={refusalOf(query.error, "Reload to try again.")}
+          />
+        )}
         <Button as={RouterLink} to="/inference">
           Back to inference
         </Button>
@@ -112,108 +129,59 @@ export function EditNodePage() {
  * once with empty fields and again with real ones, and any value the
  * admin has typed in between is discarded by the next refetch.
  */
-function NodeForm({ node }: { node: StoredNode }) {
-  const nodeId = node.node_id;
+function NodeForm({ node }: { node: PinnedNode }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-
-  const [baseUrl, setBaseUrl] = useState(node.base_url);
-  const [models, setModels] = useState(node.models.join(", "));
-  const [maxConcurrent, setMaxConcurrent] = useState(
-    String(node.max_concurrent),
-  );
-  const [multimodal, setMultimodal] = useState(node.multimodal);
-  const [enabled, setEnabled] = useState(node.enabled);
-  const [apiKey, setApiKey] = useState("");
-  const [region, setRegion] = useState(node.region ?? "");
-  const [project, setProject] = useState(node.project ?? "");
-  const [modelIds, setModelIds] = useState(modelIdsText(node.model_ids ?? {}));
-  const [auth, setAuth] = useState<AuthDraft>({
-    method: node.auth,
-    settings: node.auth_settings ?? {},
-    secret: "",
-  });
+  const table = useAuthMethods();
+  const [draft, setDraft] = useState<NodeDraft>(() => draftOf(node));
   const [error, setError] = useState<string | null>(null);
-  const kind = node.kind ?? "openai";
-  const cloud = kind !== "openai";
-  const vertex = kind === "vertex_openai";
-  const methods = methodsOf(useAuthMethods().data, kind);
-  const method = methods.find((m) => m.method === auth.method);
+  const edit = (change: Partial<NodeDraft>) =>
+    setDraft((current) => ({ ...current, ...change }));
+
+  const cloud = isCloud(node.kind);
+  const methods = methodsOf(table.data, node.kind);
+  const method = methods.find((m) => m.method === draft.auth.method);
   // Only the stored method's secret can be kept by leaving the field blank;
   // a newly chosen method has none stored yet.
   const secretStored =
-    auth.method === node.auth &&
+    draft.auth.method === node.auth &&
     (method?.secret === "api_key" ? node.has_api_key : node.has_credential);
 
   const save = useMutation({
     mutationFn: () =>
-      client.patch(`/portal/inference/nodes/${nodeId}`, {
-        // A Vertex node's address is built from its project and region.
-        ...(vertex
-          ? { region: region.trim(), project: project.trim() }
-          : { base_url: baseUrl.trim() }),
-        ...(cloud && method
-          ? { ...authFields(method, auth), model_ids: parseModelIds(modelIds) }
-          : {}),
-        models: models
-          .split(",")
-          .map((m) => m.trim())
-          .filter(Boolean),
-        max_concurrent: Number(maxConcurrent),
-        multimodal,
-        enabled,
-        // Absent leaves the stored key alone — the API treats an empty
-        // string as "clear it", and this page never receives the key
-        // back, so sending it unconditionally would wipe it on every
-        // edit of anything else.
-        ...(!cloud && apiKey ? { api_key: apiKey } : {}),
-      }),
+      client.patch(
+        `/portal/inference/nodes/${node.node_id}`,
+        pinnedNodeUpdateOf(draft, method),
+      ),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["inference-status"] });
+      await queryClient.invalidateQueries({ queryKey: INFERENCE_STATUS_KEY });
       await queryClient.invalidateQueries({
-        queryKey: ["inference-node", nodeId],
+        queryKey: ["inference-node", node.node_id],
       });
       navigate("/inference");
     },
-    onError: (err: { response?: { data?: { detail?: unknown } } }) => {
-      const detail = err?.response?.data?.detail;
-      setError(typeof detail === "string" ? detail : "The node was not saved.");
-    },
+    onError: (err) => setError(refusalOf(err, "The node was not saved.")),
   });
+
+  /** Why the form cannot be saved yet, checked here as well as by the API so the answer comes first. */
+  function problem(): string | null {
+    const address = addressProblem(draft);
+    if (address) return address;
+    if (modelsIn(draft.modelsText).length === 0) {
+      return "A node needs at least one model, or nothing will ever be routed to it.";
+    }
+    if (!(draft.maxConcurrent > 0)) return "Concurrency has to be at least 1.";
+    if (cloud && !authComplete(method, draft.auth, secretStored)) {
+      return "The chosen authentication needs every field filled in.";
+    }
+    return null;
+  }
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    setError(null);
-
-    // Checked here as well as by the API, so the answer arrives before
-    // the round trip rather than after it.
-    if (vertex && !(region.trim() && project.trim())) {
-      setError("A Vertex backend needs its project and region.");
-      return;
-    }
-    if (
-      !vertex &&
-      !baseUrl.trim().startsWith("http://") &&
-      !baseUrl.trim().startsWith("https://")
-    ) {
-      setError("The address has to start with http:// or https://");
-      return;
-    }
-    if (!models.split(",").some((m) => m.trim())) {
-      setError(
-        "A node needs at least one model, or nothing will ever be routed to it.",
-      );
-      return;
-    }
-    if (cloud && !authComplete(method, auth, secretStored)) {
-      setError("The chosen authentication needs every field filled in.");
-      return;
-    }
-    if (!(Number(maxConcurrent) > 0)) {
-      setError("Concurrency has to be at least 1.");
-      return;
-    }
-    save.mutate();
+    const found = problem();
+    setError(found);
+    if (!found) save.mutate();
   }
 
   return (
@@ -237,7 +205,7 @@ function NodeForm({ node }: { node: StoredNode }) {
         </PageHeader.TitleArea>
         <PageHeader.Description>
           <Text size="medium">
-            {KIND_LABEL[kind]}. Nothing changes until you press Save.
+            {KINDS[node.kind].label}. Nothing changes until you press Save.
           </Text>
         </PageHeader.Description>
       </PageHeader>
@@ -245,69 +213,25 @@ function NodeForm({ node }: { node: StoredNode }) {
       {error && (
         <Banner variant="critical" title="Not saved" description={error} />
       )}
+      {cloud && table.isError && (
+        <Banner
+          variant="critical"
+          title="How this provider signs in could not be loaded"
+          description="The server's list of auth methods did not load, so this backend cannot be saved. Reload to try again."
+        />
+      )}
 
       <form onSubmit={submit}>
         <Stack direction="vertical" gap="normal" className="node-form">
-          {vertex ? (
-            <Stack direction="horizontal" gap="normal" padding="none">
-              <FormControl required>
-                <FormControl.Label>Project</FormControl.Label>
-                <TextInput
-                  value={project}
-                  onChange={(e) => setProject(e.currentTarget.value)}
-                />
-              </FormControl>
-              <FormControl required>
-                <FormControl.Label>Region</FormControl.Label>
-                <TextInput
-                  value={region}
-                  onChange={(e) => setRegion(e.currentTarget.value)}
-                />
-              </FormControl>
-            </Stack>
-          ) : (
-            <FormControl required>
-              <FormControl.Label>Address</FormControl.Label>
-              <TextInput
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.currentTarget.value)}
-                block
-              />
-              <FormControl.Caption>
-                Where igni sends requests, including the <code>/v1</code> path
-                if the node serves one.
-              </FormControl.Caption>
-            </FormControl>
-          )}
-
-          <FormControl required>
-            <FormControl.Label>Models</FormControl.Label>
-            <TextInput
-              value={models}
-              onChange={(e) => setModels(e.currentTarget.value)}
-              block
+          {cloud ? (
+            <CloudBackendFields
+              draft={draft}
+              methods={methods}
+              onChange={edit}
+              secretStored={secretStored}
             />
-            <FormControl.Caption>
-              Comma-separated, and every id has to match what the node answers
-              to — a mistyped one does not error, it simply never matches a
-              request. On a LoRA node list the adapters too.
-            </FormControl.Caption>
-          </FormControl>
-
-          {cloud && (
-            <FormControl>
-              <FormControl.Label>Provider&apos;s names</FormControl.Label>
-              <Textarea
-                value={modelIds}
-                onChange={(e) => setModelIds(e.currentTarget.value)}
-                rows={2}
-                block
-              />
-              <FormControl.Caption>
-                One <code>name = provider-name</code> per line, where the
-                provider knows a model by another name.
-              </FormControl.Caption>
-            </FormControl>
+          ) : (
+            <GpuNodeEditFields draft={draft} node={node} onChange={edit} />
           )}
 
           <FormControl required>
@@ -315,27 +239,29 @@ function NodeForm({ node }: { node: StoredNode }) {
             <TextInput
               type="number"
               min={1}
-              value={maxConcurrent}
-              onChange={(e) => setMaxConcurrent(e.currentTarget.value)}
+              value={String(draft.maxConcurrent)}
+              onChange={(e) =>
+                edit({ maxConcurrent: Number(e.currentTarget.value) })
+              }
             />
             <FormControl.Caption>
               How many requests igni will have in flight here at once. It cannot
-              see any other client of the same GPU.
+              see any other client of the same backend.
             </FormControl.Caption>
           </FormControl>
 
           <FormControl>
             <Checkbox
-              checked={multimodal}
-              onChange={(e) => setMultimodal(e.currentTarget.checked)}
+              checked={draft.multimodal}
+              onChange={(e) => edit({ multimodal: e.currentTarget.checked })}
             />
             <FormControl.Label>Accepts images</FormControl.Label>
           </FormControl>
 
           <FormControl>
             <Checkbox
-              checked={enabled}
-              onChange={(e) => setEnabled(e.currentTarget.checked)}
+              checked={draft.enabled}
+              onChange={(e) => edit({ enabled: e.currentTarget.checked })}
             />
             <FormControl.Label>Enabled</FormControl.Label>
             <FormControl.Caption>
@@ -345,36 +271,12 @@ function NodeForm({ node }: { node: StoredNode }) {
             </FormControl.Caption>
           </FormControl>
 
-          {cloud ? (
-            <AuthFields
-              methods={methods}
-              value={auth}
-              onChange={setAuth}
-              secretStored={secretStored}
-            />
-          ) : (
-            <FormControl>
-              <FormControl.Label>API key</FormControl.Label>
-              <TextInput
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.currentTarget.value)}
-                placeholder={
-                  node.has_api_key
-                    ? "stored — leave blank to keep it"
-                    : "none set"
-                }
-                block
-              />
-              <FormControl.Caption>
-                Sent as a bearer token to the node. It is never returned, so
-                leaving this blank keeps whatever is stored.
-              </FormControl.Caption>
-            </FormControl>
-          )}
-
           <Stack direction="horizontal" gap="condensed" padding="none">
-            <Button type="submit" variant="primary" disabled={save.isPending}>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={save.isPending || (cloud && !method)}
+            >
               {save.isPending ? "Saving…" : "Save node"}
             </Button>
             <Button as={RouterLink} to="/inference" disabled={save.isPending}>
@@ -384,6 +286,63 @@ function NodeForm({ node }: { node: StoredNode }) {
         </Stack>
       </form>
     </Stack>
+  );
+}
+
+/** A GPU node's address, models and key: what a cloud backend's fields are to a cloud. */
+function GpuNodeEditFields({
+  draft,
+  node,
+  onChange,
+}: {
+  draft: NodeDraft;
+  node: PinnedNode;
+  onChange: (change: Partial<NodeDraft>) => void;
+}) {
+  return (
+    <>
+      <FormControl required>
+        <FormControl.Label>Address</FormControl.Label>
+        <TextInput
+          value={draft.baseUrl}
+          onChange={(e) => onChange({ baseUrl: e.currentTarget.value })}
+          block
+        />
+        <FormControl.Caption>
+          Where igni sends requests, including the <code>/v1</code> path if the
+          node serves one.
+        </FormControl.Caption>
+      </FormControl>
+
+      <FormControl required>
+        <FormControl.Label>Models</FormControl.Label>
+        <TextInput
+          value={draft.modelsText}
+          onChange={(e) => onChange({ modelsText: e.currentTarget.value })}
+          block
+        />
+        <FormControl.Caption>
+          Comma-separated, and every id has to match what the node answers to —
+          a mistyped one does not error, it simply never matches a request. On a
+          LoRA node list the adapters too.
+        </FormControl.Caption>
+      </FormControl>
+
+      <FormControl>
+        <FormControl.Label>API key</FormControl.Label>
+        <TextInput
+          type="password"
+          value={draft.apiKey}
+          onChange={(e) => onChange({ apiKey: e.currentTarget.value })}
+          placeholder={node.has_api_key ? SECRET_STORED : "none set"}
+          block
+        />
+        <FormControl.Caption>
+          Sent as a bearer token to the node. It is never returned, so leaving
+          this blank keeps whatever is stored.
+        </FormControl.Caption>
+      </FormControl>
+    </>
   );
 }
 

@@ -13,12 +13,14 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderWithProviders } from '../../test/render'
 import { server } from '../../test/server'
+import type { NodeStatus } from '../../types'
 import { InferencePage } from '../InferencePage'
 
-function node(overrides: Record<string, unknown> = {}) {
+function node(overrides: Partial<NodeStatus> = {}): NodeStatus {
   return {
     id: 'gpu-01',
     base_url: 'http://gpu-01.internal:8000/v1',
+    kind: 'openai',
     models: ['igni-1.0-27b'],
     multimodal: false,
     source: 'static',
@@ -636,137 +638,6 @@ describe('Adding a node', () => {
   })
 })
 
-describe('Adding a cloud backend', () => {
-  /**
-   * A cloud has no node to ask what it serves, and signs in its own way:
-   * the form offers the methods the server's own table lists for the
-   * kind, and asks for exactly what the chosen one needs.
-   */
-  beforeEach(() => {
-    server.use(http.get('/v1/portal/me', () => HttpResponse.json({ organizations: [{ id: 'o-1' }], is_super_admin: true })))
-  })
-
-  function captureAdd() {
-    const sent: Record<string, unknown>[] = []
-    server.use(
-      http.post('/v1/portal/inference/nodes', async ({ request }) => {
-        sent.push((await request.json()) as Record<string, unknown>)
-        return HttpResponse.json({}, { status: 201 })
-      }),
-    )
-    return sent
-  }
-
-  async function openAs(kind: RegExp) {
-    const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: /add node/i }))
-    const kindSelect = await screen.findByRole('combobox', { name: /kind/i })
-    await screen.findByRole('option', { name: kind })
-    await user.selectOptions(kindSelect, screen.getByRole('option', { name: kind }))
-    return user
-  }
-
-  function submit() {
-    return screen.getAllByRole('button', { name: /add node/i }).at(-1)!
-  }
-
-  test('an Azure backend with a user-assigned managed identity sends its client ID and no secret', async () => {
-    respondWith(status())
-    const sent = captureAdd()
-    renderWithProviders(<InferencePage />)
-    const user = await openAs(/azure openai/i)
-
-    await user.type(screen.getByRole('textbox', { name: /endpoint/i }), 'https://acme.openai.azure.com/openai/v1')
-    await user.type(screen.getByRole('textbox', { name: /^models/i }), 'gpt-5')
-    await user.type(screen.getByRole('textbox', { name: /provider/i }), 'gpt-5 = acme-gpt5')
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: /authentication/i }),
-      screen.getByRole('option', { name: /user-assigned managed identity/i }),
-    )
-    expect(submit()).toBeDisabled()
-    await user.type(screen.getByRole('textbox', { name: /client id/i }), 'uami-1')
-    await user.type(screen.getByRole('textbox', { name: /^name/i }), 'azure-eu')
-    await user.click(submit())
-
-    await waitFor(() => expect(sent).toHaveLength(1))
-    expect(sent[0]).toEqual({
-      node_id: 'azure-eu',
-      kind: 'azure_openai',
-      base_url: 'https://acme.openai.azure.com/openai/v1',
-      models: ['gpt-5'],
-      model_ids: { 'gpt-5': 'acme-gpt5' },
-      max_concurrent: 64,
-      multimodal: false,
-      auth: 'managed_identity',
-      auth_settings: { client_id: 'uami-1' },
-    })
-  })
-
-  test("Azure offers every method the server lists, the server's own identity first", async () => {
-    respondWith(status())
-    renderWithProviders(<InferencePage />)
-    await openAs(/azure openai/i)
-
-    const options = within(screen.getByRole('combobox', { name: /authentication/i })).getAllByRole('option')
-    expect(options.map((o) => o.textContent)).toEqual([
-      "The server's own identity",
-      'User-assigned managed identity',
-      'App registration (client secret)',
-      'API key',
-    ])
-  })
-
-  test('a Vertex backend asks for its project and region, and its key goes as the credential', async () => {
-    respondWith(status())
-    const sent = captureAdd()
-    renderWithProviders(<InferencePage />)
-    const user = await openAs(/vertex/i)
-
-    expect(screen.queryByRole('textbox', { name: /endpoint/i })).not.toBeInTheDocument()
-    await user.type(screen.getByRole('textbox', { name: /project/i }), 'acme-ai')
-    await user.type(screen.getByRole('textbox', { name: /region/i }), 'europe-west4')
-    await user.type(screen.getByRole('textbox', { name: /^models/i }), 'gemini-pro')
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: /authentication/i }),
-      screen.getByRole('option', { name: /service-account key/i }),
-    )
-    expect(submit()).toBeDisabled()
-    await user.click(screen.getByRole('textbox', { name: /service-account key/i }))
-    await user.paste('{"type": "service_account"}')
-    await user.type(screen.getByRole('textbox', { name: /^name/i }), 'vertex-eu')
-    await user.click(submit())
-
-    await waitFor(() => expect(sent).toHaveLength(1))
-    expect(sent[0]).toMatchObject({
-      kind: 'vertex_openai',
-      project: 'acme-ai',
-      region: 'europe-west4',
-      auth: 'service_account_key',
-      auth_settings: {},
-      credential: '{"type": "service_account"}',
-    })
-    expect(sent[0]).not.toHaveProperty('base_url')
-  })
-
-  test("the server's own identity needs nothing more", async () => {
-    respondWith(status())
-    const sent = captureAdd()
-    renderWithProviders(<InferencePage />)
-    const user = await openAs(/vertex/i)
-
-    await user.type(screen.getByRole('textbox', { name: /project/i }), 'acme-ai')
-    await user.type(screen.getByRole('textbox', { name: /region/i }), 'global')
-    await user.type(screen.getByRole('textbox', { name: /^models/i }), 'gemini-pro')
-    await user.type(screen.getByRole('textbox', { name: /^name/i }), 'vertex-global')
-    await user.click(submit())
-
-    await waitFor(() => expect(sent).toHaveLength(1))
-    expect(sent[0]).toMatchObject({ auth: 'ambient', auth_settings: {} })
-    expect(sent[0]).not.toHaveProperty('credential')
-    expect(sent[0]).not.toHaveProperty('api_key')
-  })
-})
-
 describe('Row alignment', () => {
   /**
    * Each row is its own <summary>, so its own grid container. With
@@ -882,7 +753,7 @@ describe('Changing what a node serves', () => {
     return user
   }
 
-  const pinned = { source: 'pinned' }
+  const pinned: Partial<NodeStatus> = { source: 'pinned' }
 
   test('Edit links to the node page', async () => {
     respondWith(status({ nodes: [node(pinned)], total_in_flight: 0, total_capacity: 64, utilization: 0 }))

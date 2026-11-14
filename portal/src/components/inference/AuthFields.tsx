@@ -1,7 +1,7 @@
 import { FormControl, Select, Stack, Textarea, TextInput } from '@primer/react'
 
 import type { AuthMethodInfo } from '../../types'
-import { type AuthDraft, METHOD_LABEL, secretLabel, SETTING_LABEL } from './auth'
+import { type AuthDraft, METHODS, SECRET_STORED, SETTINGS } from './auth'
 
 /**
  * How a backend authenticates: the methods its kind offers, and the
@@ -23,44 +23,35 @@ export function AuthFields({
   secretStored?: boolean
 }) {
   const info = methods.find((m) => m.method === value.method)
+  const form = METHODS[value.method]
+
+  function choose(method: string) {
+    const chosen = methods.find((m) => m.method === method)
+    // A new method starts empty: another method's settings and secret mean nothing to it.
+    if (chosen) onChange({ method: chosen.method, settings: {}, secret: '' })
+  }
 
   return (
     <Stack gap="normal">
       <FormControl required>
         <FormControl.Label>Authentication</FormControl.Label>
-        <Select
-          value={value.method}
-          onChange={(e) =>
-            // A new method starts empty: another method's settings and secret mean nothing to it.
-            onChange({
-              method: e.target.value as AuthDraft['method'],
-              settings: {},
-              secret: '',
-            })
-          }
-          block
-        >
+        <Select value={value.method} onChange={(e) => choose(e.target.value)} block>
           {methods.map((m) => (
             <Select.Option key={m.method} value={m.method}>
-              {METHOD_LABEL[m.method].label}
+              {METHODS[m.method].label}
             </Select.Option>
           ))}
         </Select>
-        <FormControl.Caption>{METHOD_LABEL[value.method].caption}</FormControl.Caption>
+        <FormControl.Caption>{form.caption}</FormControl.Caption>
       </FormControl>
 
       {info?.settings.map((name) => (
         <FormControl key={name} required>
-          <FormControl.Label>{SETTING_LABEL[name]?.label ?? name}</FormControl.Label>
+          <FormControl.Label>{SETTINGS[name].label}</FormControl.Label>
           <TextInput
             value={value.settings[name] ?? ''}
-            placeholder={SETTING_LABEL[name]?.placeholder}
-            onChange={(e) =>
-              onChange({
-                ...value,
-                settings: { ...value.settings, [name]: e.target.value },
-              })
-            }
+            placeholder={SETTINGS[name].placeholder}
+            onChange={(e) => onChange({ ...value, settings: { ...value.settings, [name]: e.target.value } })}
             block
           />
         </FormControl>
@@ -68,11 +59,11 @@ export function AuthFields({
 
       {info?.secret && (
         <FormControl required={!secretStored}>
-          <FormControl.Label>{secretLabel(value.method)}</FormControl.Label>
-          {value.method === 'service_account_key' ? (
+          <FormControl.Label>{form.secretLabel}</FormControl.Label>
+          {form.secretIsMultiline ? (
             <Textarea
               value={value.secret}
-              placeholder={secretStored ? 'stored — leave blank to keep it' : '{"type": "service_account", ...}'}
+              placeholder={secretStored ? SECRET_STORED : '{"type": "service_account", ...}'}
               onChange={(e) => onChange({ ...value, secret: e.target.value })}
               rows={5}
               block
@@ -81,7 +72,7 @@ export function AuthFields({
             <TextInput
               type="password"
               value={value.secret}
-              placeholder={secretStored ? 'stored — leave blank to keep it' : undefined}
+              placeholder={secretStored ? SECRET_STORED : undefined}
               onChange={(e) => onChange({ ...value, secret: e.target.value })}
               block
             />

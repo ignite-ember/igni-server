@@ -6,11 +6,11 @@ import logging
 
 from app.api.base_v1.schema.chat import CompletionUsage
 from app.db.sql.chat_usage import ChatUsageDB
+from app.services.ai.backend import BackendLease
 from app.services.ai.backend_pool import InferenceBackendPool
 from app.services.ai.chat.errors import NoOtherNode
 from app.services.ai.chat.schemas import ChatCaller, UpstreamChatRequest
 from app.services.ai.fair_queue import FairQueue
-from app.services.ai.schemas import BackendLease
 
 logger = logging.getLogger(__name__)
 

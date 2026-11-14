@@ -24,7 +24,8 @@ half as loaded as they are.
 import pytest
 
 from app.db.sql.inference_nodes import InferenceNodeDB
-from app.services.ai.schemas import HealthState, InferenceBackend, NodeHealth
+from app.services.ai.backend import InferenceBackend
+from app.services.ai.schemas import HealthState, NodeHealth
 from tests.conftest import auth_header, create_org, create_user, make_token
 
 NODE = {
@@ -54,40 +55,7 @@ async def member(db):
     return auth_header(make_token('dev-1', org_id=str(org.id)))
 
 
-@pytest.fixture(autouse=True)
-def no_probing(monkeypatch):
-    """Nodes in these tests have addresses that do not resolve.
-
-    Without this the page render would spend the probe timeout on each of
-    them, and the tests would be measuring httpx rather than the feature.
-    """
-
-    async def _all(self, backends):
-        return {b.id: NodeHealth(state=HealthState.HEALTHY) for b in backends}
-
-    monkeypatch.setattr('app.services.ai.health.NodeHealthProbe.check_all', _all)
-
-
-@pytest.fixture(autouse=True)
-def clean_pool(monkeypatch, tmp_path):
-    """A provider with no static config, so pinned nodes are all there is."""
-    from app.services.ai.backend_provider import InferenceBackendProvider
-    from app.services.ai.pool_manager import PoolManager
-    from app.utils.singleton import SingletonMeta
-
-    class NoRegistry:
-        async def list_nodes(self):
-            return []
-
-        async def get(self, node_id):
-            return None
-
-    SingletonMeta._instances.pop(PoolManager, None)
-    PoolManager(provider=InferenceBackendProvider(path='', inline='', registry=NoRegistry()))
-    monkeypatch.setattr('app.services.ai.fleet_status.NodeRegistry', NoRegistry)
-    monkeypatch.setattr('app.services.ai.pinned_nodes.NodeRegistry', NoRegistry)
-    yield
-    SingletonMeta._instances.pop(PoolManager, None)
+pytestmark = pytest.mark.usefixtures('no_probing', 'only_pinned_nodes')
 
 
 class TestReadingOneBack:

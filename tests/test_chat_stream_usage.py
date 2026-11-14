@@ -10,6 +10,7 @@ from app.api.base_v1.schema.chat import ChatCompletionRequest, ChatMessage
 from app.services.ai.chat.schemas import UpstreamChatRequest
 from app.services.ai.chat.upstream_client import UpstreamChatClient
 from app.services.ai.provider_quirks import TruncatedJson, UpstreamConversation
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.upstream import UpstreamError, UpstreamFailure, UpstreamStale
 from tests.chat_proxy import context, drain, lease, request, ScriptedStreams, SpyPool, streamer, UsageRows
 
@@ -362,7 +363,7 @@ class TestStreamUpstreamRetry:
         def refusing(**_kwargs):
             raise httpx.ConnectError('refused')
 
-        client = UpstreamChatClient(client_factory=refusing)
+        client = UpstreamChatClient(credentials=CloudCredentials(), client_factory=refusing)
 
         with pytest.raises(UpstreamFailure) as exc_info:
             await drain(client.stream(lease=lease(), request=request(stream=True)))
@@ -620,7 +621,9 @@ def _parsed(frame: str) -> dict | None:
 
 def _streamed(response: _FakeStreamResponse):
     """The upstream client's lines over one scripted `httpx` stream response."""
-    client = UpstreamChatClient(client_factory=lambda **_kwargs: _FakeHttpClient(response))
+    client = UpstreamChatClient(
+        credentials=CloudCredentials(), client_factory=lambda **_kwargs: _FakeHttpClient(response)
+    )
     return client.stream(lease=lease(), request=request(stream=True))
 
 

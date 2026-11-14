@@ -26,23 +26,21 @@ to. An ordinary member has no reason to enumerate the first and must not
 be able to do the second.
 """
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 
 from app.api.base_v1.schema.nodes import (
     AvailableModels,
-    BackendKindView,
     InferenceStatusView,
     NodeDrainRequest,
     NodeDrainView,
     NodeProbeRequest,
     NodeProbeResult,
-    PinnedNodeCreate,
-    PinnedNodeUpdate,
-    PinnedNodeView,
 )
+from app.api.base_v1.schema.pinned_nodes import BackendKindView, PinnedNodeCreate, PinnedNodeUpdate, PinnedNodeView
 from app.api.base_v1.schema.portal.user import PortalUser
 from app.config import settings
 from app.security.portal_auth import get_current_portal_user, require_admin
+from app.services.ai.chat.services import ChatServices
 from app.services.ai.fleet_schemas import NodeDefinitionInvalid, NodeIdTaken, NodeNotAdded, NodeNotServing
 from app.services.ai.fleet_status import FleetStatus
 from app.services.ai.health import NodeHealthProbe
@@ -74,8 +72,13 @@ def require_node_manager(current_user: PortalUser = Depends(get_current_portal_u
 # constructors' keyword arguments as query parameters.
 
 
-def fleet_status() -> FleetStatus:
-    return FleetStatus()
+def node_probe(request: Request) -> NodeHealthProbe:
+    """The fleet's health probe, asking the app's one cloud-credentials cache."""
+    return NodeHealthProbe(credentials=ChatServices.of_app(request.app).credentials)
+
+
+def fleet_status(probe: NodeHealthProbe = Depends(node_probe)) -> FleetStatus:
+    return FleetStatus(probe=probe)
 
 
 def pinned_nodes() -> PinnedNodes:
@@ -84,10 +87,6 @@ def pinned_nodes() -> PinnedNodes:
 
 def node_rotation() -> NodeRotation:
     return NodeRotation()
-
-
-def node_probe() -> NodeHealthProbe:
-    return NodeHealthProbe()
 
 
 @router.get(

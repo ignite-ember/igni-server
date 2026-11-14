@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.ai.schemas import BackendLease, ModelNotAvailableError
+from app.services.ai.backend import BackendLease
+from app.services.ai.schemas import ModelNotAvailableError
 from tests.conftest import auth_header, create_org, create_user, make_token
 
 

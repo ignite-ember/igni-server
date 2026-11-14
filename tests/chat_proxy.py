@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import httpx
 
 from app.api.base_v1.schema.chat import ChatCompletionRequest
+from app.services.ai.backend import BackendLease
 from app.services.ai.chat.callers import ChatCallerResolver
 from app.services.ai.chat.completion import ChatCompletionService
 from app.services.ai.chat.request_context import ChatRequestContext
@@ -19,7 +20,7 @@ from app.services.ai.chat.streaming import ChatStreamer
 from app.services.ai.chat.tails import TailRunner
 from app.services.ai.chat.upstream_client import UpstreamChatClient
 from app.services.ai.fair_queue import FairQueue
-from app.services.ai.schemas import BackendLease
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.token_estimate import TokenEstimator
 from app.services.ai.upstream import RetryPolicy
 from app.services.auth.org_context import OrgContext
@@ -66,12 +67,19 @@ def request(messages: list[dict] | None = None, *, stream: bool = False, model: 
     return UpstreamChatRequest.for_upstream(body, model=model)
 
 
-def context(pool: SpyPool, *, usage_db=None, upstream_request=None, caller: ChatCaller | None = None):
-    """A real `ChatRequestContext` over fakes."""
+def context(
+    pool: SpyPool,
+    *,
+    usage_db=None,
+    upstream_request=None,
+    caller: ChatCaller | None = None,
+    held: BackendLease | None = None,
+):
+    """A real `ChatRequestContext` over fakes, holding *held* (the pool's first lease by default)."""
     return ChatRequestContext(
         caller=caller or ChatCaller(user_id='user-1', org_id='org-1'),
         request=upstream_request or request(),
-        lease=lease(1, model=pool.model),
+        lease=held or lease(1, model=pool.model),
         pool=pool,
         usage_db=usage_db if usage_db is not None else UsageRows(),
         queue=FairQueue(max_length=10),
@@ -89,6 +97,7 @@ def streamer(upstream, *, retry: RetryPolicy = NO_BACKOFF) -> ChatStreamer:
 def on_transport(handler: Callable[[httpx.Request], httpx.Response]) -> UpstreamChatClient:
     """A real client whose every call lands on *handler*."""
     return UpstreamChatClient(
+        credentials=CloudCredentials(),
         client_factory=lambda **kw: httpx.AsyncClient(transport=httpx.MockTransport(handler), **kw),
         complete_timeout=5,
     )

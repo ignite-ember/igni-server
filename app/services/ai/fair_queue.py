@@ -30,7 +30,8 @@ import contextlib
 import time
 
 from app.monitoring import CHAT_QUEUE_DEPTH, CHAT_QUEUE_WAIT
-from app.services.ai.schemas import BackendLease, ModelNotAvailableError, NoBackendAvailableError
+from app.services.ai.backend import BackendLease
+from app.services.ai.schemas import ModelNotAvailableError, NoBackendAvailableError
 
 #: How often the dispatcher looks again while anyone waits, for slots freed by another replica.
 TICK_S = 0.25

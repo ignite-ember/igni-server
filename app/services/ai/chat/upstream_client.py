@@ -18,11 +18,11 @@ import httpx
 from pydantic import ValidationError
 
 from app.config import settings
+from app.services.ai.backend import BackendLease
 from app.services.ai.chat.schemas import UpstreamChatRequest, UpstreamCompletion, UpstreamLine
-from app.services.ai.providers.calls import forget_token, prepare, renews
-from app.services.ai.providers.credentials import CloudCredentials, shared_credentials
+from app.services.ai.providers.calls import ProviderCalls
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.request_shape import describe as describe_chat_request
-from app.services.ai.schemas import BackendLease
 from app.services.ai.sse_keepalive import lines_with_keepalive
 from app.services.ai.upstream import UpstreamError, UpstreamFailure, UpstreamUnreadable
 
@@ -42,13 +42,13 @@ class UpstreamChatClient:
     def __init__(
         self,
         *,
+        credentials: CloudCredentials,
         client_factory: ClientFactory = httpx.AsyncClient,
         complete_timeout: float | None = None,
         stream_timeout: httpx.Timeout = STREAM_TIMEOUT,
-        credentials: CloudCredentials | None = None,
     ) -> None:
+        self._calls = ProviderCalls(credentials)
         self._client_factory = client_factory
-        self._credentials = credentials if credentials is not None else shared_credentials()
         #: None reads `settings.ai.upstream_timeout` on every call, so a changed setting applies to the next one.
         self._complete_timeout = complete_timeout
         self._stream_timeout = stream_timeout
@@ -65,13 +65,13 @@ class UpstreamChatClient:
         200 that is not a completion, and a transport failure otherwise.
         """
         for attempt in (1, 2):
-            call = await prepare(lease, request.wire(), self._credentials)
+            call = await self._calls.prepare(lease, body=request.wire())
             try:
                 async with self._client_factory(timeout=self.complete_timeout) as client:
                     resp = await client.post(call.url, headers=call.headers, json=call.body)
             except httpx.RequestError as exc:
                 raise UpstreamFailure.from_transport(exc) from exc
-            if not self._renew_token(lease, resp.status_code, attempt):
+            if not self._renew_token(lease, status=resp.status_code, attempt=attempt):
                 break
 
         if resp.status_code != 200:
@@ -93,10 +93,10 @@ class UpstreamChatClient:
         wire = request.wire()
         try:
             for attempt in (1, 2):
-                call = await prepare(lease, wire, self._credentials)
+                call = await self._calls.prepare(lease, body=wire)
                 async with self._client_factory(timeout=self._stream_timeout) as client:
                     async with client.stream('POST', call.url, headers=call.headers, json=call.body) as resp:
-                        if self._renew_token(lease, resp.status_code, attempt):
+                        if self._renew_token(lease, status=resp.status_code, attempt=attempt):
                             continue
                         if resp.status_code != 200:
                             error_body = await resp.aread()
@@ -114,10 +114,10 @@ class UpstreamChatClient:
         except httpx.RequestError as exc:
             raise UpstreamFailure.from_transport(exc) from exc
 
-    def _renew_token(self, lease: BackendLease, status: int, attempt: int) -> bool:
+    def _renew_token(self, lease: BackendLease, *, status: int, attempt: int) -> bool:
         """Whether *status* was a refused token worth renewing once; drops it if so."""
-        if attempt == 1 and status in (401, 403) and renews(lease):
+        if attempt == 1 and status in (401, 403) and lease.renews_token:
             logger.info('Backend %s refused its token (%s); renewing it once', lease.backend_id, status)
-            forget_token(lease, self._credentials)
+            self._calls.forget(lease)
             return True
         return False

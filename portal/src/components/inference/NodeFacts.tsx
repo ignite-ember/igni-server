@@ -2,7 +2,7 @@ import { Stack, Text, Token, Truncate } from '@primer/react'
 
 import type { NodeStatus } from '../../types'
 import { countOf } from '../../utils/plural'
-import { KIND_LABEL } from './auth'
+import { isCloud, KINDS } from './kinds'
 import { formatAge, HEALTH_LABEL, SOURCE_DETAIL } from './display'
 import { Fact, Glossed } from './Fact'
 import { ServingControl } from './ServingControl'
@@ -31,16 +31,21 @@ export function NodeFacts({
         </Truncate>
       </Fact>
 
-      {node.kind && node.kind !== 'openai' && (
+      {isCloud(node.kind) && (
         <Fact term="Provider">
-          <Text size="small">{KIND_LABEL[node.kind]}</Text>
+          <Text size="small">{KINDS[node.kind].label}</Text>
         </Fact>
       )}
 
       <Fact term="Models">
         <Stack direction="horizontal" gap="condensed" wrap="wrap" padding="none">
           {node.models.map((name, i) => (
-            <Token key={name} text={name} size="small" title={i === 0 ? 'base model' : 'LoRA adapter'} />
+            <Token
+              key={name}
+              text={name}
+              size="small"
+              title={isCloud(node.kind) ? undefined : i === 0 ? 'base model' : 'LoRA adapter'}
+            />
           ))}
         </Stack>
       </Fact>
@@ -70,7 +75,7 @@ export function NodeFacts({
         </Fact>
       )}
 
-      {!m && (
+      {!m && !isCloud(node.kind) && (
         <Fact term="On the node">
           <Glossed value="no metrics published" gloss="— not vLLM, or /metrics is not exposed" />
         </Fact>

@@ -18,7 +18,8 @@ import json
 
 import pytest
 
-from app.services.ai.schemas import InferenceBackend, RegisteredNode
+from app.services.ai.backend import InferenceBackend
+from app.services.ai.schemas import RegisteredNode
 from app.utils.singleton import SingletonMeta
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 

@@ -17,6 +17,7 @@ from app.services.ai.chat.tails import TailRunner
 from app.services.ai.chat.upstream_client import UpstreamChatClient
 from app.services.ai.fair_queue import FairQueue
 from app.services.ai.pool_manager import PoolManager
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.token_estimate import TokenEstimator
 from app.services.ai.upstream import RetryPolicy
 from app.services.auth.org_context import OrgContexts
@@ -45,6 +46,7 @@ class ChatServices:
         retry: RetryPolicy | None = None,
         callers: ChatCallerResolver | None = None,
         catalog: ChatModelCatalog | None = None,
+        credentials: CloudCredentials | None = None,
     ) -> None:
         pools = pools or PoolManager()
         self._tails = tails or TailRunner()
@@ -52,7 +54,10 @@ class ChatServices:
             producers=Producers(), orgs=OrgContexts(), group_models=GroupModelService()
         )
         self._catalog = catalog or ChatModelCatalog(pools=pools)
-        upstream = upstream or UpstreamChatClient()
+        # The app's one credentials cache: the proxy signs with it and the
+        # fleet's health probe asks it, so the two share every token.
+        self._credentials = credentials or CloudCredentials()
+        upstream = upstream or UpstreamChatClient(credentials=self._credentials)
         estimator = estimator or TokenEstimator()
         retry = retry or RetryPolicy()
         self._proxy = ChatProxy(
@@ -87,6 +92,11 @@ class ChatServices:
     @property
     def proxy(self) -> ChatProxy:
         return self._proxy
+
+    @property
+    def credentials(self) -> CloudCredentials:
+        """The cloud credentials every backend call and health probe of this app uses."""
+        return self._credentials
 
 
 def chat_services(request: Request) -> ChatServices:

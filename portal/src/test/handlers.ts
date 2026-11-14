@@ -5,6 +5,8 @@
  */
 import { http, HttpResponse } from 'msw'
 
+import type { BackendKindInfo } from '../types'
+
 const ME_DEFAULT = {
   user_id: 'demo-user-001',
   email: 'alex@ember.sh',
@@ -16,9 +18,7 @@ const ME_DEFAULT = {
   org_id: 'demo-org-001',
   org_slug: 'demo',
   org_display_name: 'Demo Org',
-  organizations: [
-    { id: 'demo-org-001', slug: 'demo', display_name: 'Demo Org', role: 'admin' },
-  ],
+  organizations: [{ id: 'demo-org-001', slug: 'demo', display_name: 'Demo Org', role: 'admin' }],
 }
 
 const UNLICENSED_MODULES = (
@@ -84,7 +84,7 @@ export const AUTH_METHODS = [
       { method: 'service_account_key', settings: [], secret: 'credential' },
     ],
   },
-]
+] satisfies BackendKindInfo[]
 
 export const defaultHandlers = [
   http.get('/v1/portal/me', () => HttpResponse.json(ME_DEFAULT)),
@@ -101,9 +101,7 @@ export const defaultHandlers = [
 
   // The free base with no paid modules: nothing to say about a licence,
   // and nobody to name as its licensee.
-  http.get('/v1/portal/licence/notice', () =>
-    HttpResponse.json({ warnings: [], customer: null, licence_id: null }),
-  ),
+  http.get('/v1/portal/licence/notice', () => HttpResponse.json({ warnings: [], customer: null, licence_id: null })),
   // What a super admin sees there: no file, and every module unlicensed.
   http.get('/v1/portal/licence', () => HttpResponse.json(NO_LICENCE)),
 
@@ -131,9 +129,7 @@ export const defaultHandlers = [
     }),
   ),
 
-  http.get('/v1/portal/groups', () =>
-    HttpResponse.json({ groups: [], total: 0 }),
-  ),
+  http.get('/v1/portal/groups', () => HttpResponse.json({ groups: [], total: 0 })),
   http.get('/v1/portal/groups/:groupId', () =>
     HttpResponse.json({
       id: 'g-1',
@@ -147,13 +143,9 @@ export const defaultHandlers = [
       entry_count: 0,
     }),
   ),
-  http.get('/v1/portal/groups/:groupId/members', () =>
-    HttpResponse.json({ members: [], total: 0 }),
-  ),
+  http.get('/v1/portal/groups/:groupId/members', () => HttpResponse.json({ members: [], total: 0 })),
   http.get('/v1/portal/group-memberships', () => HttpResponse.json({ memberships: [] })),
-  http.get('/v1/portal/groups/:groupId/entries', () =>
-    HttpResponse.json({ entries: [], total: 0 }),
-  ),
+  http.get('/v1/portal/groups/:groupId/entries', () => HttpResponse.json({ entries: [], total: 0 })),
   http.get('/v1/portal/me/group', () => HttpResponse.json(null)),
   // No app or extension has asked for a VM profile.
   http.get('/v1/portal/orgs/:orgId/vm-profile-requests', () => HttpResponse.json({ requests: [] })),

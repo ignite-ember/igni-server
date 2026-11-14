@@ -135,6 +135,7 @@ class TestInferenceNodeId:
         unusual one."""
         from app.db.sql.inference_nodes import InferenceNodeDB
         from app.db.sql.schemas.inference_node import NodeIdAlreadyRegistered
+        from app.services.ai.backend import InferenceBackend
         from tests.conftest import create_org, create_user
 
         await create_user(db, user_id='node-owner', email='node-owner@example.com')
@@ -142,20 +143,15 @@ class TestInferenceNodeId:
         await db.flush()
 
         nodes = InferenceNodeDB()
-        kwargs = dict(
-            org_id=str(org.id),
-            base_url='http://127.0.0.1:9',
-            models=['m'],
-            created_by_user_id='node-owner',
-        )
-        await nodes.create(node_id='dup-node', **kwargs)
+        backend = InferenceBackend(id='dup-node', base_url='http://127.0.0.1:9', models=['m'])
+        await nodes.create(backend, org_id=str(org.id), created_by_user_id='node-owner')
 
         # A domain error, not an HTTPException. The status code is the
         # router's to choose — see app/services/ai/pinned_nodes.py, which
         # turns it into a NodeIdTaken the portal router maps to 409 — and a caller
         # that is not an HTTP request can now catch this by name.
         with pytest.raises(NodeIdAlreadyRegistered) as caught:
-            await nodes.create(node_id='dup-node', **kwargs)
+            await nodes.create(backend, org_id=str(org.id), created_by_user_id='node-owner')
 
         assert caught.value.node_id == 'dup-node'
 
@@ -171,13 +167,12 @@ class TestInferenceNodeId:
         from sqlalchemy.exc import IntegrityError
 
         from app.db.sql.inference_nodes import InferenceNodeDB
+        from app.services.ai.backend import InferenceBackend
 
         with pytest.raises(IntegrityError):
             await InferenceNodeDB().create(
-                node_id='orphan-node',
+                InferenceBackend(id='orphan-node', base_url='http://127.0.0.1:9', models=['m']),
                 org_id=None,
-                base_url='http://127.0.0.1:9',
-                models=['m'],
                 created_by_user_id='nobody-has-this-id',
             )
 
