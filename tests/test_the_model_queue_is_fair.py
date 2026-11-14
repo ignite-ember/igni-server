@@ -12,8 +12,9 @@ import asyncio
 
 import pytest
 
+from app.services.ai.backend import BackendLease
 from app.services.ai.fair_queue import FairQueue, QueueFull, QueueTimeout
-from app.services.ai.schemas import BackendLease, NoBackendAvailableError
+from app.services.ai.schemas import NoBackendAvailableError
 
 pytestmark = pytest.mark.anyio
 

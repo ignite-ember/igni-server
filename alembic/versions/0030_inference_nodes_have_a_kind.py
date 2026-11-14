@@ -32,6 +32,9 @@ def upgrade() -> None:
     op.add_column('inference_nodes', sa.Column('region', sa.Text(), nullable=True))
     op.add_column('inference_nodes', sa.Column('project', sa.Text(), nullable=True))
     op.add_column('inference_nodes', sa.Column('auth', sa.Text(), nullable=True))
+    # Every row there is was a GPU node: its key, if it has one, is its method.
+    op.execute("UPDATE inference_nodes SET auth = CASE WHEN api_key IS NULL THEN 'none' ELSE 'api_key' END")
+    op.alter_column('inference_nodes', 'auth', nullable=False)
     op.add_column(
         'inference_nodes',
         sa.Column('auth_settings', postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),

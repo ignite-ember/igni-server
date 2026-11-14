@@ -25,6 +25,9 @@ from app.db.sql.models.org_membership import OrgMembership
 from app.db.sql.models.organization import Organization
 from app.db.sql.models.user import User
 from app.db.sql.tenancy import TenantSessions
+from app.services.ai.backend_provider import InferenceBackendProvider
+from app.services.ai.pool_manager import PoolManager
+from app.services.ai.schemas import HealthState, NodeHealth, RegisteredNode
 from app.services.auth.jwt_service import JWTService
 from app.services.identity.key_ring import KeyRing, ProcessSigningKeys
 from tests.egress_guard import EgressGuard, InternalNetwork
@@ -689,3 +692,50 @@ async def add_invited_member(
     db.add(mem)
     await db.commit()
     return mem
+
+
+# ── The inference fleet, with only the nodes a test adds ─────────────
+
+
+class NoRegistry:
+    """A node registry with nothing registered: the portal-added nodes are the whole fleet."""
+
+    async def list_nodes(self) -> list[RegisteredNode]:
+        return []
+
+    async def get(self, node_id: str) -> RegisteredNode | None:
+        return None
+
+
+@pytest.fixture
+def no_probing(monkeypatch):
+    """Every node answers its health probe.
+
+    Nodes in these tests have addresses that do not resolve; without this
+    a page render spends the probe timeout on each of them, and the test
+    measures httpx rather than the feature.
+    """
+
+    async def _all(self, backends):
+        return {b.id: NodeHealth(state=HealthState.HEALTHY) for b in backends}
+
+    monkeypatch.setattr('app.services.ai.health.NodeHealthProbe.check_all', _all)
+
+
+@pytest.fixture
+def only_pinned_nodes(monkeypatch):
+    """A pool with no static config and no registrations, so the nodes a test adds are all there is."""
+    PoolManager.forget()
+    PoolManager(provider=InferenceBackendProvider(path='', inline='', registry=NoRegistry()))
+    monkeypatch.setattr('app.services.ai.fleet_status.NodeRegistry', NoRegistry)
+    monkeypatch.setattr('app.services.ai.pinned_nodes.NodeRegistry', NoRegistry)
+    yield
+    PoolManager.forget()
+
+
+@pytest.fixture
+async def fleet_admin(db) -> tuple[dict[str, str], str]:
+    """A super admin's headers — changing the shared fleet is theirs (SER-32) — and their org's id."""
+    await create_user(db, user_id='admin-1', email='admin@test.com', is_super_admin=True)
+    org = await create_org(db, owner_user_id='admin-1', slug='acme', display_name='Acme')
+    return auth_header(make_token('admin-1', org_id=str(org.id))), str(org.id)

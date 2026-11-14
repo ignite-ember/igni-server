@@ -40,7 +40,7 @@ import sys
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TRACKER = _ROOT / 'docs/COMPLIANCE_TRACKER.md'
-_AI_SCHEMAS = _ROOT / 'app/services/ai/schemas.py'
+_AI_SCHEMAS = _ROOT / 'app/services/ai/backend.py'
 _OUTPUT = _ROOT / 'docs/SUPPLIERS.md'
 
 PLACEHOLDER = '`__ORGANISATION_TO_COMPLETE__`'

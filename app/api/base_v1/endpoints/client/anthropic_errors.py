@@ -12,36 +12,23 @@ Validation errors (422) are left as FastAPI writes them, for the reason
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
-from typing import Any
-
-from fastapi import HTTPException, Request, Response
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
 
+from app.api.base_v1.endpoints.client.shaped_errors import message_of, ShapedErrorRoute
 from app.api.base_v1.schema.messages import AnthropicErrorBody
 
 
 def anthropic_error(exc: HTTPException) -> JSONResponse:
     """One refusal, Anthropic-shaped."""
-    message = exc.detail if isinstance(exc.detail, str) else str(exc.detail or '')
     return JSONResponse(
         status_code=exc.status_code,
-        content=AnthropicErrorBody.of(message=message, status_code=exc.status_code).model_dump(),
+        content=AnthropicErrorBody.of(message=message_of(exc.detail), status_code=exc.status_code).model_dump(),
         headers=exc.headers,
     )
 
 
-class AnthropicCompatibleRoute(APIRoute):
+class AnthropicCompatibleRoute(ShapedErrorRoute):
     """A route whose ``HTTPException``\\ s come back Anthropic-shaped, dependencies' included."""
 
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        original = super().get_route_handler()
-
-        async def answer_in_anthropic_shape(request: Request) -> Response:
-            try:
-                return await original(request)
-            except HTTPException as exc:
-                return anthropic_error(exc)
-
-        return answer_in_anthropic_shape
+    render = staticmethod(anthropic_error)

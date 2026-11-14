@@ -13,9 +13,12 @@ or its ``credential`` (handed to the cloud's SDK).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from app.services.ai.providers.kinds import BackendKind
 
@@ -56,54 +59,64 @@ class AuthMethod(StrEnum):
 SecretSlot = Literal['api_key', 'credential'] | None
 
 
-@dataclass(frozen=True)
-class MethodSpec:
+class MethodSpec(BaseModel):
     """What one method needs: its settings, by name, and where its secret goes."""
+
+    model_config = ConfigDict(frozen=True)
 
     settings: tuple[str, ...] = ()
     secret: SecretSlot = None
-    #: Settings it takes but does not need.
+    #: Settings it takes but does not need: a role's external ID.
     optional: tuple[str, ...] = ()
 
 
+def _offered(*methods: tuple[AuthMethod, MethodSpec]) -> Mapping[AuthMethod, MethodSpec]:
+    """A kind's methods, read-only, in the order given."""
+    return MappingProxyType(dict(methods))
+
+
+_AZURE = _offered(
+    (AuthMethod.AMBIENT, MethodSpec()),
+    (AuthMethod.MANAGED_IDENTITY, MethodSpec(settings=('client_id',))),
+    (AuthMethod.CLIENT_SECRET, MethodSpec(settings=('tenant_id', 'client_id'), secret='credential')),
+    (AuthMethod.API_KEY, MethodSpec(secret='api_key')),
+)
+_VERTEX = _offered(
+    (AuthMethod.AMBIENT, MethodSpec()),
+    (AuthMethod.IMPERSONATE, MethodSpec(settings=('service_account',))),
+    (AuthMethod.SERVICE_ACCOUNT_KEY, MethodSpec(secret='credential')),
+)
+
 #: Each kind's methods, in the order the portal offers them; the first is the kind's default.
-METHODS: dict[BackendKind, dict[AuthMethod, MethodSpec]] = {
-    BackendKind.OPENAI: {
-        AuthMethod.NONE: MethodSpec(),
-        AuthMethod.API_KEY: MethodSpec(secret='api_key'),
-    },
-    BackendKind.AZURE_OPENAI: {
-        AuthMethod.AMBIENT: MethodSpec(),
-        AuthMethod.MANAGED_IDENTITY: MethodSpec(settings=('client_id',)),
-        AuthMethod.CLIENT_SECRET: MethodSpec(settings=('tenant_id', 'client_id'), secret='credential'),
-        AuthMethod.API_KEY: MethodSpec(secret='api_key'),
-    },
-    BackendKind.VERTEX_OPENAI: {
-        AuthMethod.AMBIENT: MethodSpec(),
-        AuthMethod.IMPERSONATE: MethodSpec(settings=('service_account',)),
-        AuthMethod.SERVICE_ACCOUNT_KEY: MethodSpec(secret='credential'),
-    },
-    BackendKind.ANTHROPIC: {
-        AuthMethod.API_KEY: MethodSpec(secret='api_key'),
-    },
-    BackendKind.BEDROCK: {
-        AuthMethod.AMBIENT: MethodSpec(),
-        AuthMethod.ASSUME_ROLE: MethodSpec(settings=('role_arn',), optional=('external_id',)),
-        AuthMethod.ACCESS_KEYS: MethodSpec(settings=('access_key_id',), secret='credential'),
-    },
-}
-# Claude on Vertex and in Foundry signs in exactly as the OpenAI-wire models there do.
-METHODS[BackendKind.VERTEX_ANTHROPIC] = METHODS[BackendKind.VERTEX_OPENAI]
-METHODS[BackendKind.AZURE_ANTHROPIC] = METHODS[BackendKind.AZURE_OPENAI]
+METHODS: Mapping[BackendKind, Mapping[AuthMethod, MethodSpec]] = MappingProxyType(
+    {
+        BackendKind.OPENAI: _offered(
+            (AuthMethod.NONE, MethodSpec()),
+            (AuthMethod.API_KEY, MethodSpec(secret='api_key')),
+        ),
+        BackendKind.AZURE_OPENAI: _AZURE,
+        BackendKind.VERTEX_OPENAI: _VERTEX,
+        BackendKind.ANTHROPIC: _offered((AuthMethod.API_KEY, MethodSpec(secret='api_key'))),
+        BackendKind.BEDROCK: _offered(
+            (AuthMethod.AMBIENT, MethodSpec()),
+            (AuthMethod.ASSUME_ROLE, MethodSpec(settings=('role_arn',), optional=('external_id',))),
+            (AuthMethod.ACCESS_KEYS, MethodSpec(settings=('access_key_id',), secret='credential')),
+        ),
+        # Claude on Vertex and in Foundry signs in exactly as the OpenAI-wire models there do.
+        BackendKind.VERTEX_ANTHROPIC: _VERTEX,
+        BackendKind.AZURE_ANTHROPIC: _AZURE,
+    }
+)
 
 
 def default_method(kind: BackendKind, *, has_api_key: bool, has_credential: bool) -> AuthMethod:
-    """The method a backend written without one means.
+    """The method an operator's backend definition means when it names none.
 
-    Configurations written before methods were named say it by what they
-    carry: a key means the key, a stored credential means the one method
-    that stores one, and nothing means nothing on a GPU node and the
-    server's own identity on a cloud.
+    A static backend list or a registering GPU node may leave the method
+    out and say it by what it carries: a key means the key, a stored
+    credential means the one method that stores one with no settings, and
+    nothing means no auth on a GPU node and the server's own identity on a
+    cloud. Stored rows always name theirs (migration 0030 backfilled it).
     """
     methods = METHODS[kind]
     if has_api_key and AuthMethod.API_KEY in methods:

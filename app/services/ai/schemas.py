@@ -16,230 +16,19 @@ acquire must be paired with a release.
 """
 
 from enum import StrEnum
-import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel
 
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.node_drain import NodeDrain
-from app.services.ai.providers.auth import AuthMethod, default_method, METHODS
 from app.services.ai.providers.kinds import BackendKind, Wire
-
-#: Anthropic's own API, for an ``anthropic`` backend that names no other address.
-ANTHROPIC_API = 'https://api.anthropic.com'
 
 # How long a lease may be held before the pool assumes its holder died.
 # Generous, because a large summarisation request against a loaded node
 # legitimately takes minutes — the cost of setting this too low is
 # over-subscribing a node, which is worse than briefly under-using it.
 DEFAULT_LEASE_TIMEOUT_SECONDS = 900
-
-
-class InferenceBackend(BaseModel):
-    """One inference endpoint the customer runs.
-
-    ``models`` is a list because a vLLM node started with
-    ``--enable-lora --lora-modules sql=... docs=...`` serves its base
-    model *and* every adapter as separate ids on the same process, and a
-    request picks between them with the ordinary ``model`` parameter.
-    Modelling that as one string per node would mean either a node per
-    adapter — three entries for one GPU, each with its own concurrency
-    gauge counting the same sequences — or adapters being unreachable.
-
-    They share weights, memory and the KV cache, so capacity and sticky
-    routing stay per node. Only *selection* is per model.
-    """
-
-    # A validation error names what is wrong, never the value: the value
-    # may be a key, a client secret or a service-account key.
-    model_config = ConfigDict(hide_input_in_errors=True)
-
-    id: str
-
-    # Who serves this backend. ``openai`` — the default, and every backend
-    # there was before kinds — is an OpenAI-compatible URL with an optional
-    # Bearer key. The cloud kinds are signed with the cloud's own
-    # credentials; see ``app/services/ai/providers``.
-    kind: BackendKind = BackendKind.OPENAI
-
-    # Given for every kind but ``vertex_openai``, whose address is built
-    # from ``project`` and ``region`` (see ``_vertex_has_an_address``).
-    base_url: str
-
-    # Where the model runs — Vertex AI and Bedrock — and, for Vertex, in which project.
-    region: str | None = None
-    project: str | None = None
-
-    # How requests to this backend are authenticated (``AuthMethod``); each
-    # kind offers its own set (``providers/auth.py``). Absent means what a
-    # configuration written before methods were named meant: see
-    # ``default_method``.
-    auth: AuthMethod | None = None
-
-    # The method's settings — not secret, shown back in the portal: an
-    # Azure client id and tenant, the service account to impersonate.
-    auth_settings: dict[str, str] = Field(default_factory=dict)
-
-    # The method's secret when it is handed to the cloud's SDK rather than
-    # sent as a key: an Azure app's client secret, a GCP service-account
-    # key (JSON). Kept encrypted, never returned.
-    credential: str | None = Field(default=None, repr=False)
-
-    # The name a caller asks for, mapped to the name the provider knows:
-    # an Azure deployment, ``google/gemini-2.5-pro`` on Vertex. A model
-    # absent here is sent as asked for. Callers, usage and stickiness only
-    # ever see the names in ``models``.
-    model_ids: dict[str, str] = Field(default_factory=dict)
-
-    # Written as ``models: [...]`` or, for the common single-model node,
-    # ``model: "..."``. Both end up here; see the validator below.
-    models: list[str] = Field(min_length=1)
-
-    # Optional, and that is deliberate. A vLLM node on a private network
-    # usually has no auth at all; requiring a token here would mean every
-    # Helm chart carrying a hardcoded "none". Customers who front their
-    # nodes with an auth proxy set it, and the pool passes it through.
-    api_key: str | None = None
-
-    # Concurrent requests this node will serve before the pool routes
-    # elsewhere. The right value is roughly the vLLM instance's
-    # ``--max-num-seqs``; going over does not fail, it just queues inside
-    # the node where we can no longer see or balance it.
-    max_concurrent: int = Field(default=64, gt=0)
-
-    # Whether the model accepts image input, so the chat router can skip a
-    # text-only node when the request carries images.
-    multimodal: bool = False
-
-    @model_validator(mode='before')
-    @classmethod
-    def _accept_a_single_model(cls, data):
-        """Let a one-model node be written ``model: "x"``.
-
-        Not legacy tolerance — most nodes serve exactly one model, and
-        making every config say ``models: ["x"]`` to express that would
-        be noise. A payload giving both wins on ``models``.
-        """
-        if isinstance(data, dict) and 'models' not in data and 'model' in data:
-            data = {**data, 'models': [data['model']]}
-        return data
-
-    @property
-    def primary_model(self) -> str:
-        """What a request that names no model gets.
-
-        The first entry, which for a LoRA node is the base model — the
-        adapters are opt-in by name.
-        """
-        return self.models[0]
-
-    def serves(self, model: str | None) -> bool:
-        """Whether this node can answer for ``model``.
-
-        ``None`` means the caller did not care, and every node can answer
-        that.
-        """
-        return model is None or model in self.models
-
-    @property
-    def wire(self) -> Wire:
-        """The API this backend speaks, and so the endpoint its models are served on."""
-        return self.kind.wire
-
-    @model_validator(mode='before')
-    @classmethod
-    def _addressed_by_its_kind(cls, data):
-        """Give a backend whose kind fixes its address the address its settings make.
-
-        Vertex AI is the same path in every project, so an operator names
-        the project and the region rather than pasting a URL; ``global``
-        has no regional prefix. Bedrock is one host per region. Anthropic's
-        own API has one address, so naming none means it. A base URL given
-        anyway wins: a private endpoint is still that provider.
-        """
-        if not isinstance(data, dict) or data.get('base_url'):
-            return data
-        kind, project, region = data.get('kind'), data.get('project'), data.get('region')
-        where = f'Backend {data.get("id")!r} ({kind})'
-        if kind in (BackendKind.VERTEX_OPENAI, BackendKind.VERTEX_ANTHROPIC):
-            if not (project and region):
-                raise ValueError(f'{where}: a Vertex backend needs its project and region')
-            host = (
-                'https://aiplatform.googleapis.com'
-                if region == 'global'
-                else f'https://{region}-aiplatform.googleapis.com'
-            )
-            path = 'endpoints/openapi' if kind == BackendKind.VERTEX_OPENAI else 'publishers/anthropic/models'
-            return {**data, 'base_url': f'{host}/v1/projects/{project}/locations/{region}/{path}'}
-        if kind == BackendKind.BEDROCK:
-            if not region:
-                raise ValueError(f'{where}: a Bedrock backend needs its region')
-            return {**data, 'base_url': f'https://bedrock-runtime.{region}.amazonaws.com'}
-        if kind == BackendKind.ANTHROPIC:
-            return {**data, 'base_url': ANTHROPIC_API}
-        return data
-
-    @model_validator(mode='after')
-    def _base_url_is_absolute(self) -> 'InferenceBackend':
-        if not self.base_url.startswith(('http://', 'https://')):
-            raise ValueError(f'Backend {self.id!r}: base_url must start with http:// or https://')
-        return self
-
-    @model_validator(mode='after')
-    def _fields_fit_the_kind(self) -> 'InferenceBackend':
-        """Refuse a field the kind or the method would silently ignore.
-
-        A Vertex backend given an ``api_key`` would send Google's token and
-        never the key, and an operator reading the configuration would
-        believe the key was in use. Saying so at load time is cheaper than
-        that afternoon.
-        """
-        where = f'Backend {self.id!r} ({self.kind.value})'
-        if self.kind.is_vertex and not (self.project and self.region):
-            raise ValueError(f'{where}: a Vertex backend needs its project and region')
-        if self.kind is BackendKind.BEDROCK and not self.region:
-            raise ValueError(f'{where}: a Bedrock backend needs its region')
-        if self.project and not self.kind.is_vertex:
-            raise ValueError(f'{where}: project is for a Vertex backend only')
-        if self.region and not self.kind.has_region:
-            raise ValueError(f'{where}: region is for a Vertex or Bedrock backend only')
-        if self.auth is None:
-            self.auth = default_method(self.kind, has_api_key=bool(self.api_key), has_credential=bool(self.credential))
-        _check_auth(where, self)
-        unknown = sorted(set(self.model_ids) - set(self.models))
-        if unknown:
-            raise ValueError(f'{where}: model_ids names models it does not serve: {", ".join(unknown)}')
-        return self
-
-
-def _check_auth(where: str, backend: InferenceBackend) -> None:
-    """The method is one the kind offers, with exactly its settings and its secret. Never echoes a secret."""
-    methods = METHODS[backend.kind]
-    assert backend.auth is not None
-    spec = methods.get(backend.auth)
-    if spec is None:
-        offered = ', '.join(method.value for method in methods)
-        raise ValueError(f'{where}: auth {backend.auth.value!r} is not offered for this kind; it takes {offered}')
-    method = f'{where} with {backend.auth.value} auth'
-    missing = [name for name in spec.settings if not backend.auth_settings.get(name)]
-    if missing:
-        raise ValueError(f'{method}: needs {", ".join(missing)}')
-    extra = sorted(set(backend.auth_settings) - set(spec.settings) - set(spec.optional))
-    if extra:
-        raise ValueError(f'{method}: does not take {", ".join(extra)}')
-    for slot in ('api_key', 'credential'):
-        given = bool(getattr(backend, slot))
-        if slot == spec.secret and not given:
-            raise ValueError(f'{method}: needs its {"key" if slot == "api_key" else "credential"}')
-        if slot != spec.secret and given:
-            raise ValueError(f'{method}: takes no {"api_key" if slot == "api_key" else "stored credential"}')
-    if backend.auth is AuthMethod.SERVICE_ACCOUNT_KEY:
-        try:
-            stored = json.loads(backend.credential or '')
-        except ValueError:
-            raise ValueError(f'{method}: the stored credential is not JSON') from None
-        if not isinstance(stored, dict) or stored.get('type') != 'service_account':
-            raise ValueError(f'{method}: the stored credential is not a Google service-account key')
 
 
 class RegisteredNode(BaseModel):
@@ -394,49 +183,6 @@ class BackendStatus(BaseModel):
         return self.in_flight / self.max_concurrent if self.max_concurrent else 0.0
 
 
-class BackendLease(BaseModel):
-    """A claim on one backend, held for the duration of one request.
-
-    ``lease_id`` is what releases it. Holding this rather than a bare
-    backend id is what makes the concurrency gauge correct: two
-    concurrent requests to the same node hold two leases, and releasing
-    one does not free the other.
-    """
-
-    lease_id: str
-    backend_id: str
-    base_url: str
-    model: str
-    api_key: str | None = None
-    kind: BackendKind = BackendKind.OPENAI
-    #: Bedrock signs for its region.
-    region: str | None = None
-    auth: AuthMethod = AuthMethod.NONE
-    auth_settings: dict[str, str] = Field(default_factory=dict)
-    credential: str | None = Field(default=None, repr=False)
-    model_ids: dict[str, str] = Field(default_factory=dict)
-
-    def upstream_model(self, model: str) -> str:
-        """The name the provider knows *model* by."""
-        return self.model_ids.get(model, model)
-
-    @property
-    def completions_url(self) -> str:
-        """The node's OpenAI-compatible chat completions endpoint."""
-        return f'{self.base_url.rstrip("/")}/chat/completions'
-
-    def auth_headers(self) -> dict[str, str]:
-        """Headers for a call to this node.
-
-        No ``Authorization`` when the node has no key: a vLLM on a private
-        network has no auth, and ``Bearer None`` would be a confusing 401.
-        """
-        headers = {'Content-Type': 'application/json'}
-        if self.api_key:
-            headers['Authorization'] = f'Bearer {self.api_key}'
-        return headers
-
-
 class NoBackendAvailableError(Exception):
     """Every backend is at its concurrency limit.
 
@@ -471,6 +217,18 @@ class AllBackendsDrainedError(Exception):
 ENDPOINTS: dict[Wire, str] = {Wire.OPENAI: '/v1/chat/completions', Wire.ANTHROPIC: '/v1/messages'}
 
 
+class NoBackendForWireError(Exception):
+    """No routable backend speaks the API a request came in on, and it named no model.
+
+    Distinct from a model nobody serves: the fix is a backend of that kind
+    — a Claude provider for ``/v1/messages`` — not a model name.
+    """
+
+    def __init__(self, wire: Wire) -> None:
+        self.wire = wire
+        super().__init__(f'No backend serves {ENDPOINTS[wire]} on this deployment')
+
+
 class ModelNotAvailableError(Exception):
     """The requested model is not served by any backend speaking this API.
 
@@ -486,8 +244,6 @@ class ModelNotAvailableError(Exception):
         listed = ', '.join(sorted(set(available))) if available else 'none'
         if served_on is not None:
             message = f'Model {model!r} is served on {ENDPOINTS[served_on]}, not here. Available here: {listed}'
-        elif not model:
-            message = 'No backend serves this API. Available here: none'
         else:
             message = f'Model {model!r} is not served by this deployment. Available: {listed}'
         super().__init__(message)

@@ -39,19 +39,19 @@ import redis.asyncio as aioredis
 
 from app.config import settings
 from app.db.redis.keys import key as redis_key
+from app.services.ai.backend import BackendLease, InferenceBackend
 from app.services.ai.backend_provider import InferenceBackendProvider
 from app.services.ai.health import combine
 from app.services.ai.node_drain import NodeDrainRegistry
 from app.services.ai.providers.kinds import Wire
 from app.services.ai.schemas import (
     AllBackendsDrainedError,
-    BackendLease,
     BackendStatus,
     DEFAULT_LEASE_TIMEOUT_SECONDS,
     HealthState,
-    InferenceBackend,
     ModelNotAvailableError,
     NoBackendAvailableError,
+    NoBackendForWireError,
     NodeHealth,
     NodeMetrics,
     RegisteredNode,
@@ -127,8 +127,9 @@ class InferenceBackendPool:
         *,
         model: str | None = None,
         exclude_backend_id: str | None = None,
+        wire: Wire = Wire.OPENAI,
     ):
-        """Hold a backend for the duration of one request.
+        """Hold a backend speaking *wire* for the duration of one request.
 
         The context-manager form is the one to reach for. Every acquire
         must be paired with a release or the node's gauge drifts upward
@@ -137,7 +138,7 @@ class InferenceBackendPool:
         up after each one would mean the gauge is wrong for as long as
         the lease timeout, which is exactly when scheduling matters.
         """
-        held = await self.acquire(user_id, model=model, exclude_backend_id=exclude_backend_id)
+        held = await self.acquire(user_id, model=model, exclude_backend_id=exclude_backend_id, wire=wire)
         try:
             yield held
         finally:
@@ -194,7 +195,7 @@ class InferenceBackendPool:
                 raise ModelNotAvailableError(model=model, available=available, served_on=elsewhere)
             candidates = matching
         elif not candidates:
-            raise ModelNotAvailableError(model='', available=[])
+            raise NoBackendForWireError(wire)
 
         if exclude_backend_id is not None:
             remaining = [backend for backend in candidates if backend.id != exclude_backend_id]
@@ -393,19 +394,7 @@ class InferenceBackendPool:
         # leases are outstanding; pruning handles the normal case.
         pipe.expire(key, self.lease_timeout * 2)
         await pipe.execute()
-        return BackendLease(
-            lease_id=lease_id,
-            backend_id=backend.id,
-            base_url=backend.base_url,
-            model=model or backend.primary_model,
-            api_key=backend.api_key,
-            kind=backend.kind,
-            region=backend.region,
-            auth=backend.auth,
-            auth_settings=dict(backend.auth_settings),
-            credential=backend.credential,
-            model_ids=dict(backend.model_ids),
-        )
+        return BackendLease.for_backend(backend, lease_id=lease_id, model=model or backend.primary_model)
 
     async def _flush_sticky_if_config_changed(
         self, redis_client: aioredis.Redis, backends: list[InferenceBackend]

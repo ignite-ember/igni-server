@@ -15,8 +15,10 @@ sends them to the token. Collapsing the two wastes the afternoon.
 import httpx
 import pytest
 
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.health import combine, NodeHealthProbe
-from app.services.ai.schemas import HealthState, InferenceBackend, NodeHealth
+from app.services.ai.providers.credentials import CloudCredentials
+from app.services.ai.schemas import HealthState, NodeHealth
 
 
 def _models(*ids: str) -> dict:
@@ -47,7 +49,7 @@ def probe(monkeypatch):
         async def set(self, key, value, ex=None):
             cache[key] = value
 
-    instance = NodeHealthProbe()
+    instance = NodeHealthProbe(credentials=CloudCredentials())
     monkeypatch.setattr(instance, '_get_redis', lambda: _async(FakeRedis()))
 
     def _respond(handler):

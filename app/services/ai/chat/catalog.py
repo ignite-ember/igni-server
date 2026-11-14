@@ -25,7 +25,7 @@ class ChatModelCatalog:
         """
         if _KEY not in self._cache:
             served = await self._pools.get_pool().models_by_wire()
-            self._cache[_KEY] = [ChatModelEntry(id=model_id, api=wire.value) for model_id, wire in served.items()]
+            self._cache[_KEY] = [ChatModelEntry(id=model_id, api=wire) for model_id, wire in served.items()]
         return list(self._cache[_KEY])
 
     def clear(self) -> None:

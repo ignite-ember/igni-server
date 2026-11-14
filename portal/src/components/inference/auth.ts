@@ -1,33 +1,38 @@
 import { useQuery } from '@tanstack/react-query'
 
 import client from '../../api/client'
-import type { AuthMethod, AuthMethodInfo, BackendKind, BackendKindInfo } from '../../types'
+import type {
+  AuthMethod,
+  AuthMethodInfo,
+  AuthSetting,
+  BackendKind,
+  BackendKindInfo,
+  PinnedNodeInput,
+} from '../../types'
 
-/** What the form calls each kind. */
-export const KIND_LABEL: Record<BackendKind, string> = {
-  openai: 'GPU node or OpenAI-compatible API',
-  azure_openai: 'Azure OpenAI',
-  vertex_openai: 'Google Vertex AI',
-  anthropic: 'Anthropic (Claude)',
-  bedrock: 'AWS Bedrock (Claude)',
-  vertex_anthropic: 'Google Vertex AI (Claude)',
-  azure_anthropic: 'Microsoft Foundry (Claude)',
+/** What the form says about one auth method: its name, the sentence under it, and its secret's field. */
+export interface MethodForm {
+  label: string
+  caption: string
+  /** What its secret is called, when it has one. */
+  secretLabel: string
+  /** A secret that is a document (a JSON key) rather than one line. */
+  secretIsMultiline: boolean
 }
 
-/** Kinds addressed by a Google Cloud project and region. */
-export function isVertex(kind: BackendKind): boolean {
-  return kind === 'vertex_openai' || kind === 'vertex_anthropic'
-}
-
-/** What the form calls each method, and the sentence under it. */
-export const METHOD_LABEL: Record<AuthMethod, { label: string; caption: string }> = {
+/** One row per method: the single place the portal's knowledge of a method lives. */
+export const METHODS: Record<AuthMethod, MethodForm> = {
   none: {
     label: 'None',
     caption: 'The node takes requests without a token, as a private-network vLLM usually does.',
+    secretLabel: '',
+    secretIsMultiline: false,
   },
   api_key: {
     label: 'API key',
     caption: 'A static key, stored encrypted and never shown again.',
+    secretLabel: 'API key',
+    secretIsMultiline: false,
   },
   ambient: {
     label: "The server's own identity",
@@ -35,69 +40,72 @@ export const METHOD_LABEL: Record<AuthMethod, { label: string; caption: string }
       'Nothing to enter: the identity igni server runs as — its IAM role on AWS (instance profile, task role ' +
       'or IRSA), Workload Identity or its service account on Google Cloud, its system-assigned managed ' +
       'identity on Azure. Grant that identity access to the model.',
+    secretLabel: '',
+    secretIsMultiline: false,
   },
   managed_identity: {
     label: 'User-assigned managed identity',
     caption: 'A managed identity attached to the machines igni server runs on, chosen by its client ID.',
+    secretLabel: '',
+    secretIsMultiline: false,
   },
   client_secret: {
     label: 'App registration (client secret)',
     caption: "For a server outside Azure: an Entra app registration's tenant, client ID and secret.",
+    secretLabel: 'Client secret',
+    secretIsMultiline: false,
   },
   impersonate: {
     label: 'Impersonate a service account',
     caption:
       "The server's own identity acts as this service account. Grant the server Service Account Token Creator on it.",
+    secretLabel: '',
+    secretIsMultiline: false,
   },
   service_account_key: {
     label: 'Service-account key',
     caption: "For a server outside Google Cloud: a service account's JSON key, stored encrypted.",
+    secretLabel: 'Service-account key (JSON)',
+    secretIsMultiline: true,
   },
   assume_role: {
     label: 'Assume an IAM role',
     caption:
       "The server's own AWS identity assumes this role, which may be in another account. Nothing secret is " +
       "stored. The role's trust policy must allow the server's identity, and the role needs bedrock:InvokeModel.",
+    secretLabel: '',
+    secretIsMultiline: false,
   },
   access_keys: {
     label: 'Access keys',
     caption: "For a server outside AWS: an IAM user's access key ID and secret access key, stored encrypted.",
+    secretLabel: 'Secret access key',
+    secretIsMultiline: false,
   },
 }
 
 /** Each setting's label and an example of its value. */
-export const SETTING_LABEL: Record<string, { label: string; placeholder: string }> = {
-  client_id: {
-    label: 'Client ID',
-    placeholder: '00000000-0000-0000-0000-000000000000',
-  },
-  tenant_id: {
-    label: 'Tenant ID',
-    placeholder: '00000000-0000-0000-0000-000000000000',
-  },
-  service_account: {
-    label: 'Service account',
-    placeholder: 'igni-server@my-project.iam.gserviceaccount.com',
-  },
+export const SETTINGS: Record<AuthSetting, { label: string; placeholder: string }> = {
+  client_id: { label: 'Client ID', placeholder: '00000000-0000-0000-0000-000000000000' },
+  tenant_id: { label: 'Tenant ID', placeholder: '00000000-0000-0000-0000-000000000000' },
+  service_account: { label: 'Service account', placeholder: 'igni-server@my-project.iam.gserviceaccount.com' },
   role_arn: { label: 'Role ARN', placeholder: 'arn:aws:iam::123456789012:role/igni-bedrock' },
   external_id: { label: 'External ID', placeholder: "only if the role's trust policy asks for one" },
   access_key_id: { label: 'Access key ID', placeholder: 'AKIA...' },
 }
 
-/** What a method's secret is called. */
-export function secretLabel(method: AuthMethod): string {
-  if (method === 'client_secret') return 'Client secret'
-  if (method === 'service_account_key') return 'Service-account key (JSON)'
-  if (method === 'access_keys') return 'Secret access key'
-  return 'API key'
-}
+/** What a secret field says when one is already stored and need not be typed again. */
+export const SECRET_STORED = 'stored — leave blank to keep it'
 
 /** The form's auth section, as one value. */
 export interface AuthDraft {
   method: AuthMethod
-  settings: Record<string, string>
+  settings: Partial<Record<AuthSetting, string>>
   secret: string
 }
+
+/** What the auth section sends: the method, its settings, and its secret when one was typed. */
+export type AuthFields = Pick<PinnedNodeInput, 'auth' | 'auth_settings' | 'api_key' | 'credential'>
 
 export const AUTH_METHODS_KEY = ['inference-auth-methods']
 
@@ -105,7 +113,7 @@ export const AUTH_METHODS_KEY = ['inference-auth-methods']
 export function useAuthMethods() {
   return useQuery<BackendKindInfo[]>({
     queryKey: AUTH_METHODS_KEY,
-    queryFn: () => client.get('/portal/inference/auth-methods').then((r) => r.data),
+    queryFn: () => client.get<BackendKindInfo[]>('/portal/inference/auth-methods').then((r) => r.data),
     staleTime: Infinity,
   })
 }
@@ -115,7 +123,7 @@ export function methodsOf(table: BackendKindInfo[] | undefined, kind: BackendKin
   return table?.find((row) => row.kind === kind)?.methods ?? []
 }
 
-/** A draft for *kind*'s default method, with nothing typed. */
+/** A draft for the first of *methods* — the kind's default — with nothing typed. */
 export function defaultAuth(methods: AuthMethodInfo[]): AuthDraft {
   return { method: methods[0]?.method ?? 'none', settings: {}, secret: '' }
 }
@@ -124,8 +132,7 @@ export function defaultAuth(methods: AuthMethodInfo[]): AuthDraft {
 export function authComplete(info: AuthMethodInfo | undefined, draft: AuthDraft, secretStored = false): boolean {
   if (!info) return false
   const settings = info.settings.every((name) => (draft.settings[name] ?? '').trim())
-  const secret = !info.secret || Boolean(draft.secret) || secretStored
-  return settings && secret
+  return settings && (!info.secret || Boolean(draft.secret) || secretStored)
 }
 
 /**
@@ -134,32 +141,16 @@ export function authComplete(info: AuthMethodInfo | undefined, draft: AuthDraft,
  * Only the method's own settings are sent, and its secret only when one
  * was typed: the API treats an absent secret as "keep the stored one".
  */
-export function authFields(info: AuthMethodInfo, draft: AuthDraft) {
-  const required = info.settings.map((name) => [name, (draft.settings[name] ?? '').trim()])
+export function authFields(info: AuthMethodInfo, draft: AuthDraft): AuthFields {
+  const auth_settings: Partial<Record<AuthSetting, string>> = {}
+  for (const name of info.settings) auth_settings[name] = (draft.settings[name] ?? '').trim()
   // An optional setting left blank is not sent at all.
-  const optional = (info.optional ?? [])
-    .map((name) => [name, (draft.settings[name] ?? '').trim()])
-    .filter(([, value]) => value)
-  const auth_settings = Object.fromEntries([...required, ...optional])
-  return {
-    auth: draft.method,
-    auth_settings,
-    ...(info.secret && draft.secret ? { [info.secret]: draft.secret } : {}),
+  for (const name of info.optional) {
+    const value = (draft.settings[name] ?? '').trim()
+    if (value) auth_settings[name] = value
   }
-}
-
-/** `name = provider-id` lines, one model each; a line without `=` maps nothing. */
-export function parseModelIds(text: string): Record<string, string> {
-  const pairs = text
-    .split('\n')
-    .map((line) => line.split('='))
-    .filter((parts) => parts.length === 2 && parts[0].trim() && parts[1].trim())
-    .map(([name, id]) => [name.trim(), id.trim()])
-  return Object.fromEntries(pairs)
-}
-
-export function modelIdsText(modelIds: Record<string, string>): string {
-  return Object.entries(modelIds)
-    .map(([name, id]) => `${name} = ${id}`)
-    .join('\n')
+  const fields: AuthFields = { auth: draft.method, auth_settings }
+  if (info.secret === 'api_key' && draft.secret) fields.api_key = draft.secret
+  if (info.secret === 'credential' && draft.secret) fields.credential = draft.secret
+  return fields
 }

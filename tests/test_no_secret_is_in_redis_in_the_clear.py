@@ -30,8 +30,8 @@ from app.config import settings
 from app.db.redis.auth_handoff import AuthHandoffDB
 from app.db.redis.authorization_codes import AuthorizationCodeDB, PendingAuthorization
 from app.db.redis.oauth_state import OAuthStateDB
+from app.services.ai.backend import InferenceBackend
 from app.services.ai.node_registry import NodeRegistry
-from app.services.ai.schemas import InferenceBackend
 from app.services.auth.otp_service import OtpPurpose, OTPService
 from tests.conftest import create_user
 

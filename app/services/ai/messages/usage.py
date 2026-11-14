@@ -18,6 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.services.ai.messages.events import AnthropicUsage, ClaudeEvent
 from app.services.ai.token_estimate import TokenEstimator
 
 
@@ -39,28 +40,30 @@ class MessagesUsage(BaseModel):
     def total_tokens(self) -> int:
         return self.input_tokens + self.output
 
-    def take(self, usage: dict[str, Any] | None) -> None:
+    def take(self, usage: AnthropicUsage) -> None:
         """Fold in a `usage` object; a field it does not carry keeps what was known."""
-        if not isinstance(usage, dict):
-            return
-        fields = {
-            'input_tokens': 'uncached',
-            'cache_read_input_tokens': 'cache_read',
-            'cache_creation_input_tokens': 'cache_write',
-            'output_tokens': 'output',
-        }
-        for wire, mine in fields.items():
-            value = usage.get(wire)
-            if isinstance(value, int):
-                setattr(self, mine, value)
+        for given, mine in (
+            (usage.input_tokens, 'uncached'),
+            (usage.cache_read_input_tokens, 'cache_read'),
+            (usage.cache_creation_input_tokens, 'cache_write'),
+            (usage.output_tokens, 'output'),
+        ):
+            if given is not None:
+                setattr(self, mine, given)
                 self.reported = True
 
     @classmethod
-    def of_message(cls, message: dict[str, Any]) -> MessagesUsage:
-        """The usage of a non-streamed answer."""
-        usage = cls()
-        usage.take(message.get('usage'))
-        return usage
+    def of(cls, usage: AnthropicUsage) -> MessagesUsage:
+        counted = cls()
+        counted.take(usage)
+        return counted
+
+    @classmethod
+    def estimated(cls, estimator: TokenEstimator, *, body: dict[str, Any], output: str = '') -> MessagesUsage:
+        """A rough count for a provider that reported none: the request as text, and the output."""
+        prompt = json.dumps([body.get('system'), body.get('messages')], ensure_ascii=False)
+        prompt_tokens, output_tokens = estimator.count(prompt, output)
+        return cls(uncached=prompt_tokens, output=output_tokens)
 
 
 class StreamTally(BaseModel):
@@ -75,17 +78,13 @@ class StreamTally(BaseModel):
     def duration(self) -> float:
         return time.monotonic() - self.t0
 
-    def absorb(self, event: dict[str, Any]) -> None:
-        """Read one event's usage, and its text."""
-        kind = event.get('type')
-        if kind == 'message_start':
-            self.usage.take((event.get('message') or {}).get('usage'))
-        elif kind == 'message_delta':
-            self.usage.take(event.get('usage'))
-        elif kind == 'content_block_delta':
-            delta = event.get('delta') or {}
-            if isinstance(delta.get('text'), str):
-                self.text.append(delta['text'])
+    def absorb(self, event: ClaudeEvent) -> None:
+        """Read one event's usage and its text — each event says what it carries."""
+        usage = event.usage()
+        if usage is not None:
+            self.usage.take(usage)
+        if piece := event.text():
+            self.text.append(piece)
 
     def start_over(self) -> None:
         """Another backend is about to answer: what this one produced is not billed."""
@@ -96,16 +95,4 @@ class StreamTally(BaseModel):
         """The provider's own count when it gave one; otherwise an estimate from the text."""
         if self.usage.reported:
             return self.usage
-        return estimate(estimator, body=body, output=''.join(self.text))
-
-
-def estimate(estimator: TokenEstimator, *, body: dict[str, Any], output: str = '') -> MessagesUsage:
-    """A rough count for a provider that reported none: the request as text, and the output."""
-    encoder = estimator.encoder
-    if encoder is None:
-        return MessagesUsage()
-    prompt = json.dumps([body.get('system'), body.get('messages')], ensure_ascii=False)
-    return MessagesUsage(
-        uncached=len(encoder.encode(prompt, disallowed_special=())),
-        output=len(encoder.encode(output, disallowed_special=())),
-    )
+        return MessagesUsage.estimated(estimator, body=body, output=''.join(self.text))

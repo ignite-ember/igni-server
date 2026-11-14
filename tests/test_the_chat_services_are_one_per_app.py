@@ -17,10 +17,10 @@ import httpx
 
 from app.api.base_v1.schema.chat import ChatCompletionRequest
 from app.config import settings
+from app.services.ai.backend import BackendLease
 from app.services.ai.chat.answers import CompletedAnswer
 from app.services.ai.chat.schemas import ChatCaller
 from app.services.ai.chat.services import chat_services, ChatServices
-from app.services.ai.schemas import BackendLease
 from tests.chat_proxy import NO_BACKOFF, on_transport, person, pools, SpyPool, UsageRows
 
 

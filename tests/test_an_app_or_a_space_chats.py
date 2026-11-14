@@ -16,9 +16,9 @@ from sqlalchemy import text
 
 from app.api.base_v1.schema.chat import CompletionUsage
 from app.config import settings
+from app.services.ai.backend import BackendLease
 from app.services.ai.chat.schemas import UpstreamCompletion
 from app.services.ai.chat.services import chat_services, ChatServices
-from app.services.ai.schemas import BackendLease
 from tests.cloud_world import CloudOrg
 from tests.conftest import auth_header
 

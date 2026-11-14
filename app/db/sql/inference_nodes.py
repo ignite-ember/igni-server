@@ -11,7 +11,9 @@ from sqlalchemy.exc import IntegrityError
 from app.db.sql import SQLAlchemySessionManager
 from app.db.sql.models.inference_node import InferenceNode
 from app.db.sql.schemas.inference_node import NodeChanges, NodeIdAlreadyRegistered
-from app.services.ai.schemas import InferenceBackend
+from app.services.ai.backend import InferenceBackend
+from app.services.ai.providers.auth import AuthMethod, default_method
+from app.services.ai.providers.kinds import BackendKind
 from app.services.secrets import decrypt_secret, encrypt_secret
 from app.utils.singleton import SingletonMeta
 
@@ -46,43 +48,39 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
 
     async def create(
         self,
+        backend: InferenceBackend,
         *,
-        node_id: str,
         # Nullable, matching the column: ``org_id`` is provenance rather
         # than ownership, so a node whose registering org has since been
         # deleted keeps working with no org recorded.
         org_id: str | None,
-        base_url: str,
-        models: list[str],
         created_by_user_id: str,
-        api_key: str | None = None,
-        max_concurrent: int = 64,
-        multimodal: bool = False,
-        kind: str = 'openai',
-        region: str | None = None,
-        project: str | None = None,
-        credential: str | None = None,
-        model_ids: dict[str, str] | None = None,
-        auth: str | None = None,
-        auth_settings: dict[str, str] | None = None,
     ) -> InferenceNode:
+        """Store *backend*, already validated, with its secrets encrypted."""
         async with self.session_scope() as session:
             node = InferenceNode(
                 id=str(uuid.uuid4()),
-                node_id=node_id,
+                node_id=backend.id,
                 org_id=org_id,
-                base_url=base_url,
-                models=list(models),
-                api_key=encrypt_secret(api_key) if api_key else None,
-                max_concurrent=max_concurrent,
-                multimodal=multimodal,
-                kind=kind,
-                region=region,
-                project=project,
-                credential=encrypt_secret(credential) if credential else None,
-                model_ids=dict(model_ids or {}),
-                auth=auth,
-                auth_settings=dict(auth_settings or {}),
+                base_url=backend.base_url,
+                models=list(backend.models),
+                api_key=encrypt_secret(backend.api_key) if backend.api_key else None,
+                max_concurrent=backend.max_concurrent,
+                multimodal=backend.multimodal,
+                kind=backend.kind.value,
+                region=backend.region,
+                project=backend.project,
+                credential=encrypt_secret(backend.credential) if backend.credential else None,
+                model_ids=dict(backend.model_ids),
+                # The method the router resolved, stored by name: clearing a
+                # secret later must not quietly change what it means.
+                auth=(
+                    backend.auth
+                    or default_method(
+                        backend.kind, has_api_key=bool(backend.api_key), has_credential=bool(backend.credential)
+                    )
+                ).value,
+                auth_settings=dict(backend.auth_settings),
                 created_by_user_id=created_by_user_id,
             )
             session.add(node)
@@ -102,7 +100,7 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
                 # matches the same way.
                 if _NODE_ID_INDEX not in str(getattr(exc, 'orig', exc)):
                     raise
-                raise NodeIdAlreadyRegistered(node_id) from exc
+                raise NodeIdAlreadyRegistered(backend.id) from exc
             await session.refresh(node)
             return node
 
@@ -146,7 +144,7 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             if changes.model_ids is not None:
                 node.model_ids = dict(changes.model_ids)
             if changes.auth is not None:
-                node.auth = changes.auth
+                node.auth = changes.auth.value
             if changes.auth_settings is not None:
                 node.auth_settings = dict(changes.auth_settings)
 
@@ -200,11 +198,11 @@ class InferenceNodeDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
             api_key=decrypt_secret(str(node.api_key)) if node.api_key else None,
             max_concurrent=int(node.max_concurrent),
             multimodal=bool(node.multimodal),
-            kind=str(node.kind or 'openai'),
+            kind=BackendKind(node.kind),
             region=node.region,
             project=node.project,
             credential=decrypt_secret(str(node.credential)) if node.credential else None,
-            model_ids=dict(node.model_ids or {}),
-            auth=node.auth,
-            auth_settings=dict(node.auth_settings or {}),
+            model_ids=dict(node.model_ids),
+            auth=AuthMethod(node.auth),
+            auth_settings=dict(node.auth_settings),
         )

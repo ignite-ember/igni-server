@@ -15,8 +15,9 @@ import httpx
 import pytest
 
 from app.config import settings
+from app.services.ai.backend import BackendLease
 from app.services.ai.chat.upstream_client import STREAM_TIMEOUT, UpstreamChatClient
-from app.services.ai.schemas import BackendLease
+from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.upstream import UpstreamError
 from tests.chat_proxy import drain, request
 
@@ -44,6 +45,11 @@ class _Recorder:
         return self.reply
 
 
+def _client(recorder: _Recorder, **options) -> UpstreamChatClient:
+    """A real client over *recorder*, with no cloud backend to sign for."""
+    return UpstreamChatClient(credentials=CloudCredentials(), client_factory=recorder, **options)
+
+
 class TestTheLeaseNamesTheNode:
     @pytest.mark.parametrize('base_url', ['http://node.invalid/v1', 'http://node.invalid/v1/'])
     def test_the_completions_url_has_one_slash(self, base_url):
@@ -66,7 +72,7 @@ class TestACompletion:
         recorder = _Recorder(httpx.Response(200, json=_COMPLETION))
         sent_request = request()
 
-        await UpstreamChatClient(client_factory=recorder).complete(
+        await _client(recorder).complete(
             lease=_lease(base_url='http://node.invalid/v1/', api_key='sk-node'), request=sent_request
         )
 
@@ -79,7 +85,7 @@ class TestACompletion:
     async def test_without_a_key_sends_no_authorization(self):
         recorder = _Recorder(httpx.Response(200, json=_COMPLETION))
 
-        await UpstreamChatClient(client_factory=recorder).complete(lease=_lease(), request=request())
+        await _client(recorder).complete(lease=_lease(), request=request())
 
         assert 'authorization' not in recorder.requests[0].headers
 
@@ -87,7 +93,7 @@ class TestACompletion:
         """The client lives as long as the app; the setting is read per call,
         as it was when the route built its own `httpx` client each time."""
         recorder = _Recorder(httpx.Response(200, json=_COMPLETION))
-        client = UpstreamChatClient(client_factory=recorder)
+        client = _client(recorder)
 
         monkeypatch.setattr(settings.ai, 'upstream_timeout', 12.5)
         await client.complete(lease=_lease(), request=request())
@@ -100,7 +106,7 @@ class TestACompletion:
         monkeypatch.setattr(settings.ai, 'upstream_timeout', 12.5)
         recorder = _Recorder(httpx.Response(200, json=_COMPLETION))
 
-        await UpstreamChatClient(client_factory=recorder, complete_timeout=5).complete(
+        await _client(recorder, complete_timeout=5).complete(
             lease=_lease(), request=request()
         )
 
@@ -113,7 +119,7 @@ class TestAStream:
         sent_request = request(stream=True)
 
         lines = await drain(
-            UpstreamChatClient(client_factory=recorder).stream(lease=_lease(api_key='sk-node'), request=sent_request)
+            _client(recorder).stream(lease=_lease(api_key='sk-node'), request=sent_request)
         )
 
         assert [line.frame for line in lines] == ['data: [DONE]\n\n']
@@ -129,7 +135,7 @@ class TestAStream:
 
         with caplog.at_level(logging.ERROR), pytest.raises(UpstreamError) as caught:
             await drain(
-                UpstreamChatClient(client_factory=recorder).stream(
+                _client(recorder).stream(
                     lease=_lease(), request=request([{'role': 'user', 'content': secret}], stream=True)
                 )
             )

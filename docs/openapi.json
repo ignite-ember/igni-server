@@ -1118,6 +1118,10 @@
           "secret": {
             "anyOf": [
               {
+                "enum": [
+                  "api_key",
+                  "credential"
+                ],
                 "type": "string"
               },
               {
@@ -1137,6 +1141,7 @@
         "required": [
           "method",
           "settings",
+          "optional",
           "secret"
         ],
         "title": "AuthMethodView",
@@ -1319,8 +1324,7 @@
             "type": "array"
           },
           "wire": {
-            "title": "Wire",
-            "type": "string"
+            "$ref": "#/components/schemas/Wire"
           }
         },
         "required": [
@@ -1775,9 +1779,8 @@
         "description": "One model the caller's effective key pool can serve.\n\nWe deliberately do NOT return the upstream provider ``base_url``\nhere — the CLI talks to igni Server's ``/chat/completions``\nendpoint, which proxies to whichever key+URL pair the pool picks.\nLeaking the upstream URL gives the client no useful information\n(it can't bypass the proxy) and exposes routing internals.",
         "properties": {
           "api": {
-            "default": "openai",
-            "title": "Api",
-            "type": "string"
+            "$ref": "#/components/schemas/Wire",
+            "default": "openai"
           },
           "id": {
             "title": "Id",
@@ -7978,16 +7981,10 @@
             "type": "object"
           },
           "base_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "default": "",
             "description": "Where the API is served, e.g. http://gpu-3:8000/v1, or an Azure resource's .../openai/v1. Built from project and region for vertex_openai.",
-            "title": "Base Url"
+            "title": "Base Url",
+            "type": "string"
           },
           "credential": {
             "anyOf": [
@@ -8004,7 +8001,7 @@
           "kind": {
             "$ref": "#/components/schemas/BackendKind",
             "default": "openai",
-            "description": "openai (a GPU node or any OpenAI-compatible API), azure_openai, or vertex_openai"
+            "description": "openai (a GPU node or any OpenAI-compatible API), or a cloud: azure_openai, vertex_openai, anthropic, bedrock, vertex_anthropic, azure_anthropic"
           },
           "max_concurrent": {
             "default": 64,
@@ -8052,7 +8049,7 @@
                 "type": "null"
               }
             ],
-            "description": "vertex_openai: the Google Cloud project",
+            "description": "Vertex AI: the Google Cloud project",
             "title": "Project"
           },
           "region": {
@@ -8064,7 +8061,7 @@
                 "type": "null"
               }
             ],
-            "description": "vertex_openai: where the model runs, e.g. europe-west4",
+            "description": "Vertex AI or Bedrock: where the model runs, e.g. europe-west4, eu-central-1",
             "title": "Region"
           }
         },
@@ -8225,11 +8222,10 @@
         "type": "object"
       },
       "PinnedNodeView": {
-        "description": "A node added here, as the portal gets it back.\n\nNo ``api_key``: it goes in and is never returned. An admin who needs\nto change it sets a new one.",
+        "description": "A node added here, as the portal gets it back.\n\nNo ``api_key`` or ``credential``: they go in and are never returned.\nAn admin who needs to change one sets a new one.",
         "properties": {
           "auth": {
-            "$ref": "#/components/schemas/AuthMethod",
-            "default": "none"
+            "$ref": "#/components/schemas/AuthMethod"
           },
           "auth_settings": {
             "additionalProperties": {
@@ -8251,13 +8247,11 @@
             "type": "boolean"
           },
           "has_credential": {
-            "default": false,
             "title": "Has Credential",
             "type": "boolean"
           },
           "kind": {
-            "$ref": "#/components/schemas/BackendKind",
-            "default": "openai"
+            "$ref": "#/components/schemas/BackendKind"
           },
           "max_concurrent": {
             "title": "Max Concurrent",
@@ -8315,7 +8309,14 @@
           "max_concurrent",
           "multimodal",
           "enabled",
-          "has_api_key"
+          "has_api_key",
+          "kind",
+          "region",
+          "project",
+          "model_ids",
+          "auth",
+          "auth_settings",
+          "has_credential"
         ],
         "title": "PinnedNodeView",
         "type": "object"
@@ -13546,6 +13547,15 @@
         ],
         "title": "Wakes",
         "type": "object"
+      },
+      "Wire": {
+        "description": "The API a backend speaks, and so the endpoint that serves its models.",
+        "enum": [
+          "openai",
+          "anthropic"
+        ],
+        "title": "Wire",
+        "type": "string"
       }
     },
     "securitySchemes": {

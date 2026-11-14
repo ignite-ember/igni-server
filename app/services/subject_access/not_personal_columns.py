@@ -112,6 +112,15 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'organizations.updated_at',
     }
     | {
+        # How a turn was served, not by whom: the backend that answered and
+        # its kind. The person is `chat_usage.user_id`, classified elsewhere.
+        'chat_usage.backend_id',
+        'chat_usage.kind',
+        # How much of the prompt the cache read and wrote: counts, of a turn.
+        'chat_usage.cache_read_tokens',
+        'chat_usage.cache_write_tokens',
+    }
+    | {
         # Credentials belonging to a *system* — a GPU node's proxy key.
         # Not personal data
         # in any sense, and not `withheld` either: `withheld` means "this
@@ -153,11 +162,6 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'producer_feed.owner_app_id',
         'producer_feed.incarnation',
         'chat_usage.app_id',
-        # Which backend served a turn, and its kind: the machine, not the person.
-        'chat_usage.backend_id',
-        'chat_usage.kind',
-        'chat_usage.cache_read_tokens',
-        'chat_usage.cache_write_tokens',
         'producer_feed.erase_after_days',
         'legal_holds.org_id',
         'app_legal_holds.org_id',
