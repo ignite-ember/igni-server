@@ -229,22 +229,30 @@ def _parse(raw: str | None, *, node_id: str) -> RegisteredNode | None:
     try:
         payload = json.loads(raw)
         sealed = payload.pop(_SEALED_API_KEY, None) if isinstance(payload, dict) else None
-        node = RegisteredNode.model_validate(payload)
     except (ValueError, json.JSONDecodeError):
         logger.warning('Discarding unreadable registration for node %s', node_id)
         return None
-    if not sealed:
-        # No key, or an entry written before F151 with the key in
-        # ``backend``: read as it is, and sealed by the next heartbeat's
-        # rewrite.
-        return node
+    if sealed:
+        # The key goes back into the backend before it is validated, not
+        # after: the backend names its auth method, and a method that
+        # takes a key is refused without one.
+        try:
+            payload['backend']['api_key'] = unseal(sealed)
+        except SecretDecryptError:
+            logger.error(
+                'Skipping registered inference node %s: its API key will not decrypt with any configured '
+                'SECRET_ENCRYPTION_KEY. It registers again after its next heartbeat.',
+                node_id,
+            )
+            return None
+        except (KeyError, TypeError):
+            logger.warning('Discarding unreadable registration for node %s', node_id)
+            return None
+    # No sealed key: no key at all, or an entry written before F151 with
+    # the key in ``backend``, read as it is and sealed by the next
+    # heartbeat's rewrite.
     try:
-        api_key = unseal(sealed)
-    except SecretDecryptError:
-        logger.error(
-            'Skipping registered inference node %s: its API key will not decrypt with any configured '
-            'SECRET_ENCRYPTION_KEY. It registers again after its next heartbeat.',
-            node_id,
-        )
+        return RegisteredNode.model_validate(payload)
+    except ValueError:
+        logger.warning('Discarding unreadable registration for node %s', node_id)
         return None
-    return node.model_copy(update={'backend': node.backend.model_copy(update={'api_key': api_key})})
