@@ -140,7 +140,10 @@ revocation.
 `app/services/ai/`. GPU nodes register themselves at runtime and carry
 their own `base_url` and key — which is why no model endpoint appears in
 the settings table below. Concurrency leases live in Redis so the ceiling
-holds across replicas; drains let a node finish what it started.
+holds across replicas; drains let a node finish what it started. A
+backend's `kind` (`app/services/ai/providers/`) says who serves it — the
+customer's GPUs, or a cloud the server signs for — and fixes its API:
+`/v1/chat/completions` or `/v1/messages`, never translated (DEC-16).
 
 ### The audit trail
 

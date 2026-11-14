@@ -233,6 +233,8 @@ these settings.
 | P5 | igni API, migration job, backup job | PostgreSQL | TCP 5432 (default, configurable) | All persistent state | Required |
 | P6 | igni API | Redis | TCP 6379 (default, configurable) | Concurrency leases, one-time codes, node registry | Required |
 | P7 | igni API | Inference nodes | HTTP(S) to each node's `base_url` (example in docs: 8000), configurable | Chat completions, `/v1/models` probe, `/metrics` scrape | Required |
+| P7a | igni API | A cloud model provider: Azure OpenAI or Foundry, Vertex AI (`<region>-aiplatform.googleapis.com`), Bedrock (`bedrock-runtime.<region>.amazonaws.com`), `api.anthropic.com` | HTTPS 443 | Chat completions and Messages for a backend of a cloud `kind`. **Only when an operator configures one; none by default.** Region pinned per backend | Optional |
+| P7b | igni API | The cloud's identity endpoints: instance metadata (`169.254.169.254`), AWS STS, Google OAuth, Microsoft Entra ID | HTTPS 443 (metadata: HTTP) | Tokens and keys for a cloud backend's auth method — the server's own identity, an assumed role or impersonated account, or a stored credential. Only for a cloud backend | Optional |
 | P8 | GPU start/stop automation | igni API `/v1/nodes` | HTTPS via edge | Register, heartbeat, deregister nodes. Endpoint returns 404 unless `NODE_REGISTRATION_TOKEN` is set | Optional |
 | P9 | igni API | Customer OIDC provider | HTTPS, configurable; `https` enforced outside dev | Discovery, token exchange, JWKS | Optional (required for SSO) |
 | P10 | Customer identity provider | igni API `/scim/v2` | HTTPS via edge | User provisioning and deprovisioning. 503 unless `SCIM_TOKEN` is set | Optional |
