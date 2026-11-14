@@ -419,6 +419,42 @@
         "title": "AgentToolsResponse",
         "type": "object"
       },
+      "AnthropicError": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "message"
+        ],
+        "title": "AnthropicError",
+        "type": "object"
+      },
+      "AnthropicErrorBody": {
+        "description": "The whole refusal body, as an Anthropic SDK parses it.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/AnthropicError"
+          },
+          "type": {
+            "default": "error",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "AnthropicErrorBody",
+        "type": "object"
+      },
       "ApiKeyList": {
         "properties": {
           "keys": {
@@ -1059,7 +1095,9 @@
           "managed_identity",
           "client_secret",
           "impersonate",
-          "service_account_key"
+          "service_account_key",
+          "assume_role",
+          "access_keys"
         ],
         "title": "AuthMethod",
         "type": "string"
@@ -1069,6 +1107,13 @@
         "properties": {
           "method": {
             "$ref": "#/components/schemas/AuthMethod"
+          },
+          "optional": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Optional",
+            "type": "array"
           },
           "secret": {
             "anyOf": [
@@ -1251,7 +1296,11 @@
         "enum": [
           "openai",
           "azure_openai",
-          "vertex_openai"
+          "vertex_openai",
+          "anthropic",
+          "bedrock",
+          "vertex_anthropic",
+          "azure_anthropic"
         ],
         "title": "BackendKind",
         "type": "string"
@@ -1725,6 +1774,11 @@
       "ChatModelEntry": {
         "description": "One model the caller's effective key pool can serve.\n\nWe deliberately do NOT return the upstream provider ``base_url``\nhere — the CLI talks to igni Server's ``/chat/completions``\nendpoint, which proxies to whichever key+URL pair the pool picks.\nLeaking the upstream URL gives the client no useful information\n(it can't bypass the proxy) and exposes routing internals.",
         "properties": {
+          "api": {
+            "default": "openai",
+            "title": "Api",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -5634,6 +5688,51 @@
           "source"
         ],
         "title": "McpServerRef",
+        "type": "object"
+      },
+      "MessagesRequest": {
+        "additionalProperties": true,
+        "description": "A Messages API request. Unknown fields pass through to the provider.",
+        "properties": {
+          "max_tokens": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000000.0,
+            "title": "Max Tokens",
+            "type": "integer"
+          },
+          "messages": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Messages",
+            "type": "array"
+          },
+          "model": {
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "stream": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stream"
+          }
+        },
+        "required": [
+          "model",
+          "messages",
+          "max_tokens"
+        ],
+        "title": "MessagesRequest",
         "type": "object"
       },
       "Meta": {
@@ -15725,6 +15824,116 @@
         "summary": "Approve",
         "tags": [
           "MCP approvals"
+        ]
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "description": "Anthropic's Messages API, proxied to the backends serving Claude: Anthropic, Bedrock, Vertex AI or Microsoft Foundry. Streams when the body says stream.",
+        "operationId": "create_message_v1_messages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessagesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicErrorBody"
+                }
+              }
+            },
+            "description": "No token, or one that is not current"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicErrorBody"
+                }
+              }
+            },
+            "description": "The caller may not use this model"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicErrorBody"
+                }
+              }
+            },
+            "description": "No backend serves this model on this API"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicErrorBody"
+                }
+              }
+            },
+            "description": "Every backend is busy; retry after Retry-After"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicErrorBody"
+                }
+              }
+            },
+            "description": "The provider did not answer usefully"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicErrorBody"
+                }
+              }
+            },
+            "description": "No backend is configured, or the server could not sign in to the provider"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnthropicErrorBody"
+                }
+              }
+            },
+            "description": "The provider stopped answering"
+          }
+        },
+        "summary": "Create Message",
+        "tags": [
+          "Chat"
         ]
       }
     },

@@ -310,6 +310,8 @@ class AuthMethodView(BaseModel):
     method: AuthMethod
     #: Settings the method needs, not secret.
     settings: list[str]
+    #: Settings it takes but does not need: a role's external ID.
+    optional: list[str] = Field(default_factory=list)
     #: Where its secret goes, `api_key` or `credential`, or none.
     secret: str | None
 
@@ -329,7 +331,12 @@ class BackendKindView(BaseModel):
                 kind=kind,
                 wire=kind.wire.value,
                 methods=[
-                    AuthMethodView(method=method, settings=list(spec.settings), secret=spec.secret)
+                    AuthMethodView(
+                        method=method,
+                        settings=list(spec.settings),
+                        optional=list(spec.optional),
+                        secret=spec.secret,
+                    )
                     for method, spec in methods.items()
                 ],
             )

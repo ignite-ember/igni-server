@@ -104,6 +104,8 @@ class ChatModelEntry(BaseModel):
     """
 
     id: str
+    #: The API it is served on: ``openai`` here, ``anthropic`` on ``/v1/messages``.
+    api: str = 'openai'
 
 
 class ChatModelsResponse(BaseModel):

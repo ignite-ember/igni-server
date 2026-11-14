@@ -49,8 +49,8 @@ export function AuthFields({
         <FormControl.Caption>{METHOD_LABEL[value.method].caption}</FormControl.Caption>
       </FormControl>
 
-      {info?.settings.map((name) => (
-        <FormControl key={name} required>
+      {[...(info?.settings ?? []), ...(info?.optional ?? [])].map((name) => (
+        <FormControl key={name} required={info?.settings.includes(name)}>
           <FormControl.Label>{SETTING_LABEL[name]?.label ?? name}</FormControl.Label>
           <TextInput
             value={value.settings[name] ?? ''}

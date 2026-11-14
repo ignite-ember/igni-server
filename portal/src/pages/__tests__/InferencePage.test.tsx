@@ -748,6 +748,84 @@ describe('Adding a cloud backend', () => {
     expect(sent[0]).not.toHaveProperty('base_url')
   })
 
+  test('Bedrock with an assumed role sends the role ARN, the external ID only when given, and no secret', async () => {
+    respondWith(status())
+    const sent = captureAdd()
+    renderWithProviders(<InferencePage />)
+    const user = await openAs(/aws bedrock/i)
+
+    expect(screen.queryByRole('textbox', { name: /endpoint/i })).not.toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: /region/i }), 'eu-central-1')
+    await user.type(screen.getByRole('textbox', { name: /^models/i }), 'claude-opus-5-5')
+    await user.type(
+      screen.getByRole('textbox', { name: /provider/i }),
+      'claude-opus-5-5 = eu.anthropic.claude-opus-5-5-v1:0',
+    )
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /authentication/i }),
+      screen.getByRole('option', { name: /assume an iam role/i }),
+    )
+    expect(submit()).toBeDisabled()
+    await user.type(screen.getByRole('textbox', { name: /role arn/i }), 'arn:aws:iam::123456789012:role/igni')
+    await user.type(screen.getByRole('textbox', { name: /^name/i }), 'bedrock-eu')
+    expect(submit()).toBeEnabled()
+    await user.click(submit())
+
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).toEqual({
+      node_id: 'bedrock-eu',
+      kind: 'bedrock',
+      region: 'eu-central-1',
+      models: ['claude-opus-5-5'],
+      model_ids: { 'claude-opus-5-5': 'eu.anthropic.claude-opus-5-5-v1:0' },
+      max_concurrent: 64,
+      multimodal: false,
+      auth: 'assume_role',
+      auth_settings: { role_arn: 'arn:aws:iam::123456789012:role/igni' },
+    })
+  })
+
+  test("an assumed role's external ID is sent when the trust policy asks for one", async () => {
+    respondWith(status())
+    const sent = captureAdd()
+    renderWithProviders(<InferencePage />)
+    const user = await openAs(/aws bedrock/i)
+
+    await user.type(screen.getByRole('textbox', { name: /region/i }), 'us-east-1')
+    await user.type(screen.getByRole('textbox', { name: /^models/i }), 'claude')
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /authentication/i }),
+      screen.getByRole('option', { name: /assume an iam role/i }),
+    )
+    await user.type(screen.getByRole('textbox', { name: /role arn/i }), 'arn:aws:iam::1:role/r')
+    await user.type(screen.getByRole('textbox', { name: /external id/i }), 'shared-ext-id')
+    await user.type(screen.getByRole('textbox', { name: /^name/i }), 'bedrock-us')
+    await user.click(submit())
+
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).toMatchObject({
+      auth: 'assume_role',
+      auth_settings: { role_arn: 'arn:aws:iam::1:role/r', external_id: 'shared-ext-id' },
+    })
+  })
+
+  test("Anthropic's own API needs no address, only its key", async () => {
+    respondWith(status())
+    const sent = captureAdd()
+    renderWithProviders(<InferencePage />)
+    const user = await openAs(/^anthropic/i)
+
+    await user.type(screen.getByRole('textbox', { name: /^models/i }), 'claude-opus-5-5')
+    expect(submit()).toBeDisabled()
+    await user.type(screen.getByLabelText(/api key/i), 'sk-ant-KEY')
+    await user.type(screen.getByRole('textbox', { name: /^name/i }), 'anthropic')
+    await user.click(submit())
+
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).toMatchObject({ kind: 'anthropic', auth: 'api_key', api_key: 'sk-ant-KEY' })
+    expect(sent[0]).not.toHaveProperty('base_url')
+  })
+
   test("the server's own identity needs nothing more", async () => {
     respondWith(status())
     const sent = captureAdd()

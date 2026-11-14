@@ -39,11 +39,17 @@ class AuthMethod(StrEnum):
     IMPERSONATE = 'impersonate'
     #: GCP: a service account's JSON key.
     SERVICE_ACCOUNT_KEY = 'service_account_key'
+    #: AWS: the server's identity assumes an IAM role, by its ARN (and an
+    #: external ID when the role's trust policy asks for one). Nothing secret
+    #: is stored, and the role may be in another account.
+    ASSUME_ROLE = 'assume_role'
+    #: AWS: an IAM user's access key ID and secret access key.
+    ACCESS_KEYS = 'access_keys'
 
     @property
     def is_token(self) -> bool:
-        """Signed with a token the server obtains, rather than a static key or nothing."""
-        return self not in (AuthMethod.NONE, AuthMethod.API_KEY)
+        """Signed with credentials the server obtains and renews, rather than static ones or nothing."""
+        return self not in (AuthMethod.NONE, AuthMethod.API_KEY, AuthMethod.ACCESS_KEYS)
 
 
 #: Where a method's secret lives on the backend, if it has one.
@@ -56,6 +62,8 @@ class MethodSpec:
 
     settings: tuple[str, ...] = ()
     secret: SecretSlot = None
+    #: Settings it takes but does not need.
+    optional: tuple[str, ...] = ()
 
 
 #: Each kind's methods, in the order the portal offers them; the first is the kind's default.
@@ -75,7 +83,18 @@ METHODS: dict[BackendKind, dict[AuthMethod, MethodSpec]] = {
         AuthMethod.IMPERSONATE: MethodSpec(settings=('service_account',)),
         AuthMethod.SERVICE_ACCOUNT_KEY: MethodSpec(secret='credential'),
     },
+    BackendKind.ANTHROPIC: {
+        AuthMethod.API_KEY: MethodSpec(secret='api_key'),
+    },
+    BackendKind.BEDROCK: {
+        AuthMethod.AMBIENT: MethodSpec(),
+        AuthMethod.ASSUME_ROLE: MethodSpec(settings=('role_arn',), optional=('external_id',)),
+        AuthMethod.ACCESS_KEYS: MethodSpec(settings=('access_key_id',), secret='credential'),
+    },
 }
+# Claude on Vertex and in Foundry signs in exactly as the OpenAI-wire models there do.
+METHODS[BackendKind.VERTEX_ANTHROPIC] = METHODS[BackendKind.VERTEX_OPENAI]
+METHODS[BackendKind.AZURE_ANTHROPIC] = METHODS[BackendKind.AZURE_OPENAI]
 
 
 def default_method(kind: BackendKind, *, has_api_key: bool, has_credential: bool) -> AuthMethod:

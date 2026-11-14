@@ -46,6 +46,7 @@ import {
   type AuthDraft,
   authComplete,
   authFields,
+  isVertex,
   KIND_LABEL,
   methodsOf,
   modelIdsText,
@@ -136,7 +137,8 @@ function NodeForm({ node }: { node: StoredNode }) {
   const [error, setError] = useState<string | null>(null);
   const kind = node.kind ?? "openai";
   const cloud = kind !== "openai";
-  const vertex = kind === "vertex_openai";
+  const vertex = isVertex(kind);
+  const bedrock = kind === "bedrock";
   const methods = methodsOf(useAuthMethods().data, kind);
   const method = methods.find((m) => m.method === auth.method);
   // Only the stored method's secret can be kept by leaving the field blank;
@@ -151,7 +153,9 @@ function NodeForm({ node }: { node: StoredNode }) {
         // A Vertex node's address is built from its project and region.
         ...(vertex
           ? { region: region.trim(), project: project.trim() }
-          : { base_url: baseUrl.trim() }),
+          : bedrock
+            ? { region: region.trim() }
+            : { base_url: baseUrl.trim() }),
         ...(cloud && method
           ? { ...authFields(method, auth), model_ids: parseModelIds(modelIds) }
           : {}),
@@ -191,8 +195,13 @@ function NodeForm({ node }: { node: StoredNode }) {
       setError("A Vertex backend needs its project and region.");
       return;
     }
+    if (bedrock && !region.trim()) {
+      setError("A Bedrock backend needs its region.");
+      return;
+    }
     if (
       !vertex &&
+      !bedrock &&
       !baseUrl.trim().startsWith("http://") &&
       !baseUrl.trim().startsWith("https://")
     ) {
@@ -265,6 +274,14 @@ function NodeForm({ node }: { node: StoredNode }) {
                 />
               </FormControl>
             </Stack>
+          ) : bedrock ? (
+            <FormControl required>
+              <FormControl.Label>Region</FormControl.Label>
+              <TextInput
+                value={region}
+                onChange={(e) => setRegion(e.currentTarget.value)}
+              />
+            </FormControl>
           ) : (
             <FormControl required>
               <FormControl.Label>Address</FormControl.Label>

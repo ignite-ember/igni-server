@@ -14,6 +14,7 @@ import pytest
 
 from app.api.base_v1.schema.chat import ChatModelEntry
 from app.services.ai.chat.catalog import ChatModelCatalog
+from app.services.ai.providers.kinds import Wire
 
 
 class _Pool:
@@ -27,6 +28,11 @@ class _Pool:
         if isinstance(answer, Exception):
             raise answer
         return answer  # type: ignore[return-value]
+
+    async def models_by_wire(self) -> dict[str, Wire]:
+        """The same answers, as the catalog reads them now: each model once, on its API."""
+        pairs = await self.list_available_models()
+        return {model: Wire.OPENAI for model, _base_url in pairs}
 
 
 def _catalog(pool: _Pool, *, ttl: float = 60) -> ChatModelCatalog:

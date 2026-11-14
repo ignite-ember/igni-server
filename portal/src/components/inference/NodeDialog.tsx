@@ -9,6 +9,7 @@ import { authComplete, defaultAuth, KIND_LABEL, methodsOf, useAuthMethods } from
 import { CloudBackendFields } from './CloudBackendFields'
 import { INFERENCE_STATUS_KEY } from './fleet'
 import {
+  addressComplete,
   EMPTY_DRAFT,
   modelsIn,
   type NodeDraft,
@@ -47,12 +48,7 @@ export function NodeDialog({ onClose }: { onClose: () => void }) {
     setProbe(null)
   }
 
-  const cloudReady =
-    modelsIn(draft.modelsText).length > 0 &&
-    (draft.kind === 'vertex_openai'
-      ? Boolean(draft.project.trim() && draft.region.trim())
-      : Boolean(draft.baseUrl.trim())) &&
-    authComplete(method, draft.auth)
+  const cloudReady = modelsIn(draft.modelsText).length > 0 && addressComplete(draft) && authComplete(method, draft.auth)
   const ready = Boolean(draft.nodeId) && (cloud ? cloudReady : Boolean(probe) && draft.models.length > 0)
 
   const check = useMutation({

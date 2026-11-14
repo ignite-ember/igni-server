@@ -24,9 +24,8 @@ class ChatModelCatalog:
         through this proxy, so the caller needs only the ids.
         """
         if _KEY not in self._cache:
-            pairs = await self._pools.get_pool().list_available_models()
-            ids = dict.fromkeys(model_id for model_id, _base_url in pairs)
-            self._cache[_KEY] = [ChatModelEntry(id=model_id) for model_id in ids]
+            served = await self._pools.get_pool().models_by_wire()
+            self._cache[_KEY] = [ChatModelEntry(id=model_id, api=wire.value) for model_id, wire in served.items()]
         return list(self._cache[_KEY])
 
     def clear(self) -> None:

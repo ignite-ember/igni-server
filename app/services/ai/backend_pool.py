@@ -42,6 +42,7 @@ from app.db.redis.keys import key as redis_key
 from app.services.ai.backend_provider import InferenceBackendProvider
 from app.services.ai.health import combine
 from app.services.ai.node_drain import NodeDrainRegistry
+from app.services.ai.providers.kinds import Wire
 from app.services.ai.schemas import (
     AllBackendsDrainedError,
     BackendLease,
@@ -148,8 +149,9 @@ class InferenceBackendPool:
         *,
         model: str | None = None,
         exclude_backend_id: str | None = None,
+        wire: Wire = Wire.OPENAI,
     ) -> BackendLease:
-        """Claim the least-loaded backend.
+        """Claim the least-loaded backend that speaks *wire*.
 
         Prefer :meth:`lease`. Use this directly only when the release
         point is genuinely elsewhere — a streaming response released when
@@ -176,14 +178,23 @@ class InferenceBackendPool:
         if not candidates:
             raise AllBackendsDrainedError([backend.id for backend in backends])
 
+        # A request speaks one API; a backend speaking the other could not
+        # answer it — Claude on /chat/completions, or a vLLM node on
+        # /v1/messages — so it is never a candidate, not even for "any model".
+        other = [backend for backend in candidates if backend.wire is not wire]
+        candidates = [backend for backend in candidates if backend.wire is wire]
+
         if model is not None:
             # Membership, not equality: a LoRA node serves its base model
             # and every adapter, and any of those names may be asked for.
             matching = [backend for backend in candidates if backend.serves(model)]
             if not matching:
                 available = [name for backend in candidates for name in backend.models]
-                raise ModelNotAvailableError(model=model, available=available)
+                elsewhere = next((backend.wire for backend in other if backend.serves(model)), None)
+                raise ModelNotAvailableError(model=model, available=available, served_on=elsewhere)
             candidates = matching
+        elif not candidates:
+            raise ModelNotAvailableError(model='', available=[])
 
         if exclude_backend_id is not None:
             remaining = [backend for backend in candidates if backend.id != exclude_backend_id]
@@ -208,6 +219,17 @@ class InferenceBackendPool:
         """Give a backend's slot back. Safe to call twice."""
         redis_client = await self._get_redis()
         await redis_client.zrem(f'{self._inflight_prefix}{lease.backend_id}', lease.lease_id)
+
+    async def models_by_wire(self) -> dict[str, Wire]:
+        """Each model a routable backend serves, once, and the API it is served on."""
+        backends = await self._provider.load()
+        drained = await self._drains.drained_ids()
+        served: dict[str, Wire] = {}
+        for backend in backends:
+            if backend.id not in drained:
+                for name in backend.models:
+                    served.setdefault(name, backend.wire)
+        return served
 
     async def list_available_models(self) -> list[tuple[str, str]]:
         """Distinct ``(model, base_url)`` pairs.
@@ -378,6 +400,7 @@ class InferenceBackendPool:
             model=model or backend.primary_model,
             api_key=backend.api_key,
             kind=backend.kind,
+            region=backend.region,
             auth=backend.auth,
             auth_settings=dict(backend.auth_settings),
             credential=backend.credential,

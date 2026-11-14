@@ -9,6 +9,12 @@ The methods (`providers/auth.py`) that sign with a token:
 * **client_secret** — Azure: an app registration's tenant, client id and secret.
 * **impersonate** — GCP: the server's identity acting as another service account.
 * **service_account_key** — GCP: a service account's JSON key.
+* **assume_role** — AWS: the server's identity assumes an IAM role (STS),
+  with an external ID when the role's trust policy asks for one.
+* **access_keys** — AWS: an IAM user's access key, stored encrypted.
+
+AWS does not take a bearer token: a Bedrock request is signed (SigV4)
+with the keys `aws` returns. They are cached and renewed the same way.
 
 The SDKs are imported inside the fetch, so a deployment with no cloud
 backend never loads them. A token is renewed `REFRESH_MARGIN_SECONDS`
@@ -21,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
@@ -45,10 +51,19 @@ AZURE_SCOPE = 'https://cognitiveservices.azure.com/.default'
 
 @dataclass(frozen=True)
 class AccessToken:
-    """A bearer token and the moment it stops working, in epoch seconds."""
+    """A credential — a bearer token, or AWS keys — and the moment it stops working, in epoch seconds."""
 
-    value: str
+    value: Any
     expires_at: float
+
+
+@dataclass(frozen=True)
+class AwsKeys:
+    """What a Bedrock request is signed with. Never in a repr: these are the secret."""
+
+    access_key_id: str
+    secret_access_key: str = field(repr=False)
+    session_token: str | None = field(default=None, repr=False)
 
 
 #: Gets a fresh token. Built once per backend, called on each renewal.
@@ -79,7 +94,7 @@ class CachedToken:
         self._token: AccessToken | None = None
         self._lock = asyncio.Lock()
 
-    async def value(self) -> str:
+    async def value(self) -> Any:
         """The current token, renewed first if it is within the margin of expiring."""
         async with self._lock:
             if self._token is None or self._token.expires_at - REFRESH_MARGIN_SECONDS <= self._clock():
@@ -160,13 +175,82 @@ def azure_fetch(method: AuthMethod) -> FetchFactory:
     return build
 
 
+#: How long the server's own AWS identity is reused when it says nothing of its expiry
+#: (keys in the environment): re-read every few minutes rather than never.
+_AWS_REREAD_SECONDS = 900
+
+#: A role session, as long as STS gives by default.
+_ROLE_SESSION_SECONDS = 3600
+
+
+def aws_fetch(method: AuthMethod) -> FetchFactory:
+    """Bedrock's keys for *method*: the server's own role, a role it assumes, or stored access keys."""
+
+    def build(settings: Mapping[str, str], secret: str | None) -> TokenFetch:
+        def obtained() -> AccessToken:
+            if method is AuthMethod.ACCESS_KEYS:
+                return AccessToken(
+                    value=AwsKeys(access_key_id=settings['access_key_id'], secret_access_key=secret or ''),
+                    expires_at=float('inf'),
+                )
+            import boto3
+
+            session = boto3.Session()
+            if method is AuthMethod.ASSUME_ROLE:
+                request: dict[str, Any] = {
+                    'RoleArn': settings['role_arn'],
+                    'RoleSessionName': 'igni-server',
+                    'DurationSeconds': _ROLE_SESSION_SECONDS,
+                }
+                if settings.get('external_id'):
+                    request['ExternalId'] = settings['external_id']
+                issued = session.client('sts').assume_role(**request)['Credentials']
+                return AccessToken(
+                    value=AwsKeys(
+                        access_key_id=issued['AccessKeyId'],
+                        secret_access_key=issued['SecretAccessKey'],
+                        session_token=issued['SessionToken'],
+                    ),
+                    expires_at=issued['Expiration'].timestamp(),
+                )
+            found = session.get_credentials()
+            if found is None:
+                raise RuntimeError("AWS's default chain found no credentials for the server")
+            frozen = found.get_frozen_credentials()
+            expiry = getattr(found, '_expiry_time', None)
+            return AccessToken(
+                value=AwsKeys(
+                    access_key_id=frozen.access_key, secret_access_key=frozen.secret_key, session_token=frozen.token
+                ),
+                expires_at=expiry.timestamp() if expiry is not None else time.time() + _AWS_REREAD_SECONDS,
+            )
+
+        async def fetch() -> AccessToken:
+            # boto3 is synchronous: STS and the instance metadata service are network calls.
+            return await asyncio.to_thread(obtained)
+
+        return fetch
+
+    return build
+
+
 _GOOGLE = (AuthMethod.AMBIENT, AuthMethod.IMPERSONATE, AuthMethod.SERVICE_ACCOUNT_KEY)
 _AZURE = (AuthMethod.AMBIENT, AuthMethod.MANAGED_IDENTITY, AuthMethod.CLIENT_SECRET)
+_AWS = (AuthMethod.AMBIENT, AuthMethod.ASSUME_ROLE, AuthMethod.ACCESS_KEYS)
 
-#: The token fetch for each kind and method that signs with a token.
+#: The fetch for each kind and method that signs with credentials the server obtains.
 _FETCHES: dict[tuple[BackendKind, AuthMethod], FetchFactory] = {
-    **{(BackendKind.VERTEX_OPENAI, method): google_fetch(method) for method in _GOOGLE},
-    **{(BackendKind.AZURE_OPENAI, method): azure_fetch(method) for method in _AZURE},
+    **{
+        (kind, method): google_fetch(method)
+        for kind in (BackendKind.VERTEX_OPENAI, BackendKind.VERTEX_ANTHROPIC)
+        for method in _GOOGLE
+    },
+    **{
+        (kind, method): azure_fetch(method)
+        for kind in (BackendKind.AZURE_OPENAI, BackendKind.AZURE_ANTHROPIC)
+        for method in _AZURE
+    },
+    **{(BackendKind.BEDROCK, method): aws_fetch(method) for method in _AWS},
 }
 
 
@@ -205,6 +289,15 @@ class CloudCredentials:
 
     async def bearer(self, signer: Signer) -> str:
         """The backend's current token. Raises `CredentialUnavailable` when the cloud gives none."""
+        return str(await self._obtain(signer))
+
+    async def aws(self, signer: Signer) -> AwsKeys:
+        """A Bedrock backend's current keys. Raises `CredentialUnavailable` when AWS gives none."""
+        keys = await self._obtain(signer)
+        assert isinstance(keys, AwsKeys)
+        return keys
+
+    async def _obtain(self, signer: Signer) -> Any:
         try:
             cached = self._cached(signer)
             return await cached.value()

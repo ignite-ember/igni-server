@@ -56,16 +56,27 @@ export interface NodeMetrics {
 }
 
 /** Who serves a backend: the customer's own (or anything OpenAI-compatible), or a cloud's. */
-export type BackendKind = 'openai' | 'azure_openai' | 'vertex_openai'
+export type BackendKind =
+  'openai' | 'azure_openai' | 'vertex_openai' | 'anthropic' | 'bedrock' | 'vertex_anthropic' | 'azure_anthropic'
 
 /** How requests to a backend are authenticated. Each kind offers its own set. */
 export type AuthMethod =
-  'none' | 'api_key' | 'ambient' | 'managed_identity' | 'client_secret' | 'impersonate' | 'service_account_key'
+  | 'none'
+  | 'api_key'
+  | 'ambient'
+  | 'managed_identity'
+  | 'client_secret'
+  | 'impersonate'
+  | 'service_account_key'
+  | 'assume_role'
+  | 'access_keys'
 
 /** One method a kind offers: the settings it needs (not secret) and where its secret goes. */
 export interface AuthMethodInfo {
   method: AuthMethod
   settings: string[]
+  /** Settings it takes but does not need, such as a role's external ID. */
+  optional?: string[]
   secret: 'api_key' | 'credential' | null
 }
 

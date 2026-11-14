@@ -156,6 +156,8 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         # Which backend served a turn, and its kind: the machine, not the person.
         'chat_usage.backend_id',
         'chat_usage.kind',
+        'chat_usage.cache_read_tokens',
+        'chat_usage.cache_write_tokens',
         'producer_feed.erase_after_days',
         'legal_holds.org_id',
         'app_legal_holds.org_id',

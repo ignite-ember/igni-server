@@ -8,6 +8,15 @@ export const KIND_LABEL: Record<BackendKind, string> = {
   openai: 'GPU node or OpenAI-compatible API',
   azure_openai: 'Azure OpenAI',
   vertex_openai: 'Google Vertex AI',
+  anthropic: 'Anthropic (Claude)',
+  bedrock: 'AWS Bedrock (Claude)',
+  vertex_anthropic: 'Google Vertex AI (Claude)',
+  azure_anthropic: 'Microsoft Foundry (Claude)',
+}
+
+/** Kinds addressed by a Google Cloud project and region. */
+export function isVertex(kind: BackendKind): boolean {
+  return kind === 'vertex_openai' || kind === 'vertex_anthropic'
 }
 
 /** What the form calls each method, and the sentence under it. */
@@ -23,8 +32,9 @@ export const METHOD_LABEL: Record<AuthMethod, { label: string; caption: string }
   ambient: {
     label: "The server's own identity",
     caption:
-      'Nothing to enter: the identity igni server runs as — Workload Identity or its service account on Google ' +
-      'Cloud, its system-assigned managed identity on Azure. Grant that identity access to the model.',
+      'Nothing to enter: the identity igni server runs as — its IAM role on AWS (instance profile, task role ' +
+      'or IRSA), Workload Identity or its service account on Google Cloud, its system-assigned managed ' +
+      'identity on Azure. Grant that identity access to the model.',
   },
   managed_identity: {
     label: 'User-assigned managed identity',
@@ -43,6 +53,16 @@ export const METHOD_LABEL: Record<AuthMethod, { label: string; caption: string }
     label: 'Service-account key',
     caption: "For a server outside Google Cloud: a service account's JSON key, stored encrypted.",
   },
+  assume_role: {
+    label: 'Assume an IAM role',
+    caption:
+      "The server's own AWS identity assumes this role, which may be in another account. Nothing secret is " +
+      "stored. The role's trust policy must allow the server's identity, and the role needs bedrock:InvokeModel.",
+  },
+  access_keys: {
+    label: 'Access keys',
+    caption: "For a server outside AWS: an IAM user's access key ID and secret access key, stored encrypted.",
+  },
 }
 
 /** Each setting's label and an example of its value. */
@@ -59,12 +79,16 @@ export const SETTING_LABEL: Record<string, { label: string; placeholder: string 
     label: 'Service account',
     placeholder: 'igni-server@my-project.iam.gserviceaccount.com',
   },
+  role_arn: { label: 'Role ARN', placeholder: 'arn:aws:iam::123456789012:role/igni-bedrock' },
+  external_id: { label: 'External ID', placeholder: "only if the role's trust policy asks for one" },
+  access_key_id: { label: 'Access key ID', placeholder: 'AKIA...' },
 }
 
 /** What a method's secret is called. */
 export function secretLabel(method: AuthMethod): string {
   if (method === 'client_secret') return 'Client secret'
   if (method === 'service_account_key') return 'Service-account key (JSON)'
+  if (method === 'access_keys') return 'Secret access key'
   return 'API key'
 }
 
@@ -111,7 +135,12 @@ export function authComplete(info: AuthMethodInfo | undefined, draft: AuthDraft,
  * was typed: the API treats an absent secret as "keep the stored one".
  */
 export function authFields(info: AuthMethodInfo, draft: AuthDraft) {
-  const auth_settings = Object.fromEntries(info.settings.map((name) => [name, (draft.settings[name] ?? '').trim()]))
+  const required = info.settings.map((name) => [name, (draft.settings[name] ?? '').trim()])
+  // An optional setting left blank is not sent at all.
+  const optional = (info.optional ?? [])
+    .map((name) => [name, (draft.settings[name] ?? '').trim()])
+    .filter(([, value]) => value)
+  const auth_settings = Object.fromEntries([...required, ...optional])
   return {
     auth: draft.method,
     auth_settings,

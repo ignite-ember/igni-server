@@ -35,6 +35,13 @@ class _FakePool:
                 seen.setdefault((name, c.base_url), None)
         return list(seen.keys())
 
+    async def models_by_wire(self):
+        served = {}
+        for c in self._configs:
+            for name in c.models:
+                served.setdefault(name, c.wire)
+        return served
+
 
 @pytest.fixture(autouse=True)
 def _fresh_catalog(app):

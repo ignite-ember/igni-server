@@ -17,6 +17,10 @@ dependencies = [
     # ImportError inside a background task, which is where email
     # failures are least visible.
     "boto3>=1.35.0",
+    # Declared because app/services/ai imports it directly: SigV4 signing and
+    # the event-stream decoder for Bedrock (messages/calls.py, upstream.py).
+    # It arrives with boto3 today; a direct import must not rely on that.
+    "botocore>=1.35.0",
     "fastapi>=0.115.8",
     "httpx>=0.28.1",
     # `/metrics`. Was present transitively through flower, and made

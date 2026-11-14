@@ -65,6 +65,8 @@ _ALLOWED_HOSTS: dict[str, str] = {
     # is no default backend of any cloud kind.
     'aiplatform.googleapis.com': "Vertex AI's global endpoint, only for a vertex_openai backend in region global",
     'cognitiveservices.azure.com': 'the Entra ID scope Azure OpenAI tokens are issued for, never fetched',
+    'api.anthropic.com': "Anthropic's API, only for an anthropic backend that names no other address",
+    'bedrock-runtime.': "the start of a Bedrock region's host, only for a bedrock backend",
     # Not hosts.
     'www.w3.org': 'an XML namespace in an SVG, never fetched',
     # Examples in docstrings, schema descriptions and log samples.

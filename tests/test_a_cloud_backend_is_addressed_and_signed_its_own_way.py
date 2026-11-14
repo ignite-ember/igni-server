@@ -105,6 +105,10 @@ class TestABackendSaysWhatItIs:
             BackendKind.OPENAI: Wire.OPENAI,
             BackendKind.AZURE_OPENAI: Wire.OPENAI,
             BackendKind.VERTEX_OPENAI: Wire.OPENAI,
+            BackendKind.ANTHROPIC: Wire.ANTHROPIC,
+            BackendKind.BEDROCK: Wire.ANTHROPIC,
+            BackendKind.VERTEX_ANTHROPIC: Wire.ANTHROPIC,
+            BackendKind.AZURE_ANTHROPIC: Wire.ANTHROPIC,
         }
 
     def test_a_vertex_backend_is_addressed_by_its_project_and_region(self):
@@ -128,7 +132,7 @@ class TestABackendSaysWhatItIs:
             InferenceBackend.model_validate(fields)
 
     def test_a_region_on_a_backend_that_is_not_vertex_is_refused(self):
-        with pytest.raises(ValidationError, match='Vertex backend only'):
+        with pytest.raises(ValidationError, match='Vertex or Bedrock backend only'):
             _backend(base_url='http://g/v1', region='r')
 
     def test_a_model_map_naming_a_model_not_served_is_refused(self):
@@ -147,6 +151,19 @@ class TestEachKindOffersItsMethods:
                 AuthMethod.API_KEY,
             ],
             BackendKind.VERTEX_OPENAI: [AuthMethod.AMBIENT, AuthMethod.IMPERSONATE, AuthMethod.SERVICE_ACCOUNT_KEY],
+            BackendKind.ANTHROPIC: [AuthMethod.API_KEY],
+            BackendKind.BEDROCK: [AuthMethod.AMBIENT, AuthMethod.ASSUME_ROLE, AuthMethod.ACCESS_KEYS],
+            BackendKind.VERTEX_ANTHROPIC: [
+                AuthMethod.AMBIENT,
+                AuthMethod.IMPERSONATE,
+                AuthMethod.SERVICE_ACCOUNT_KEY,
+            ],
+            BackendKind.AZURE_ANTHROPIC: [
+                AuthMethod.AMBIENT,
+                AuthMethod.MANAGED_IDENTITY,
+                AuthMethod.CLIENT_SECRET,
+                AuthMethod.API_KEY,
+            ],
         }
 
     @pytest.mark.parametrize(
@@ -364,8 +381,12 @@ class TestTheCallIsAddressedAndSigned:
 
     @pytest.mark.parametrize(
         ('auth', 'renewable'),
-        [(AuthMethod.NONE, False), (AuthMethod.API_KEY, False)]
-        + [(method, True) for method in AuthMethod if method not in (AuthMethod.NONE, AuthMethod.API_KEY)],
+        [(AuthMethod.NONE, False), (AuthMethod.API_KEY, False), (AuthMethod.ACCESS_KEYS, False)]
+        + [
+            (method, True)
+            for method in AuthMethod
+            if method not in (AuthMethod.NONE, AuthMethod.API_KEY, AuthMethod.ACCESS_KEYS)
+        ],
     )
     def test_only_a_token_the_server_got_is_worth_renewing(self, auth, renewable):
         assert renews(_lease(BackendKind.AZURE_OPENAI, auth)) is renewable

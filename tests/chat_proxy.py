@@ -42,7 +42,9 @@ class SpyPool:
     released: list[str] = field(default_factory=list)
     model: str = 'fake-model'
 
-    async def acquire(self, user_id: str, *, model: str | None = None, exclude_backend_id: str | None = None):
+    async def acquire(
+        self, user_id: str, *, model: str | None = None, exclude_backend_id: str | None = None, wire=None
+    ):
         nxt = len(self.acquired) + 1
         self.acquired.append(f'lease-{nxt}')
         return lease(nxt, model=self.model)

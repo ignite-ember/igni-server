@@ -84,6 +84,20 @@ export const AUTH_METHODS = [
       { method: 'service_account_key', settings: [], secret: 'credential' },
     ],
   },
+  {
+    kind: 'anthropic',
+    wire: 'anthropic',
+    methods: [{ method: 'api_key', settings: [], secret: 'api_key' }],
+  },
+  {
+    kind: 'bedrock',
+    wire: 'anthropic',
+    methods: [
+      { method: 'ambient', settings: [], secret: null },
+      { method: 'assume_role', settings: ['role_arn'], optional: ['external_id'], secret: null },
+      { method: 'access_keys', settings: ['access_key_id'], secret: 'credential' },
+    ],
+  },
 ]
 
 export const defaultHandlers = [

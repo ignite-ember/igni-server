@@ -25,6 +25,9 @@ from app.services.ai.node_drain import NodeDrain
 from app.services.ai.providers.auth import AuthMethod, default_method, METHODS
 from app.services.ai.providers.kinds import BackendKind, Wire
 
+#: Anthropic's own API, for an ``anthropic`` backend that names no other address.
+ANTHROPIC_API = 'https://api.anthropic.com'
+
 # How long a lease may be held before the pool assumes its holder died.
 # Generous, because a large summarisation request against a loaded node
 # legitimately takes minutes — the cost of setting this too low is
@@ -63,7 +66,7 @@ class InferenceBackend(BaseModel):
     # from ``project`` and ``region`` (see ``_vertex_has_an_address``).
     base_url: str
 
-    # Vertex AI only: where the model runs, and in which project.
+    # Where the model runs — Vertex AI and Bedrock — and, for Vertex, in which project.
     region: str | None = None
     project: str | None = None
 
@@ -145,25 +148,35 @@ class InferenceBackend(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _vertex_has_an_address(cls, data):
-        """Give a Vertex backend the address its project and region make.
+    def _addressed_by_its_kind(cls, data):
+        """Give a backend whose kind fixes its address the address its settings make.
 
-        Vertex AI's OpenAI-compatible endpoint is the same path in every
-        project, so an operator names the project and the region rather
-        than pasting a URL. ``global`` has no regional prefix. A base URL
-        given anyway wins: a private endpoint is still Vertex.
+        Vertex AI is the same path in every project, so an operator names
+        the project and the region rather than pasting a URL; ``global``
+        has no regional prefix. Bedrock is one host per region. Anthropic's
+        own API has one address, so naming none means it. A base URL given
+        anyway wins: a private endpoint is still that provider.
         """
-        if isinstance(data, dict) and data.get('kind') == BackendKind.VERTEX_OPENAI and not data.get('base_url'):
-            project, region = data.get('project'), data.get('region')
+        if not isinstance(data, dict) or data.get('base_url'):
+            return data
+        kind, project, region = data.get('kind'), data.get('project'), data.get('region')
+        where = f'Backend {data.get("id")!r} ({kind})'
+        if kind in (BackendKind.VERTEX_OPENAI, BackendKind.VERTEX_ANTHROPIC):
             if not (project and region):
-                where = f'Backend {data.get("id")!r} (vertex_openai)'
                 raise ValueError(f'{where}: a Vertex backend needs its project and region')
             host = (
                 'https://aiplatform.googleapis.com'
                 if region == 'global'
                 else f'https://{region}-aiplatform.googleapis.com'
             )
-            data = {**data, 'base_url': f'{host}/v1/projects/{project}/locations/{region}/endpoints/openapi'}
+            path = 'endpoints/openapi' if kind == BackendKind.VERTEX_OPENAI else 'publishers/anthropic/models'
+            return {**data, 'base_url': f'{host}/v1/projects/{project}/locations/{region}/{path}'}
+        if kind == BackendKind.BEDROCK:
+            if not region:
+                raise ValueError(f'{where}: a Bedrock backend needs its region')
+            return {**data, 'base_url': f'https://bedrock-runtime.{region}.amazonaws.com'}
+        if kind == BackendKind.ANTHROPIC:
+            return {**data, 'base_url': ANTHROPIC_API}
         return data
 
     @model_validator(mode='after')
@@ -182,11 +195,14 @@ class InferenceBackend(BaseModel):
         that afternoon.
         """
         where = f'Backend {self.id!r} ({self.kind.value})'
-        vertex = self.kind is BackendKind.VERTEX_OPENAI
-        if vertex and not (self.project and self.region):
+        if self.kind.is_vertex and not (self.project and self.region):
             raise ValueError(f'{where}: a Vertex backend needs its project and region')
-        if not vertex and (self.project or self.region):
-            raise ValueError(f'{where}: project and region are for a Vertex backend only')
+        if self.kind is BackendKind.BEDROCK and not self.region:
+            raise ValueError(f'{where}: a Bedrock backend needs its region')
+        if self.project and not self.kind.is_vertex:
+            raise ValueError(f'{where}: project is for a Vertex backend only')
+        if self.region and not self.kind.has_region:
+            raise ValueError(f'{where}: region is for a Vertex or Bedrock backend only')
         if self.auth is None:
             self.auth = default_method(self.kind, has_api_key=bool(self.api_key), has_credential=bool(self.credential))
         _check_auth(where, self)
@@ -208,7 +224,7 @@ def _check_auth(where: str, backend: InferenceBackend) -> None:
     missing = [name for name in spec.settings if not backend.auth_settings.get(name)]
     if missing:
         raise ValueError(f'{method}: needs {", ".join(missing)}')
-    extra = sorted(set(backend.auth_settings) - set(spec.settings))
+    extra = sorted(set(backend.auth_settings) - set(spec.settings) - set(spec.optional))
     if extra:
         raise ValueError(f'{method}: does not take {", ".join(extra)}')
     for slot in ('api_key', 'credential'):
@@ -393,6 +409,8 @@ class BackendLease(BaseModel):
     model: str
     api_key: str | None = None
     kind: BackendKind = BackendKind.OPENAI
+    #: Bedrock signs for its region.
+    region: str | None = None
     auth: AuthMethod = AuthMethod.NONE
     auth_settings: dict[str, str] = Field(default_factory=dict)
     credential: str | None = Field(default=None, repr=False)
@@ -449,11 +467,27 @@ class AllBackendsDrainedError(Exception):
         )
 
 
-class ModelNotAvailableError(Exception):
-    """The requested model is not served by any backend in this pool."""
+#: The endpoint each API is served on, for a refusal that names the right one.
+ENDPOINTS: dict[Wire, str] = {Wire.OPENAI: '/v1/chat/completions', Wire.ANTHROPIC: '/v1/messages'}
 
-    def __init__(self, model: str, available: list[str]) -> None:
+
+class ModelNotAvailableError(Exception):
+    """The requested model is not served by any backend speaking this API.
+
+    *served_on* is the other API when a backend there serves it: Claude
+    asked for on ``/chat/completions`` is told to use ``/v1/messages``
+    rather than that it does not exist.
+    """
+
+    def __init__(self, model: str, available: list[str], served_on: Wire | None = None) -> None:
         self.model = model
         self.available = available
+        self.served_on = served_on
         listed = ', '.join(sorted(set(available))) if available else 'none'
-        super().__init__(f'Model {model!r} is not served by this deployment. Available: {listed}')
+        if served_on is not None:
+            message = f'Model {model!r} is served on {ENDPOINTS[served_on]}, not here. Available here: {listed}'
+        elif not model:
+            message = 'No backend serves this API. Available here: none'
+        else:
+            message = f'Model {model!r} is not served by this deployment. Available: {listed}'
+        super().__init__(message)
