@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Banner, Button, Checkbox, Dialog, FormControl, Select, Stack, TextInput } from '@primer/react'
+import { Banner, Button, Checkbox, Dialog, FormControl, Select, Stack, Text, TextInput } from '@primer/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import client from '../../api/client'
@@ -10,7 +10,7 @@ import { CloudBackendFields } from './CloudBackendFields'
 import { INFERENCE_STATUS_KEY } from './fleet'
 import { GpuNodeFields } from './GpuNodeFields'
 import { isCloud, KINDS } from './kinds'
-import { draftReady, EMPTY_DRAFT, type NodeDraft, pinnedNodeOf } from './nodeDraft'
+import { draftProblem, EMPTY_DRAFT, type NodeDraft, pinnedNodeOf } from './nodeDraft'
 
 /**
  * Add a node: the customer's own GPU node, or a cloud's model service.
@@ -29,6 +29,7 @@ export function NodeDialog({ onClose }: { onClose: () => void }) {
   const method = methods.find((m) => m.method === draft.auth.method)
 
   const kinds: BackendKind[] = table.data?.map((row) => row.kind) ?? ['openai']
+  const problem = draftProblem(draft, method, { adding: true, probe })
 
   function chooseKind(value: string) {
     const kind = kinds.find((k) => k === value)
@@ -105,13 +106,18 @@ export function NodeDialog({ onClose }: { onClose: () => void }) {
           <FormControl.Label>Accepts images</FormControl.Label>
         </FormControl>
 
-        <Stack direction="horizontal" gap="condensed" justify="end">
+        <Stack direction="horizontal" gap="condensed" justify="end" align="center">
+          {problem && (
+            <Text size="small" className="inference-muted">
+              {problem}
+            </Text>
+          )}
           <Button onClick={onClose}>Cancel</Button>
           <Button
             variant="primary"
             onClick={() => add.mutate()}
             loading={add.isPending}
-            disabled={!draftReady(draft, method, probe) || add.isPending}
+            disabled={problem !== null || add.isPending}
           >
             Add node
           </Button>

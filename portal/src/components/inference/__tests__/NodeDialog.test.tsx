@@ -72,6 +72,21 @@ describe('Adding a cloud backend', () => {
     } satisfies PinnedNodeInput)
   })
 
+  test('Add says why it is disabled, and a provider-name line it cannot read keeps it so', async () => {
+    const user = await openAs(/azure openai/i)
+
+    expect(screen.getByText('The address has to start with http:// or https://')).toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: /endpoint/i }), 'https://acme.openai.azure.com/openai/v1')
+    await user.type(screen.getByRole('textbox', { name: /^models/i }), 'gpt-5')
+    await user.type(screen.getByRole('textbox', { name: /^name/i }), 'azure-eu')
+    await user.type(screen.getByRole('textbox', { name: /provider/i }), 'gpt-5: acme-gpt5')
+
+    expect(
+      screen.getByText('Each provider name is a line "name = provider-name", and this is not: gpt-5: acme-gpt5'),
+    ).toBeInTheDocument()
+    expect(submit()).toBeDisabled()
+  })
+
   test("Azure offers every method the server lists, the server's own identity first", async () => {
     await openAs(/azure openai/i)
 

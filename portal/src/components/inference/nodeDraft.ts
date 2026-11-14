@@ -74,14 +74,24 @@ export function modelsIn(text: string): string[] {
     .filter(Boolean)
 }
 
-/** `name = provider-id` lines, one model each; a line without exactly one `=` maps nothing. */
-export function parseModelIds(text: string): Record<string, string> {
+/** The provider names typed, and every non-blank line that is not `name = provider-id`. */
+export interface ModelIds {
+  pairs: Record<string, string>
+  rejected: string[]
+}
+
+/** `name = provider-id` lines, one model each. A line that is not one is kept as rejected, never dropped. */
+export function parseModelIds(text: string): ModelIds {
   const pairs: Record<string, string> = {}
-  for (const line of text.split('\n')) {
+  const rejected: string[] = []
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
     const parts = line.split('=')
     if (parts.length === 2 && parts[0].trim() && parts[1].trim()) pairs[parts[0].trim()] = parts[1].trim()
+    else rejected.push(line)
   }
-  return pairs
+  return { pairs, rejected }
 }
 
 export function modelIdsText(modelIds: Record<string, string>): string {
@@ -109,16 +119,39 @@ export function addressProblem(draft: NodeDraft): string | null {
     : 'The address has to start with http:// or https://'
 }
 
+/** What the form checking a draft knows: whether it adds, the GPU node's probe, whether a secret is stored. */
+export interface DraftCheck {
+  adding: boolean
+  probe?: NodeProbeResult | null
+  secretStored?: boolean
+}
+
 /**
- * Whether the add form can be sent. A GPU node needs its address checked and a
- * model picked from what it offered; a cloud backend needs its address, a model
- * and everything its auth method asks for — which cannot be known until the
- * server's table of methods has loaded.
+ * Why the draft cannot be sent yet, or null when it can — the one rule set the add
+ * dialog and the edit page both say, before the API would. Adding a GPU node needs
+ * its address checked and a model picked from what it offered; everything else
+ * needs its address and models typed. A cloud backend needs whatever its auth
+ * method asks for, which cannot be known until the server's table has loaded.
  */
-export function draftReady(draft: NodeDraft, method: AuthMethodInfo | undefined, probe: NodeProbeResult | null) {
-  if (!draft.nodeId) return false
-  if (!isCloud(draft.kind)) return probe !== null && draft.models.length > 0
-  return modelsIn(draft.modelsText).length > 0 && addressProblem(draft) === null && authComplete(method, draft.auth)
+export function draftProblem(draft: NodeDraft, method: AuthMethodInfo | undefined, check: DraftCheck): string | null {
+  if (check.adding && !isCloud(draft.kind)) {
+    if (!check.probe) return 'Check the node first, to see which models it serves.'
+    if (draft.models.length === 0) return 'Pick at least one model to route here.'
+  } else {
+    const address = addressProblem(draft)
+    if (address) return address
+    if (modelsIn(draft.modelsText).length === 0) {
+      return 'A node needs at least one model, or nothing will ever be routed to it.'
+    }
+  }
+  const [rejected] = parseModelIds(draft.modelIdsText).rejected
+  if (rejected !== undefined) return `Each provider name is a line "name = provider-name", and this is not: ${rejected}`
+  if (!(draft.maxConcurrent > 0)) return 'Concurrency has to be at least 1.'
+  if (isCloud(draft.kind) && !authComplete(method, draft.auth, check.secretStored ?? false)) {
+    return 'The chosen authentication needs every field filled in.'
+  }
+  if (check.adding && !draft.nodeId.trim()) return 'Give the node a name.'
+  return null
 }
 
 export function probeRequestOf(draft: NodeDraft): NodeProbeRequest {
@@ -142,7 +175,7 @@ export function pinnedNodeOf(draft: NodeDraft, method: AuthMethodInfo | undefine
     node_id: draft.nodeId,
     kind: draft.kind,
     models: modelsIn(draft.modelsText),
-    model_ids: parseModelIds(draft.modelIdsText),
+    model_ids: parseModelIds(draft.modelIdsText).pairs,
     max_concurrent: draft.maxConcurrent,
     multimodal: draft.multimodal,
     ...addressOf(draft),
@@ -164,7 +197,7 @@ export function pinnedNodeUpdateOf(draft: NodeDraft, method: AuthMethodInfo | un
   }
   if (!isCloud(draft.kind)) return draft.apiKey ? { ...update, api_key: draft.apiKey } : update
   if (!method) throw new Error('A cloud backend cannot be saved before its auth methods have loaded')
-  return { ...update, model_ids: parseModelIds(draft.modelIdsText), ...authFields(method, draft.auth) }
+  return { ...update, model_ids: parseModelIds(draft.modelIdsText).pairs, ...authFields(method, draft.auth) }
 }
 
 /** A name suggested from the address's first host label, or none for an unparseable URL. */

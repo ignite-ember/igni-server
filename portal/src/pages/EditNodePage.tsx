@@ -44,7 +44,6 @@ import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 import client from "../api/client";
 import { refusalOf } from "../api/refusal";
 import {
-  authComplete,
   methodsOf,
   SECRET_STORED,
   useAuthMethods,
@@ -53,9 +52,8 @@ import { CloudBackendFields } from "../components/inference/CloudBackendFields";
 import { INFERENCE_STATUS_KEY } from "../components/inference/fleet";
 import { isCloud, KINDS } from "../components/inference/kinds";
 import {
-  addressProblem,
   draftOf,
-  modelsIn,
+  draftProblem,
   type NodeDraft,
   pinnedNodeUpdateOf,
 } from "../components/inference/nodeDraft";
@@ -163,23 +161,10 @@ function NodeForm({ node }: { node: PinnedNode }) {
     onError: (err) => setError(refusalOf(err, "The node was not saved.")),
   });
 
-  /** Why the form cannot be saved yet, checked here as well as by the API so the answer comes first. */
-  function problem(): string | null {
-    const address = addressProblem(draft);
-    if (address) return address;
-    if (modelsIn(draft.modelsText).length === 0) {
-      return "A node needs at least one model, or nothing will ever be routed to it.";
-    }
-    if (!(draft.maxConcurrent > 0)) return "Concurrency has to be at least 1.";
-    if (cloud && !authComplete(method, draft.auth, secretStored)) {
-      return "The chosen authentication needs every field filled in.";
-    }
-    return null;
-  }
-
   function submit(event: React.FormEvent) {
     event.preventDefault();
-    const found = problem();
+    // Checked here as well as by the API, so the answer comes first.
+    const found = draftProblem(draft, method, { adding: false, secretStored });
     setError(found);
     if (!found) save.mutate();
   }
