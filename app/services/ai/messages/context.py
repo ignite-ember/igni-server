@@ -1,12 +1,12 @@
-"""One admitted Messages request: the caller, the body, and the lease on the backend serving it."""
+"""One admitted Messages request: the caller, the request, and the lease on the backend serving it."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from redis.exceptions import RedisError
 
+from app.api.base_v1.schema.messages import MessagesRequest
 from app.db.sql.chat_usage import ChatUsageDB
 from app.services.ai.backend import BackendLease
 from app.services.ai.backend_provider import BackendConfigError
@@ -46,13 +46,13 @@ class MessagesAdmission(ChatAdmission):
 
 
 class MessagesContext:
-    """One admitted request: its caller, its body, and the lease serving it — released once, however it ends."""
+    """One admitted request: its caller, the request, and the lease serving it — released once, however it ends."""
 
     def __init__(
         self,
         *,
         caller: ChatCaller,
-        body: dict[str, Any],
+        request: MessagesRequest,
         asked: CallerHeaders,
         lease: BackendLease,
         pools: PoolManager,
@@ -60,7 +60,7 @@ class MessagesContext:
         queue: FairQueue,
     ) -> None:
         self.caller = caller
-        self.body = body
+        self.request = request
         self.asked = asked
         self.lease = lease
         self._pools = pools
@@ -70,7 +70,7 @@ class MessagesContext:
     @property
     def model(self) -> str:
         """The model asked for, which is the model billed."""
-        return str(self.body['model'])
+        return self.request.model
 
     async def fail_over(self, *, failed_backend_id: str) -> None:
         """Hand the failed backend's slot back and take another's. `NoOtherNode` when there is none."""

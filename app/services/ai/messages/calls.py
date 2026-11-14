@@ -17,7 +17,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import json
 from types import MappingProxyType
-from typing import Any
 from urllib.parse import quote
 
 from botocore.auth import SigV4Auth
@@ -25,6 +24,7 @@ from botocore.awsrequest import AWSRequest
 from botocore.credentials import Credentials
 from pydantic import BaseModel, ConfigDict
 
+from app.api.base_v1.schema.messages import MessagesRequest
 from app.services.ai.backend import BackendLease
 from app.services.ai.providers.auth import AuthMethod
 from app.services.ai.providers.aws import AwsKeys
@@ -75,9 +75,9 @@ class ClaudeCall(ABC):
 
     @abstractmethod
     async def prepare(
-        self, lease: BackendLease, *, body: dict[str, Any], stream: bool, asked: CallerHeaders
+        self, lease: BackendLease, *, request: MessagesRequest, stream: bool, asked: CallerHeaders
     ) -> MessagesCall:
-        """The call for *body* to the backend behind *lease*."""
+        """The call for *request* to the backend behind *lease*."""
 
     async def _bearer(self, lease: BackendLease) -> str:
         try:
@@ -90,7 +90,7 @@ class AnthropicApiCall(ClaudeCall):
     """Anthropic's own API, a compatible gateway, or Claude in Microsoft Foundry."""
 
     async def prepare(
-        self, lease: BackendLease, *, body: dict[str, Any], stream: bool, asked: CallerHeaders
+        self, lease: BackendLease, *, request: MessagesRequest, stream: bool, asked: CallerHeaders
     ) -> MessagesCall:
         headers = {'content-type': 'application/json', 'anthropic-version': asked.version or ANTHROPIC_VERSION}
         if asked.betas:
@@ -99,7 +99,7 @@ class AnthropicApiCall(ClaudeCall):
             headers['x-api-key'] = lease.api_key or ''
         else:
             headers['authorization'] = f'Bearer {await self._bearer(lease)}'
-        payload = {**body, 'model': lease.upstream_model(str(body['model']))}
+        payload = {**request.wire(), 'model': lease.upstream_model(request.model)}
         url = f'{lease.base_url.rstrip("/")}/v1/messages'
         return MessagesCall(url=url, headers=headers, content=json.dumps(payload).encode())
 
@@ -108,14 +108,13 @@ class VertexClaudeCall(ClaudeCall):
     """Claude on Vertex AI: the model in the address, the version in the body."""
 
     async def prepare(
-        self, lease: BackendLease, *, body: dict[str, Any], stream: bool, asked: CallerHeaders
+        self, lease: BackendLease, *, request: MessagesRequest, stream: bool, asked: CallerHeaders
     ) -> MessagesCall:
         headers = {'content-type': 'application/json', 'authorization': f'Bearer {await self._bearer(lease)}'}
         if asked.betas:
             headers['anthropic-beta'] = ','.join(asked.betas)
-        payload = {key: value for key, value in body.items() if key != 'model'}
-        payload['anthropic_version'] = VERTEX_VERSION
-        model = quote(lease.upstream_model(str(body['model'])), safe='@')
+        payload = {**request.wire(without=frozenset({'model'})), 'anthropic_version': VERTEX_VERSION}
+        model = quote(lease.upstream_model(request.model), safe='@')
         action = 'streamRawPredict' if stream else 'rawPredict'
         url = f'{lease.base_url.rstrip("/")}/{model}:{action}'
         return MessagesCall(url=url, headers=headers, content=json.dumps(payload).encode())
@@ -125,14 +124,14 @@ class BedrockCall(ClaudeCall):
     """Claude on Bedrock: the model in the address, version and betas in the body, signed with SigV4."""
 
     async def prepare(
-        self, lease: BackendLease, *, body: dict[str, Any], stream: bool, asked: CallerHeaders
+        self, lease: BackendLease, *, request: MessagesRequest, stream: bool, asked: CallerHeaders
     ) -> MessagesCall:
-        payload = {key: value for key, value in body.items() if key not in ('model', 'stream')}
-        payload['anthropic_version'] = BEDROCK_VERSION
+        # The stream is chosen by the address, and Bedrock refuses a body that names it.
+        payload = {**request.wire(without=frozenset({'model', 'stream'})), 'anthropic_version': BEDROCK_VERSION}
         if asked.betas:
             payload['anthropic_beta'] = list(asked.betas)
         # URL-encoded, so an inference profile's ARN is one path segment.
-        model = quote(lease.upstream_model(str(body['model'])), safe='')
+        model = quote(lease.upstream_model(request.model), safe='')
         action = 'invoke-with-response-stream' if stream else 'invoke'
         url = f'{lease.base_url.rstrip("/")}/model/{model}/{action}'
         content = json.dumps(payload).encode()
@@ -167,10 +166,10 @@ class MessagesCalls:
         self._calls = {kind: call(credentials) for kind, call in CALLS.items()}
 
     async def prepare(
-        self, lease: BackendLease, *, body: dict[str, Any], stream: bool, asked: CallerHeaders
+        self, lease: BackendLease, *, request: MessagesRequest, stream: bool, asked: CallerHeaders
     ) -> MessagesCall:
-        """The call for *body* to the backend behind *lease*, as its kind makes it."""
-        return await self._calls[lease.kind].prepare(lease, body=body, stream=stream, asked=asked)
+        """The call for *request* to the backend behind *lease*, as its kind makes it."""
+        return await self._calls[lease.kind].prepare(lease, request=request, stream=stream, asked=asked)
 
     def forget(self, lease: BackendLease) -> None:
         """Drop the credential the provider just refused."""

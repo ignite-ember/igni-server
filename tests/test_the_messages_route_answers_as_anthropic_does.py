@@ -19,15 +19,18 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from app.api.base_v1.schema.messages import AnthropicErrorBody
+from app.api.base_v1.schema.messages import AnthropicErrorBody, MessagesRequest
 from app.config import settings
 from app.services.ai.backend import BackendLease
 from app.services.ai.chat.services import chat_services, ChatServices
 from app.services.ai.messages.upstream import MessagesUpstream
+from app.services.ai.messages.usage import MessagesUsage
 from app.services.ai.providers.auth import AuthMethod
 from app.services.ai.providers.kinds import BackendKind, Wire
-from tests.chat_proxy import pools, SpyPool
-from tests.cloud_fakes import FakeCloud
+from app.services.ai.token_estimate import TokenEstimator
+from tests.backend_pool_fakes import pool_over
+from tests.chat_proxy import NO_BACKOFF, pools, SpyPool
+from tests.cloud_fakes import backend, FakeCloud, ScriptedProvider
 from tests.conftest import auth_header, create_org, create_user, make_token
 
 _BODY = {'model': 'claude', 'max_tokens': 64, 'messages': [{'role': 'user', 'content': 'hi'}]}
@@ -42,6 +45,16 @@ _CLAUDE = BackendLease(
     auth=AuthMethod.API_KEY,
     api_key='sk-ant',
 )
+
+
+async def _usage_row(org_db, org: str) -> tuple:
+    async with org_db(org) as session:
+        row = (
+            await session.execute(
+                text('SELECT model, input_tokens, output_tokens, cache_read_tokens, backend_id, kind FROM chat_usage')
+            )
+        ).one()
+    return tuple(row)
 
 
 def _sse(*events: dict) -> str:
@@ -60,32 +73,15 @@ async def person(db) -> tuple[str, str]:
     return make_token('ada', org_id=str(org.id)), str(org.id)
 
 
-class _Provider:
-    """The provider behind every lease: answers each call in turn from *answers*, recording them."""
-
-    def __init__(self, *answers: httpx.Response) -> None:
-        self.answers = list(answers)
-        self.sent: list[httpx.Request] = []
-
-    def __call__(self, **kwargs) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(self._answer), **kwargs)
-
-    def _answer(self, request: httpx.Request) -> httpx.Response:
-        self.sent.append(request)
-        return self.answers[min(len(self.sent), len(self.answers)) - 1]
-
-
 @pytest.fixture
 def route(app):
     """The app's chat services over a pool of Claude backends and a scripted provider."""
-    made: list[tuple[SpyPool, _Provider]] = []
 
-    def build(*answers: httpx.Response) -> tuple[SpyPool, _Provider]:
-        pool, provider = SpyPool(acquired=[], on=_CLAUDE), _Provider(*answers)
+    def build(*answers: httpx.Response) -> tuple[SpyPool, ScriptedProvider]:
+        pool, provider = SpyPool(acquired=[], on=_CLAUDE), ScriptedProvider(*answers)
         upstream = MessagesUpstream(credentials=FakeCloud().credentials(), client_factory=provider)
-        services = ChatServices(pools=pools(pool), messages_upstream=upstream)  # type: ignore[arg-type]
+        services = ChatServices(pools=pools(pool), messages_upstream=upstream, retry=NO_BACKOFF)  # type: ignore[arg-type]
         app.dependency_overrides[chat_services] = lambda: services
-        made.append((pool, provider))
         return pool, provider
 
     yield build
@@ -108,15 +104,65 @@ class TestAMessage:
         assert resp.json() == message
         assert (pool.wires, pool.acquired, pool.released) == ([Wire.ANTHROPIC], ['lease-1'], ['lease-1'])
         assert provider.sent[0].headers['x-api-key'] == 'sk-ant'
-        async with org_db(org) as session:
-            row = (
-                await session.execute(
-                    text(
-                        'SELECT model, input_tokens, output_tokens, cache_read_tokens, backend_id, kind FROM chat_usage'
-                    )
-                )
-            ).one()
-        assert tuple(row) == ('claude', 105, 7, 100, 'claude-1', 'anthropic')
+        assert await _usage_row(org_db, org) == ('claude', 105, 7, 100, 'claude-1', 'anthropic')
+
+    async def test_fails_over_to_another_backend_and_gives_the_first_slot_back(self, client, person, route):
+        token, _org = person
+        message = {'type': 'message', 'content': [], 'usage': {'input_tokens': 1, 'output_tokens': 1}}
+        pool, provider = route(httpx.Response(503, text='busy'), httpx.Response(200, json=message))
+
+        resp = await client.post('/messages', headers=auth_header(token), json=_BODY)
+
+        assert (resp.status_code, resp.json()) == (200, message)
+        assert (len(provider.sent), pool.acquired, pool.released, pool.wires) == (
+            2,
+            ['lease-1', 'lease-2'],
+            ['lease-1', 'lease-2'],
+            [Wire.ANTHROPIC, Wire.ANTHROPIC],
+        )
+
+    async def test_that_every_backend_refuses_is_anthropics_error_and_every_slot_comes_back(
+        self, client, person, route
+    ):
+        token, _org = person
+        pool, _provider = route(httpx.Response(503, text='busy'))
+
+        resp = await client.post('/messages', headers=auth_header(token), json=_BODY)
+
+        assert (resp.status_code, resp.json()) == (
+            502,
+            AnthropicErrorBody.of(message='The inference node returned 503.', status_code=502).model_dump(),
+        )
+        assert (pool.acquired, pool.released) == (['lease-1', 'lease-2', 'lease-3'], ['lease-1', 'lease-2', 'lease-3'])
+
+    async def test_a_provider_that_counts_nothing_is_billed_the_estimate(self, client, person, route, org_db):
+        token, org = person
+        route(httpx.Response(200, json={'type': 'message', 'content': [{'type': 'text', 'text': 'hello'}]}))
+
+        resp = await client.post('/messages', headers=auth_header(token), json=_BODY)
+
+        assert resp.status_code == 200, resp.text
+        estimated = MessagesUsage.estimated(TokenEstimator(), request=MessagesRequest(**_BODY))
+        assert await _usage_row(org_db, org) == ('claude', estimated.input_tokens, 0, 0, 'claude-1', 'anthropic')
+
+    async def test_a_model_served_only_on_the_openai_api_is_refused_saying_where_it_is(
+        self, app, client, person, tmp_path
+    ):
+        token, _org = person
+        pool, _redis = pool_over([backend(id='gpu', base_url='http://gpu.invalid/v1', models=['qwen'])], tmp_path)
+        app.dependency_overrides[chat_services] = lambda: ChatServices(pools=pools(pool))  # type: ignore[arg-type]
+        try:
+            resp = await client.post('/messages', headers=auth_header(token), json={**_BODY, 'model': 'qwen'})
+        finally:
+            app.dependency_overrides.pop(chat_services, None)
+
+        assert (resp.status_code, resp.json()) == (
+            404,
+            AnthropicErrorBody.of(
+                message="Model 'qwen' is served on /v1/chat/completions, not here. Available here: none",
+                status_code=404,
+            ).model_dump(),
+        )
 
     async def test_an_anthropic_sdk_signs_in_with_x_api_key(self, client, person, route):
         token, _org = person
@@ -146,8 +192,8 @@ class TestAMessage:
 
 
 class TestAStream:
-    async def test_is_relayed_event_by_event(self, client, person, route):
-        token, _org = person
+    async def test_is_relayed_event_by_event_and_billed_with_the_cache(self, client, person, route, org_db):
+        token, org = person
         pool, _provider = route(httpx.Response(200, text=_sse(_START, _END)))
 
         resp = await client.post('/messages', headers=auth_header(token), json={**_BODY, 'stream': True})
@@ -155,6 +201,7 @@ class TestAStream:
         assert resp.status_code == 200
         assert resp.text == _sse(_START, _END)
         assert pool.released == ['lease-1']
+        assert await _usage_row(org_db, org) == ('claude', 105, 7, 100, 'claude-1', 'anthropic')
 
     async def test_fails_over_before_its_first_event_and_gives_the_first_slot_back(self, client, person, route):
         token, _org = person

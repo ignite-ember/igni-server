@@ -15,6 +15,32 @@ VERTEX = {
     'max_concurrent': 200,
 }
 
+#: Claude on Bedrock, signed with the server's own role.
+BEDROCK = {
+    'node_id': 'bedrock-eu',
+    'kind': 'bedrock',
+    'region': 'eu-central-1',
+    'models': ['claude-opus-5-5'],
+    'auth': 'ambient',
+}
+
+#: Claude on Vertex AI, addressed by its project and region.
+VERTEX_CLAUDE = {
+    'node_id': 'vertex-claude',
+    'kind': 'vertex_anthropic',
+    'project': 'acme-ai',
+    'region': 'us-east5',
+    'models': ['claude-opus-5-5'],
+}
+
+#: Anthropic's own API, with its key.
+ANTHROPIC = {
+    'node_id': 'anthropic',
+    'kind': 'anthropic',
+    'models': ['claude-opus-5-5'],
+    'api_key': 'sk-ant',
+}
+
 AZURE = {
     'node_id': 'azure-eu',
     'kind': 'azure_openai',

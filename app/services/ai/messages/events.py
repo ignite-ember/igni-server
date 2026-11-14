@@ -8,7 +8,7 @@ adds to the tally (`StreamTally`), so nothing dispatches on its type.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
@@ -113,3 +113,16 @@ class ProviderMessage(BaseModel):
 
     type: Literal['message']
     usage: AnthropicUsage = Field(default_factory=AnthropicUsage)
+
+
+class ProviderReply(BaseModel):
+    """A non-streamed answer: what the server reads of it, and the JSON as the provider sent it.
+
+    The JSON is forwarded untouched — Claude's fields this server does not
+    model must reach the caller as they came — so it stays a raw object.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    message: ProviderMessage
+    sent: dict[str, Any]

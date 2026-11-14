@@ -61,7 +61,7 @@ class MessagesStream:
             closing = False
             try:
                 async with aclosing(
-                    self._upstream.stream(lease=self._ctx.lease, body=self._ctx.body, asked=self._ctx.asked)
+                    self._upstream.stream(lease=self._ctx.lease, request=self._ctx.request, asked=self._ctx.asked)
                 ) as events:
                     async for event in events:
                         if event.event is not None:
@@ -101,7 +101,7 @@ class MessagesStream:
                 await attempts.aclose()
             except Exception as exc:  # noqa: BLE001 — a failed close must never cost the usage row
                 logger.warning('Closing the upstream stream failed: %r', exc)
-            usage = self._tally.settle(estimator=self._estimator, body=self._ctx.body)
+            usage = self._tally.settle(estimator=self._estimator, request=self._ctx.request)
             await self._ctx.log_usage(usage, duration=self._tally.duration, stream=True)
         finally:
             await self._ctx.release()

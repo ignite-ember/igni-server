@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.api.base_v1.schema.messages import MessagesRequest
 from app.services.ai.messages.events import AnthropicUsage, ClaudeEvent
 from app.services.ai.token_estimate import TokenEstimator
 
@@ -59,9 +59,9 @@ class MessagesUsage(BaseModel):
         return counted
 
     @classmethod
-    def estimated(cls, estimator: TokenEstimator, *, body: dict[str, Any], output: str = '') -> MessagesUsage:
+    def estimated(cls, estimator: TokenEstimator, *, request: MessagesRequest, output: str = '') -> MessagesUsage:
         """A rough count for a provider that reported none: the request as text, and the output."""
-        prompt = json.dumps([body.get('system'), body.get('messages')], ensure_ascii=False)
+        prompt = json.dumps([request.system, request.messages], ensure_ascii=False)
         prompt_tokens, output_tokens = estimator.count(prompt, output)
         return cls(uncached=prompt_tokens, output=output_tokens)
 
@@ -91,8 +91,8 @@ class StreamTally(BaseModel):
         self.usage = MessagesUsage()
         self.text.clear()
 
-    def settle(self, *, estimator: TokenEstimator, body: dict[str, Any]) -> MessagesUsage:
+    def settle(self, *, estimator: TokenEstimator, request: MessagesRequest) -> MessagesUsage:
         """The provider's own count when it gave one; otherwise an estimate from the text."""
         if self.usage.reported:
             return self.usage
-        return MessagesUsage.estimated(estimator, body=body, output=''.join(self.text))
+        return MessagesUsage.estimated(estimator, request=request, output=''.join(self.text))

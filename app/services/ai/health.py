@@ -56,7 +56,6 @@ from app.config import settings
 from app.db.redis.keys import key as redis_key
 from app.services.ai import metrics as node_metrics
 from app.services.ai.backend import InferenceBackend
-from app.services.ai.providers.auth import AuthMethod
 from app.services.ai.providers.credentials import CloudCredentials
 from app.services.ai.providers.tokens import CredentialUnavailable
 from app.services.ai.schemas import HealthState, NodeHealth, NodeMetrics, ProbedNode
@@ -80,16 +79,6 @@ _HEARTBEAT_GRACE_SECONDS = 180
 # Named because two places test for it: the health verdict shows it, and
 # discovery turns it into "you need to enter a token".
 _REJECTED_CREDENTIALS = 'The node rejected our credentials'
-
-
-#: How the health detail names each token method, for the person reading it.
-_METHOD_NAMES = {
-    AuthMethod.AMBIENT: "the server's own cloud identity",
-    AuthMethod.MANAGED_IDENTITY: 'the user-assigned managed identity',
-    AuthMethod.CLIENT_SECRET: "the app registration's client secret",
-    AuthMethod.IMPERSONATE: 'the impersonated service account',
-    AuthMethod.SERVICE_ACCOUNT_KEY: 'the stored service-account key',
-}
 
 
 class NodeHealthProbe:
@@ -203,15 +192,12 @@ class NodeHealthProbe:
             return NodeHealth(state=HealthState.HEALTHY, detail='Uses a stored key; checked on its first request')
         started = time.monotonic()
         try:
-            await self._credentials.bearer(backend.signer)
+            await self._credentials.obtain(backend.signer)
         except CredentialUnavailable:
-            return NodeHealth(
-                state=HealthState.DEGRADED,
-                detail=f'Could not get a token with {_METHOD_NAMES.get(backend.auth, backend.auth.value)}',
-            )
+            return NodeHealth(state=HealthState.DEGRADED, detail=f'Could not get credentials with {backend.auth.label}')
         return NodeHealth(
             state=HealthState.HEALTHY,
-            detail='The server holds a token for this provider',
+            detail='The server holds credentials for this provider',
             latency_ms=(time.monotonic() - started) * 1000,
         )
 

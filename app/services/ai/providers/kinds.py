@@ -53,6 +53,11 @@ class BackendKind(StrEnum):
         return self in (BackendKind.VERTEX_OPENAI, BackendKind.VERTEX_ANTHROPIC)
 
     @property
+    def derives_address(self) -> bool:
+        """Its address is built from its region (and project), so moving those moves the address."""
+        return self.has_region
+
+    @property
     def has_region(self) -> bool:
         """Addressed by a region: Vertex AI, and Bedrock."""
         return self.is_vertex or self is BackendKind.BEDROCK

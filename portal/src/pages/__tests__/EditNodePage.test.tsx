@@ -67,6 +67,19 @@ const BEDROCK: PinnedNode = {
   has_credential: false,
 }
 
+const ANTHROPIC_GATEWAY: PinnedNode = {
+  ...STORED,
+  base_url: 'https://gateway.acme.internal',
+  models: ['claude-opus-5-5'],
+  has_api_key: true,
+  kind: 'anthropic',
+  region: null,
+  model_ids: {},
+  auth: 'api_key',
+  auth_settings: {},
+  has_credential: false,
+}
+
 const AZURE: PinnedNode = {
   ...STORED,
   base_url: 'https://acme.openai.azure.com/openai/v1',
@@ -341,9 +354,31 @@ describe('The node edit page', () => {
       await user.clear(await screen.findByRole('textbox', { name: /region/i }))
       await user.click(screen.getByRole('button', { name: /save node/i }))
 
-      expect(await screen.findByText('A Vertex backend needs its project and region.')).toBeInTheDocument()
+      expect(await screen.findByText('Google Vertex AI needs its project and region.')).toBeInTheDocument()
       expect(sent).toHaveLength(0)
     })
+  })
+
+  test("clearing an Anthropic gateway's address sends it empty, for Anthropic's own API", async () => {
+    serveStored(ANTHROPIC_GATEWAY)
+    const sent = capturePatch(ANTHROPIC_GATEWAY)
+    renderPage()
+    const user = userEvent.setup()
+
+    await user.clear(await screen.findByRole('textbox', { name: /endpoint/i }))
+    await user.click(screen.getByRole('button', { name: /save node/i }))
+
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).toEqual({
+      base_url: '',
+      models: ['claude-opus-5-5'],
+      model_ids: {},
+      max_concurrent: 64,
+      multimodal: false,
+      enabled: true,
+      auth: 'api_key',
+      auth_settings: {},
+    } satisfies PinnedNodeUpdate)
   })
 
   test('a Bedrock backend edits its region and its role, and sends no address', async () => {

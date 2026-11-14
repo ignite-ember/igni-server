@@ -28,10 +28,12 @@ class MessagesRequest(BaseModel):
     messages: list[dict[str, Any]] = Field(min_length=1, max_length=10_000)
     max_tokens: int = Field(gt=0, le=1_000_000)
     stream: bool | None = None
+    #: A string, or a list of text blocks; read here only to estimate a prompt no provider counted.
+    system: str | list[dict[str, Any]] | None = None
 
-    def wire(self) -> dict[str, Any]:
-        """The body as the caller sent it, for the provider."""
-        return self.model_dump(exclude_none=True)
+    def wire(self, *, without: frozenset[str] = frozenset()) -> dict[str, Any]:
+        """The body as the caller sent it, less the fields in *without*, for the provider."""
+        return self.model_dump(exclude_none=True, exclude=set(without))
 
 
 #: Status → the error ``type`` Anthropic's SDKs map to an exception class.

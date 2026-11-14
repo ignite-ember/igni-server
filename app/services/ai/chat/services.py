@@ -65,7 +65,6 @@ class ChatServices:
         queue = queue or FairQueue(max_length=settings.chat_queue_max_length)
         usage_db = usage_db or ChatUsageDB()
         self._messages = MessagesProxy(
-            callers=self._callers,
             pools=pools,
             queue=queue,
             usage_db=usage_db,

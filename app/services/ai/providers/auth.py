@@ -50,9 +50,30 @@ class AuthMethod(StrEnum):
     ACCESS_KEYS = 'access_keys'
 
     @property
+    def label(self) -> str:
+        """The method as a sentence names it, for the person reading a health detail."""
+        return _LABELS[self]
+
+    @property
     def is_token(self) -> bool:
         """Signed with credentials the server obtains and renews, rather than static ones or nothing."""
         return self not in (AuthMethod.NONE, AuthMethod.API_KEY, AuthMethod.ACCESS_KEYS)
+
+
+#: How a sentence names each method.
+_LABELS: Mapping[AuthMethod, str] = MappingProxyType(
+    {
+        AuthMethod.NONE: 'no credentials',
+        AuthMethod.API_KEY: 'the stored key',
+        AuthMethod.AMBIENT: "the server's own cloud identity",
+        AuthMethod.MANAGED_IDENTITY: 'the user-assigned managed identity',
+        AuthMethod.CLIENT_SECRET: "the app registration's client secret",
+        AuthMethod.IMPERSONATE: 'the impersonated service account',
+        AuthMethod.SERVICE_ACCOUNT_KEY: 'the stored service-account key',
+        AuthMethod.ASSUME_ROLE: 'the assumed IAM role',
+        AuthMethod.ACCESS_KEYS: 'the stored access keys',
+    }
+)
 
 
 #: Where a method's secret lives on the backend, if it has one.
