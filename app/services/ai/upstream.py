@@ -157,6 +157,15 @@ class UpstreamTimeout(_TransportFailure):
     """The node took the request and then went quiet."""
 
     @property
+    def spent_the_wait(self) -> bool:
+        """Whether the whole read timeout went by with the node holding the request.
+
+        A connect or pool timeout sent nothing, so another node is a fresh
+        start; a read timeout is the node still at work on it.
+        """
+        return isinstance(self.cause, httpx.ReadTimeout)
+
+    @property
     def answer_status(self) -> int:
         return 504
 
@@ -206,6 +215,21 @@ class RetryPolicy(BaseModel):
     def gives_up(self, *, attempt: int, failure: UpstreamFailure) -> bool:
         """Out of attempts, or nothing another node would fix."""
         return attempt >= self.max_retries or not failure.worth_another_node
+
+    def gives_up_on_completion(self, *, attempt: int, failure: UpstreamFailure) -> bool:
+        """:meth:`gives_up`, for a non-streamed answer, where a timeout ends it too.
+
+        A non-streamed request's timeout is `AI__UPSTREAM_TIMEOUT`: "how long
+        the API waits for a model to answer". Retrying after it made the
+        caller wait up to `max_retries` times that (12.8 s for 4 s; 900 s for
+        the default 300, past the 330 s a compose stop allows), and sent the
+        same work again to a node that was still busy with the first try —
+        the only node, often, so past its concurrency limit. A quick failure
+        (refused, a 5xx, nonsense, a connection that never opened) is still
+        tried on another node.
+        """
+        spent = isinstance(failure, UpstreamTimeout) and failure.spent_the_wait
+        return spent or self.gives_up(attempt=attempt, failure=failure)
 
     async def pause(self, attempt: int) -> None:
         """Wait before attempt *attempt* + 1."""

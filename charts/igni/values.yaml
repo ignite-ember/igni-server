@@ -255,7 +255,8 @@ mcpGatewayUrl: ""
 
 ai:
   # How long the API waits for a model to answer. Five minutes, because a
-  # long completion legitimately takes that. Whatever this is,
+  # long completion legitimately takes that. Once per request: a
+  # non-streamed answer that times out is not sent again. Whatever this is,
   # `api.terminationGracePeriodSeconds` below has to be at least as
   # large — a chart test enforces it.
   upstreamTimeout: 300

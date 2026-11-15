@@ -122,7 +122,7 @@ class MessagesProxy:
                     await self._tails.run(self._log_abandoned(ctx, started=started))
                     raise
                 except UpstreamFailure as failure:
-                    if self._retry.gives_up(attempt=attempt, failure=failure):
+                    if self._retry.gives_up_on_completion(attempt=attempt, failure=failure):
                         raise UpstreamRefusal(failure) from failure
                     try:
                         await ctx.fail_over(failed_backend_id=ctx.lease.backend_id)

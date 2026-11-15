@@ -52,7 +52,7 @@ class ChatCompletionService:
                     logger.warning(
                         'Node %s did not answer usefully (%s): %s', failed_backend_id, type(failure).__name__, failure
                     )
-                    if self._retry.gives_up(attempt=attempt, failure=failure):
+                    if self._retry.gives_up_on_completion(attempt=attempt, failure=failure):
                         raise UpstreamRefusal(failure) from failure
                     try:
                         await ctx.fail_over(failed_backend_id=failed_backend_id)
