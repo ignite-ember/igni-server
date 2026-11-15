@@ -28,7 +28,7 @@ SRC_FMT := app
 # `run` and `worker` are added below rather than dropped, because the
 # README documented `make run` as the last step of its Quick Start and
 # there was no such target.
-.PHONY: run test lint fmt migrate downgrade-one up down restart logs rebuild \
+.PHONY: run test lint fmt migrate downgrade-one downgrade-tenants up down restart logs rebuild \
         refresh-default-seed default-seed-migration refresh-agent-tools \
         portal-dev portal-build portal-lint portal-test portal-test-watch \
         portal-e2e portal-e2e-update check-configs docs check-docs \
@@ -79,8 +79,16 @@ migrate:
 	$(PYTHON) -m alembic upgrade head
 	$(PYTHON) -m app.db.sql.tenant_migrations
 
+# The shared plane only. A rollback to an older image also needs the
+# organisations' databases back: `make downgrade-tenants REV=t0029`.
 downgrade-one:
 	$(PYTHON) -m alembic downgrade -1
+
+# Every organisation's database and the template, back to an
+# alembic_tenant revision. REV is required.
+downgrade-tenants:
+	@test -n "$(REV)" || (echo "Pass REV=<alembic_tenant revision>, e.g. REV=t0029" && exit 1)
+	$(PYTHON) -m app.db.sql.tenant_migrations --downgrade $(REV)
 
 # Docker commands - Containers folder (for isolated environments)
 DOCKER_COMPOSE_DIR := containers

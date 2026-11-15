@@ -376,9 +376,21 @@ sets up the hooks.
 
 ```bash
 make migrate                                   # shared plane, then every organisation's database
-make downgrade-one                             # back one revision
+make downgrade-one                             # shared plane back one revision
+make downgrade-tenants REV=t0029               # every organisation's database and the template, back to REV
 uv run alembic revision -m "description"       # new migration
 ```
+
+**Rolling back to an older image** takes both planes back to the
+revisions that image knows, before it starts: the shared plane with
+`alembic downgrade <revision>`, and the organisations' databases and their
+template with `python -m app.db.sql.tenant_migrations --downgrade
+<alembic_tenant revision>` (both in the newer image, which has the
+downgrade scripts). The shared plane alone is not enough: the older
+image's migrate step cannot locate the newer tenant revision, and the
+stack does not start. A downgrade can drop what the older schema cannot
+hold — `0030`'s removes every cloud inference node, which has no form
+without its kind — so take a backup first.
 
 Migrations are round-trip tested against a populated database
 (`tests/test_migration_round_trip.py`) — a downgrade that only works on an

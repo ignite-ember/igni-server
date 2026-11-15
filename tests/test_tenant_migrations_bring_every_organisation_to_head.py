@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import runpy
+import sys
 
 from alembic.script import ScriptDirectory
 import pytest
@@ -117,11 +118,40 @@ async def test_a_failure_stops_the_job_before_the_next_organisation(db):
 
 # runpy warns that the module is already imported, which it is: by this file.
 @pytest.mark.filterwarnings('ignore:.*found in sys.modules:RuntimeWarning')
-async def test_python_dash_m_runs_the_job(db):
+async def test_python_dash_m_runs_the_job(db, monkeypatch):
     """`python -m app.db.sql.tenant_migrations`, as the chart, compose and `make migrate` call it."""
     await _two_organisations_behind(db)
+    monkeypatch.setattr(sys, 'argv', ['tenant_migrations'])
 
     await asyncio.to_thread(runpy.run_module, 'app.db.sql.tenant_migrations', run_name='__main__')
 
     names = TenantNames()
     assert [_revision(names.name(1)), _revision(names.name(2))] == [_head(), _head()]
+
+
+def _revision_before_head() -> str:
+    config = TenantMigrator().alembic_config(TenantNames().template())
+    return str(ScriptDirectory.from_config(config).get_revision(_head()).down_revision)
+
+
+@pytest.mark.filterwarnings('ignore:.*found in sys.modules:RuntimeWarning')
+async def test_a_rollback_takes_every_organisation_and_the_template_back(db, monkeypatch):
+    """Rolling back to the previous image needs the organisations' databases
+    and the template back at its tenant revision too: `alembic downgrade`
+    moves only the shared plane, and the older image's migrate step then
+    cannot locate the newer tenant revision and the stack does not start."""
+    for name in ('acme', 'globex'):
+        await create_user(db, user_id=name, email=f'admin@{name}.test')
+        org = await create_org(db, owner_user_id=name, slug=name, domains=(f'{name}.test',))
+        await TenantRegistryDB().database_of(str(org.id))
+    previous = _revision_before_head()
+    monkeypatch.setattr(sys, 'argv', ['tenant_migrations', '--downgrade', previous])
+
+    await asyncio.to_thread(runpy.run_module, 'app.db.sql.tenant_migrations', run_name='__main__')
+
+    names = TenantNames()
+    assert [_revision(names.name(1)), _revision(names.name(2)), _revision(names.template())] == [previous] * 3
+
+    # And forward again, as the next upgrade does.
+    assert await asyncio.to_thread(TenantMigrations().run) == 2
+    assert [_revision(names.name(1)), _revision(names.template())] == [_head(), _head()]

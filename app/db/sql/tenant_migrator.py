@@ -82,6 +82,18 @@ class TenantMigrator:
         """Bring one tenant database to the head of `alembic_tenant/`."""
         command.upgrade(self.alembic_config(database), 'head')
 
+    def downgrade(self, database: str, revision: str) -> None:
+        """Take one tenant database back to `revision` of `alembic_tenant/`."""
+        command.downgrade(self.alembic_config(database), revision)
+
+    def downgrade_template(self, revision: str) -> None:
+        """Take the template back to `revision`, so a new organisation is not born ahead of the image."""
+        template = self._names.template()
+        with self._templates_lock:
+            self._templates_ready.discard(template)
+            if self.exists(template):
+                self.downgrade(template, revision)
+
     def exists(self, database: str) -> bool:
         with self._connect(self._names.base_name()) as conn:
             found = conn.execute(text('SELECT 1 FROM pg_database WHERE datname = :d'), {'d': database})

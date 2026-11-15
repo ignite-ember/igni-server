@@ -173,6 +173,19 @@ Migrations in this project are tested for a downgrade round trip against
 populated data, but a downgrade is still a database operation on your
 data. Take the backup first.
 
+Rolling back to an older release means both planes, run with the **newer**
+image (it has the downgrade scripts) before the older one starts:
+
+```bash
+alembic downgrade <revision the older release is at>                       # shared plane
+python -m app.db.sql.tenant_migrations --downgrade <its alembic_tenant revision>  # every organisation and the template
+```
+
+The first alone leaves the organisations' databases at the newer tenant
+revision, and the older release's migrate hook fails on it ("Can't locate
+revision"). A downgrade can drop what the older schema has no column for:
+`0030`'s removes every cloud inference node.
+
 ### Upgrade notes
 
 Changes to defaults that an upgrade picks up without a values change:
