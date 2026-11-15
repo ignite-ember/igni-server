@@ -1284,6 +1284,14 @@
       "AvailableModels": {
         "description": "Model ids this deployment serves, deduplicated and sorted.\n\nIncludes LoRA adapters, since a node answers to each of them by name\nand any of them is a legitimate choice for a group.",
         "properties": {
+          "chat_completions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Chat Completions",
+            "type": "array"
+          },
           "models": {
             "default": [],
             "items": {
