@@ -310,6 +310,20 @@ at all while STARTTLS was hardcoded on.
 
 Set `email_from_name` too — a self-hosted deployment is the customer's,
 and their people should not receive sign-in codes from a vendor's brand.
+It is the From display name and the name in every subject, header and
+footer.
+
+**A relay with a certificate from a private CA** (common for an internal
+relay on `starttls` or `tls`) is verified like any other: the API checks
+its certificate against the CA bundle in the image, which holds only the
+public CAs. Until the private CA is trusted, every message fails with
+`CERTIFICATE_VERIFY_FAILED` in the API log — and the request that sent it
+still answers 200, because a code request never says whether delivery
+worked. Mount a bundle holding the system CAs **and** yours into the API
+container and point the standard `SSL_CERT_FILE` environment variable at
+it (Helm: `extraVolumes`, `extraVolumeMounts` and `extraEnv`). Do not
+switch verification off; `smtp_tls_mode=none` is for a relay on a
+network you trust, not for a certificate you do not.
 
 ### SES without a stored password
 
