@@ -10,9 +10,8 @@ role — goes through `EmailMarkup.escape` where it enters.
 
 from pydantic import BaseModel
 
+from app.config import settings
 from app.services.email.markup import EmailMarkup
-
-_BRAND = 'ignite-ember.sh'
 
 _PASSWORD_TIPS = (
     'Use at least 8 characters',
@@ -31,10 +30,21 @@ class EmailContent(BaseModel):
 
 
 class EmailTemplates:
-    """Renders each outbound email to a subject and an HTML body."""
+    """Renders each outbound email to a subject and an HTML body.
 
-    def __init__(self, *, markup: EmailMarkup | None = None) -> None:
+    `brand` is who the mail says it is from — in the subject, the header
+    and the footer. It is `EMAIL_FROM_NAME` unless given: a self-hosted
+    deployment is the customer's, and their people should not receive
+    sign-in codes under a vendor's brand (`docs/self-hosting.md` §6).
+    """
+
+    def __init__(self, *, markup: EmailMarkup | None = None, brand: str | None = None) -> None:
         self._markup = markup or EmailMarkup()
+        self._brand = brand if brand is not None else settings.email_from_name
+
+    @property
+    def brand(self) -> str:
+        return self._brand
 
     def sign_up(self, *, code: str, email: str, name: str | None = None) -> EmailContent:
         """The verification code that activates a new account."""
@@ -43,13 +53,13 @@ class EmailTemplates:
             m.section_label('Account Verification'),
             m.greeting(name),
             m.paragraph(
-                'Thanks for signing up to <strong>ignite-ember.sh</strong>. Use the verification code below to activate your account:',
+                f'Thanks for signing up to <strong>{m.escape(self._brand)}</strong>. Use the verification code below to activate your account:',
                 margin='0 0 24px',
             ),
             m.otp(code),
             m.paragraph('This code will expire in <strong>10 minutes</strong>.'),
             m.callout(
-                "<strong>Security Notice:</strong> If you didn't sign up for ignite-ember.sh, please ignore this email.",
+                f"<strong>Security Notice:</strong> If you didn't sign up for {m.escape(self._brand)}, please ignore this email.",
                 style=m.WARNING,
             ),
             m.paragraph(
@@ -59,7 +69,7 @@ class EmailTemplates:
             ),
         )
         return self._render(
-            subject='Verify Your Email — ignite-ember.sh', title='Verify Your Email', content=content, email=email
+            subject=f'Verify Your Email — {self._brand}', title='Verify Your Email', content=content, email=email
         )
 
     def sign_in(self, *, code: str, email: str, name: str | None = None) -> EmailContent:
@@ -105,7 +115,7 @@ class EmailTemplates:
             m.section_label('Team Invitation'),
             m.greeting(name),
             m.paragraph(
-                f'{invited_line} to join the team on <strong>ignite-ember.sh</strong> as a <strong>{role_label}</strong>.',
+                f'{invited_line} to join the team on <strong>{m.escape(self._brand)}</strong> as a <strong>{role_label}</strong>.',
                 margin='0 0 24px',
             ),
             m.cta_button(text='Accept Invitation', url=invite_url),
@@ -119,7 +129,7 @@ class EmailTemplates:
             ),
         )
         return self._render(
-            subject="You've Been Invited to igni — ignite-ember.sh",
+            subject=f"You've Been Invited to igni — {self._brand}",
             title="You're Invited",
             content=content,
             email=email,
@@ -177,11 +187,12 @@ class EmailTemplates:
             ),
         )
         return self._render(
-            subject='Welcome to igni — ignite-ember.sh', title='Welcome to igni', content=content, email=email
+            subject=f'Welcome to igni — {self._brand}', title='Welcome to igni', content=content, email=email
         )
 
     def _render(self, *, subject: str, title: str, content: str, email: str) -> EmailContent:
-        html_body = self._markup.page(title=title, subtitle=_BRAND, content=content, email=email)
+        brand = self._markup.escape(self._brand)
+        html_body = self._markup.page(title=title, subtitle=brand, content=content, email=email, footer=brand)
         return EmailContent(subject=subject, html_body=html_body)
 
     @staticmethod

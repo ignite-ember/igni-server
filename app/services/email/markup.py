@@ -66,11 +66,11 @@ class EmailMarkup:
         """
         return html.escape(str(value), quote=True)
 
-    def page(self, *, title: str, subtitle: str, content: str, email: str) -> str:
+    def page(self, *, title: str, subtitle: str, content: str, email: str, footer: str) -> str:
         """A full HTML email in the landing-page layout.
 
-        `title`, `subtitle` and `content` are markup; `email` is the
-        recipient's address and is escaped here.
+        `title`, `subtitle`, `content` and `footer` (who the mail is from)
+        are markup; `email` is the recipient's address and is escaped here.
         """
         return f"""<!DOCTYPE html>
 <html>
@@ -119,7 +119,7 @@ class EmailMarkup:
                                 This email was sent to {self.escape(email)}
                             </p>
                             <p style="margin: 0; color: {self.FG_MUTED}; font-size: 12px;">
-                                &copy; 2026 ignite-ember.sh &mdash; where code sparks itself.
+                                {footer}
                             </p>
                         </td>
                     </tr>

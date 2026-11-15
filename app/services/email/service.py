@@ -45,9 +45,9 @@ class EmailService:
         # reach one template method.
         self._transport = transport
         self._settings = settings
-        self._templates = templates or EmailTemplates()
         self.from_email = from_email if from_email is not None else settings.email_from_address
         self.from_name = from_name if from_name is not None else settings.email_from_name
+        self._templates = templates or EmailTemplates(brand=self.from_name)
 
     @property
     def transport(self) -> EmailTransport:
@@ -123,7 +123,7 @@ class EmailService:
             to_email=to_email,
             subject=content.subject,
             html_body=content.html_body,
-            text_body='Welcome to ignite-ember.sh! Your account has been created successfully.',
+            text_body=f'Welcome to {self._templates.brand}! Your account has been created successfully.',
         )
 
     async def send_team_invite(

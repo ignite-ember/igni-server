@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.config import settings
 from app.services.email.templates import EmailContent, EmailTemplates
 
 _HOSTILE = '<script>alert(1)</script>'
@@ -91,4 +92,6 @@ class TestTheTemplatesStillRender:
         content = _invite()
 
         assert content.subject and content.html_body
-        assert 'ignite-ember' in content.subject
+        # The deployment's name (EMAIL_FROM_NAME), not the vendor's:
+        # `tests/test_an_email_carries_the_deployments_name.py`.
+        assert content.subject.endswith(f'— {settings.email_from_name}')
