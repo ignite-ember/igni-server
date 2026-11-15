@@ -418,11 +418,14 @@ igni and send it a request, to prove the weights work without igni.
 
 C6. Prove the archives are usable without igni. Restore one organisation's
 archive into a plain PostgreSQL 17 instance with no igni software, and query
-it:
+it. `--no-owner --no-privileges`, because the archive names the role that
+owned it on the deployment (`igni`), which a plain instance does not have:
+without them the restore stops at the first `ALTER ... OWNER TO igni` and
+restores nothing. The restored objects belong to whoever runs the restore.
 
 ```bash
 createdb exit_check
-pg_restore -d exit_check --exit-on-error igni-<stamp>/org-<org_id>-igni_t<n>.dump
+pg_restore -d exit_check --exit-on-error --no-owner --no-privileges igni-<stamp>/org-<org_id>-igni_t<n>.dump
 psql -d exit_check -c '\dt'
 psql -d exit_check -c 'SELECT count(*) FROM audit_events'
 ```
