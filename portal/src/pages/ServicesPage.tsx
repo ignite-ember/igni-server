@@ -170,7 +170,9 @@ function ExtensionSummary({ registration }: { registration: RegisteredClient }) 
           </Stack>
         ) : (
           <Text size="small" className="settings-section-caption">
-            Has not uploaded its extension yet.
+            {registration.kind === 'platform'
+              ? 'A platform client ships no extension.'
+              : 'Has not uploaded its extension yet.'}
           </Text>
         )}
       </Stack>

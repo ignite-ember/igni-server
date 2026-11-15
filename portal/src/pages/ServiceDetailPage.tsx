@@ -834,6 +834,17 @@ export function ServiceDetailPage() {
 
       {extension ? (
         <TheExtension extension={extension} />
+      ) : registration.kind === 'platform' ? (
+        <Blankslate>
+          <Blankslate.Visual>
+            <PackageIcon size={24} />
+          </Blankslate.Visual>
+          <Blankslate.Heading>Ships no extension</Blankslate.Heading>
+          <Blankslate.Description>
+            A platform client, such as Fleet&apos;s gateway or a node agent, runs igni&apos;s own infrastructure
+            and puts nothing on people&apos;s machines, so it has no extension to show.
+          </Blankslate.Description>
+        </Blankslate>
       ) : (
         <Blankslate>
           <Blankslate.Visual>
