@@ -1296,3 +1296,29 @@ class TestGoogleSignInIsOffUntilItIsConfigured:
         )
 
         assert off == []
+
+
+class TestAFileSettingCanBeMounted:
+    """`INFERENCE_BACKENDS_PATH` reads a file, "the normal case (a ConfigMap
+    or bind mount)", and `extraEnv` can name it — but the chart had no way
+    to put the file in the pod, so only the inline form worked."""
+
+    def test_extra_volumes_reach_the_api_pod(self):
+        rendered = _render(
+            *_MINIMAL,
+            '--set', 'extraVolumes[0].name=backends',
+            '--set', 'extraVolumes[0].configMap.name=igni-inference-backends',
+            '--set', 'extraVolumeMounts[0].name=backends',
+            '--set', 'extraVolumeMounts[0].mountPath=/etc/igni/backends',
+            '--set', 'extraVolumeMounts[0].readOnly=true',
+            '--set', 'extraEnv[0].name=INFERENCE_BACKENDS_PATH',
+            '--set', 'extraEnv[0].value=/etc/igni/backends/backends.json',
+        )  # fmt: skip
+        api = next(
+            m for m in _of_kind(rendered, 'Deployment') if m['metadata']['name'].endswith('-api')
+        )['spec']['template']['spec']
+        container = api['containers'][0]
+
+        assert {'name': 'backends', 'configMap': {'name': 'igni-inference-backends'}} in api['volumes']
+        assert {'name': 'backends', 'mountPath': '/etc/igni/backends', 'readOnly': True} in container['volumeMounts']
+        assert {'name': 'tmp', 'mountPath': '/tmp'} in container['volumeMounts'], 'the chart\'s own mounts are kept'

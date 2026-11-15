@@ -127,6 +127,9 @@ spec:
               mountPath: /etc/igni/licence
               readOnly: true
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
@@ -138,6 +141,9 @@ spec:
             items:
               - key: licence.json
                 path: licence.json
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.api.nodeSelector }}
       nodeSelector:

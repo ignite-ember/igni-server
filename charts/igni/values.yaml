@@ -620,6 +620,25 @@ securityContext:
 extraEnv: []
 extraEnvFrom: []
 
+# Files for the API pod: `extraVolumes` adds volumes to it, and
+# `extraVolumeMounts` mounts them into the API container. For a setting that
+# reads a file — `INFERENCE_BACKENDS_PATH` is the usual one, the backends
+# list kept in a ConfigMap:
+#
+#   extraVolumes:
+#     - name: backends
+#       configMap:
+#         name: igni-inference-backends
+#   extraVolumeMounts:
+#     - name: backends
+#       mountPath: /etc/igni/backends
+#       readOnly: true
+#   extraEnv:
+#     - name: INFERENCE_BACKENDS_PATH
+#       value: /etc/igni/backends/backends.json
+extraVolumes: []
+extraVolumeMounts: []
+
 # Extra labels and annotations on every object this chart creates.
 commonLabels: {}
 commonAnnotations: {}
