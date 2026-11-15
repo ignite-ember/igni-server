@@ -43,7 +43,7 @@ services:
   # it the API started alongside the migration and served against
   # whatever schema happened to exist at that moment.
   migrate:
-    container_name: igni__migrate
+    container_name: ${IGNI_STACK:-igni}__migrate
     image: *igni_image
     working_dir: /app
     # Waits for Postgres, then migrates.
@@ -82,7 +82,7 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    container_name: igni__api
+    container_name: ${IGNI_STACK:-igni}__api
     image: *igni_image
     ports:
       # Loopback by default, so a reverse proxy on the host fronts this
@@ -94,7 +94,7 @@ services:
       #
       # Override deliberately if the container really is the edge:
       #   IGNI_API_BIND=0.0.0.0 docker compose -f docker-compose.prod.yml up -d
-      - "${IGNI_API_BIND:-127.0.0.1}:7777:7777"
+      - "${IGNI_API_BIND:-127.0.0.1}:${IGNI_API_PORT:-7777}:7777"
     # /health, not /ready. This decides whether to RESTART the container,
     # and a restart fixes a wedged process but not an unreachable
     # database — pointing it at /ready would turn a database blip into a
@@ -137,14 +137,14 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    container_name: igni__portal
+    container_name: ${IGNI_STACK:-igni}__portal
     image: *igni_portal_image
     environment:
       # The compose service name, not the container name. nginx resolves
       # this once at startup and exits if it does not resolve.
       - API_UPSTREAM=igni_api:7777
     ports:
-      - "${IGNI_PORTAL_BIND:-127.0.0.1}:3000:3000"
+      - "${IGNI_PORTAL_BIND:-127.0.0.1}:${IGNI_PORTAL_PORT:-3000}:3000"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
       interval: 30s
@@ -170,7 +170,7 @@ services:
   # shape and needs nothing else from this file.
   postgres:
     profiles: [bundled]
-    container_name: igni__postgres
+    container_name: ${IGNI_STACK:-igni}__postgres
     # Pinned to a minor version. `postgres:17` moves under you on the next
     # `pull`, and a major upgrade of Postgres is not a restart.
     image: postgres:17.6-alpine
@@ -193,7 +193,7 @@ services:
 
   redis:
     profiles: [bundled]
-    container_name: igni__redis
+    container_name: ${IGNI_STACK:-igni}__redis
     image: redis:7.4-alpine
     # The concurrency leases and the one-time sign-in codes. Losing it is
     # survivable — leases expire and rebuild, codes are reissued — so
@@ -253,7 +253,7 @@ services:
       migrate:
         condition: service_completed_successfully
     profiles: [backup]
-    container_name: igni__backup
+    container_name: ${IGNI_STACK:-igni}__backup
     # The database's own image, so pg_dump matches the server by
     # construction. A pg_dump older than its server refuses outright.
     image: postgres:17.6-alpine

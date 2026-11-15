@@ -238,12 +238,16 @@ table and not a lost volume. The dumps are mode 600 and as sensitive as
 the database. The Helm chart does the same thing as a CronJob, off until
 you name the volume.
 
-Both variables are required rather than defaulted, and the env file is
+All three variables — `IGNI_IMAGE`, `IGNI_PORTAL_IMAGE` and
+`IGNI_ENV_FILE` — are required rather than defaulted, and the env file is
 named explicitly so a leftover development `.env` cannot be deployed. The
-API binds to loopback unless you set `IGNI_API_BIND=0.0.0.0`; put a
-reverse proxy in front of it. Postgres and Redis are external, and this
-file has no portal service — the compose stack is the API and the
-migration.
+stack is the migration, the API and the portal; Postgres and Redis are
+external unless you add `--profile bundled` (below). The API and the
+portal bind to loopback on 7777 and 3000 unless you set `IGNI_API_BIND` /
+`IGNI_PORTAL_BIND` (e.g. `0.0.0.0`) and `IGNI_API_PORT` / `IGNI_PORTAL_PORT`;
+put a reverse proxy in front of them. Containers are named `igni__<service>`;
+`IGNI_STACK=<name>` (with `-p <name>`) names them `<name>__<service>`, so a
+second igni can run on the same host.
 
 Kubernetes:
 
