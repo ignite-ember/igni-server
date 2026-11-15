@@ -113,6 +113,31 @@ class TestOneOrganisation:
 
         assert response.json()['name'] == 'Lena Left'
 
+    async def test_a_removed_member_is_not_remembered(self, client, two_orgs, db):
+        """Removal deletes the membership, so the directory cannot tell a
+        removed person from one who never belonged — and says so in
+        `docs/service-identity.md` §7 rather than calling them former."""
+        gone = await create_user(db, email='gone@acme.com', full_name='Gail Gone')
+        await add_member(db, two_orgs['acme'], str(gone.user_id))
+        admin = auth_header(make_token(two_orgs['ada'], org_id=two_orgs['acme']))
+        assert (await client.delete(f'/portal/team/{gone.user_id}', headers=admin)).status_code in (200, 204)
+        headers = await _service_token(client, two_orgs, two_orgs['acme'])
+
+        person = await client.get(f'/directory/people/{gone.user_id}', headers=headers)
+        former = await client.get('/directory/members', params={'include_former': True}, headers=headers)
+
+        assert person.status_code == 404
+        assert 'gone@acme.com' not in [p['email'] for p in former.json()['people']]
+
+    def test_the_document_says_a_removed_member_is_not_former(self):
+        import pathlib
+
+        text = (pathlib.Path(__file__).resolve().parent.parent / 'docs' / 'service-identity.md').read_text()
+        section = text.split('## 7. The directory', 1)[1].split('## 8.', 1)[0]
+
+        assert 'if never a member' not in section
+        assert '**removed**' in section and 'deactivated' in section
+
     async def test_resolving_names_only_this_organisations_people(self, client, two_orgs):
         headers = await _service_token(client, two_orgs, two_orgs['acme'])
 

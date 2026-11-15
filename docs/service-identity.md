@@ -322,8 +322,18 @@ is never a parameter:
 |---|---|
 | `GET /v1/directory/organisation` | `org_id`, `name`, `slug`, `tenant_number`, `domains` — derive your per-organisation database and Redis index from `tenant_number` |
 | `GET /v1/directory/members?query=&limit=&include_former=` | people: `user_id`, `email`, `name`, `role`, `status`, `super_admin`; prefix search on address or name; at most 500 |
-| `GET /v1/directory/people/{user_id}` | one person, present or former; 404 if never a member |
+| `GET /v1/directory/people/{user_id}` | one person, present or former; 404 otherwise |
 | `POST /v1/directory/people/resolve` `{"identities": [...]}` | user ids or addresses → present and former members only |
+
+A **former** member is a *deactivated* one: their membership is kept, so
+`include_former`, `people/{user_id}` and `resolve` still name them. A
+person an admin **removed** from the organisation (`DELETE
+/v1/portal/team/{user_id}`) is not kept — removal deletes the membership —
+so the directory answers for them exactly as for somebody who was never a
+member: a 404, and absent from `include_former` and `resolve`. A service
+that must go on naming a past author keeps the name it was given while
+they were here; an organisation that wants its leavers named deactivates
+them rather than removing them.
 
 
 A revoked client's service token is refused at once, not after it expires.
