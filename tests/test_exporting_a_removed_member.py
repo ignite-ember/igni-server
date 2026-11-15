@@ -18,7 +18,8 @@ from tests.conftest import audit_rows
 
 pytestmark = pytest.mark.anyio
 
-ARCHIVE = b'\x1f\x8b' + b'conversations' * 1000
+#: `igni-cloud db export-producer` writes a zip (igni-core docs/CLOUD.md).
+ARCHIVE = b'PK\x03\x04' + b'conversations' * 1000
 
 
 @pytest.fixture
@@ -77,6 +78,8 @@ async def test_requested_run_by_the_node_agent_and_downloaded(client, world):
     assert timedelta(days=6, hours=23) < expires - datetime.now(timezone.utc) <= timedelta(days=7)
     assert downloaded.status_code == 200
     assert downloaded.content == ARCHIVE
+    assert downloaded.headers['content-type'] == 'application/zip'
+    assert downloaded.headers['content-disposition'] == f'attachment; filename="export-{export_id}.zip"'
     assert [e['state'] for e in listed] == ['ready']
 
 

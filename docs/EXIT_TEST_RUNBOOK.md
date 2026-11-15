@@ -536,7 +536,7 @@ are in `shared-<db>.dump`.
   as withheld (`app/services/subject_access/personal_columns.py`).
 * `POST /v1/portal/orgs/{org_id}/producers/person/{user_id}/exports` queues an
   export of a removed member's data while it waits for erasure, downloaded
-  as `.tar.gz` from `GET /v1/portal/orgs/{org_id}/exports/{export_id}/download`.
+  as a `.zip` (`manifest.json`, `rows.jsonl`, `attachments/`) from `GET /v1/portal/orgs/{org_id}/exports/{export_id}/download`.
   The archive is produced by the cloud node agent running
   `igni-cloud db export-producer` (`app/services/cloud/producer_exports.py`),
   so it depends on Fleet being deployed. It does not include the workspace
