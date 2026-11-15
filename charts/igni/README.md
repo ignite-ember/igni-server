@@ -254,10 +254,18 @@ ports. `egressCidrs` still works, on every port. See
 
 ## Retention
 
-`retention.auditDays` defaults to `0`, which means keep forever, and the
-retention runner does not start at all while it is 0. Defensible only if
-you can defend it — GDPR Art. 5(1)(e) asks for a limit rather than a
-preference. See `docs/COMPLIANCE_TRACKER.md` for what it maps to.
+`retention.auditDays` defaults to `0`, which keeps the audit trail
+forever. Defensible only if you can defend it — GDPR Art. 5(1)(e) asks for
+a limit rather than a preference. See `docs/COMPLIANCE_TRACKER.md` for
+what it maps to.
+
+It keeps the audit trail only. The retention runner starts on every
+install and runs once a day: it deletes service events settled more than
+`SERVICE_EVENT_RETENTION_DAYS` (30) ago and the gateway feed's departed
+producers after `PRODUCER_FEED_RETENTION_DAYS` (30), both set through
+`extraEnv` and kept by 0, and it always clears exports of removed
+members' data after `PRODUCER_EXPORT_RETENTION_DAYS` (7) and revocations
+after 31 days. `docs/DATA_RETENTION.md` lists every window.
 
 ## Backups
 

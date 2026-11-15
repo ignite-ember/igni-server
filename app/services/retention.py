@@ -25,7 +25,7 @@ rather than a row: it releases on its own if a process dies, so there is
 no stale-lock state to clean up. The same choice, for the same reason, as
 F86's guard on the test database.
 
-## It does nothing unless configured
+## What 0 keeps, and what it does not
 
 The audit window defaults to 0, meaning keep everything — a deployment
 that has not made a retention decision gets no surprise deletions of its
@@ -34,8 +34,14 @@ default. Events for producers are different: they are deliveries, not
 records, and their service reads what became of each for
 `SERVICE_EVENT_RETENTION_DAYS` (30) after it was delivered, expired or
 dropped, after which the same round deletes it — and marks as expired
-whatever has passed its `expires_at`. With both at 0 the loop is not
-started at all.
+whatever has passed its `expires_at`. The gateway feed's window works the
+same way, and 0 keeps each of them.
+
+The loop starts on every deployment all the same: an export of a removed
+member's data lives `PRODUCER_EXPORT_RETENTION_DAYS` (at least one) and a
+revocation 31 days, and neither has a 0 that keeps it. Starting only when
+one of the three windows above was set left both in place for ever on a
+deployment that set all three to 0.
 """
 
 from __future__ import annotations
@@ -112,15 +118,6 @@ class Retention:
         self._interval_seconds = interval_seconds
         self._task: asyncio.Task[None] | None = None
 
-    @staticmethod
-    def is_configured() -> bool:
-        """Whether any window is set. The loop is not started otherwise."""
-        return (
-            settings.audit_retention_days > 0
-            or settings.service_event_retention_days > 0
-            or settings.producer_feed_retention_days > 0
-        )
-
     @property
     def running(self) -> bool:
         return self._task is not None
@@ -162,14 +159,7 @@ class Retention:
         return removed
 
     def start(self) -> None:
-        """Start the loop if any window is configured."""
-        if not self.is_configured():
-            logger.info(
-                'Retention: no window configured (AUDIT_RETENTION_DAYS, SERVICE_EVENT_RETENTION_DAYS and '
-                'PRODUCER_FEED_RETENTION_DAYS are 0) — nothing will be deleted'
-            )
-            return
-
+        """Start the loop. Always: exports and revocations expire whatever the windows say."""
         self._task = asyncio.create_task(self._loop(), name='retention')
         # Every window, 0 included: an operator who set AUDIT_RETENTION_DAYS=0
         # to keep everything must see that the others still delete.

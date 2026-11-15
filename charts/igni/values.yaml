@@ -271,7 +271,7 @@ ai:
 # retention runner still prunes settled service events and the gateway
 # feed (SERVICE_EVENT_RETENTION_DAYS and PRODUCER_FEED_RETENTION_DAYS, 30
 # days each by default, set through extraEnv), and expired exports and
-# revocations with them. It stops only when all three are 0.
+# revocations with them, which it clears even when all three are 0.
 retention:
   auditDays: 0
 
