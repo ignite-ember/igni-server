@@ -42,6 +42,7 @@ from opentelemetry.metrics import NoOpMeterProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.util.types import AttributeValue
 from pydantic import BaseModel
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -83,13 +84,38 @@ class SpanScrubber:
         return key not in cls.DROP and not key.startswith(cls.DROP_PREFIXES)
 
     @classmethod
+    def attributes(cls, span: ReadableSpan) -> dict[str, AttributeValue]:
+        """What is exported: the kept attributes, plus the host the dropped URL named.
+
+        The httpx instrumentation records its target only as ``http.url``,
+        which is dropped for its query string — and with it the one thing
+        that says which inference node or module was called. The host and
+        port are not secrets (no path, no query, no credentials), so they go
+        out as ``server.address`` / ``server.port`` when the span has none.
+        """
+        source = dict(span.attributes or {})
+        kept: dict[str, AttributeValue] = {k: v for k, v in source.items() if cls.keeps(k)}
+        url = source.get('url.full') or source.get('http.url')
+        if isinstance(url, str) and 'server.address' not in kept:
+            try:
+                parts = urlsplit(url)
+                host, port = parts.hostname, parts.port
+            except ValueError:
+                host, port = None, None
+            if host:
+                kept['server.address'] = host
+                if port is not None and 'server.port' not in kept:
+                    kept['server.port'] = port
+        return kept
+
+    @classmethod
     def scrub(cls, span: ReadableSpan) -> ReadableSpan:
         return ReadableSpan(
             name=span.name,
             context=span.context,
             parent=span.parent,
             resource=span.resource,
-            attributes={k: v for k, v in (span.attributes or {}).items() if cls.keeps(k)},
+            attributes=cls.attributes(span),
             events=span.events,
             links=span.links,
             kind=span.kind,
