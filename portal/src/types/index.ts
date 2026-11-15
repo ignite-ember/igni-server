@@ -220,6 +220,12 @@ export interface InferenceStatus {
 /** GET /portal/inference/models: every model id the nodes serve, for choosing one. */
 export interface AvailableModels {
   models: string[]
+  /**
+   * The ones served on /v1/chat/completions: what a group's model can route
+   * to, since only a chat-completions request may name no model. Absent
+   * from an older server.
+   */
+  chat_completions?: string[]
 }
 
 export interface OrgSummary {

@@ -60,7 +60,7 @@ class GroupsService:
         (`copy_group`) inherits one that was checked when it was set.
         """
         await self._access.refuse_taken_name(org_id=org_id, name=body.name)
-        await self._served.refuse_unserved(body.default_model)
+        await self._served.refuse_unroutable_pin(body.default_model)
         return await self._make(
             org_id=org_id, settings=body.to_settings(), from_group_id=body.template_group_id, by_user_id=by_user_id
         )
@@ -98,7 +98,7 @@ class GroupsService:
         await self._access.writable(org_id=org_id, group_id=group_id)
         if body.name:
             await self._access.refuse_taken_name(org_id=org_id, name=body.name, except_id=group_id)
-        await self._served.refuse_unserved(body.default_model)
+        await self._served.refuse_unroutable_pin(body.default_model)
 
         group = await self._groups.update_group(org_id, group_id=group_id, patch=body.to_patch())
         return OrgGroupResponse.of(group)

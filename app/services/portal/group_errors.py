@@ -36,6 +36,25 @@ class ModelNotServed(GroupConflict):
         self.served = served
 
 
+class ModelNotForChatCompletions(GroupConflict):
+    """A group pins a model only served on `/v1/messages`.
+
+    A group's model is for a chat request that names none, and only
+    `/v1/chat/completions` accepts one without a model: an Anthropic
+    Messages request always names its model. So the pin could never apply
+    there, and on `/v1/chat/completions` it sent every model-less request
+    to a model that endpoint does not serve.
+    """
+
+    def __init__(self, model: str, chat_models: set[str]) -> None:
+        super().__init__(
+            f'{model!r} is served on /v1/messages only, where every request names its model, so a group cannot '
+            'route to it. A group\'s model is for chat requests that name none, on /v1/chat/completions. '
+            f'Available there: {", ".join(sorted(chat_models)) or "none"}.'
+        )
+        self.model = model
+
+
 class NotAnOrgMember(LookupError):
     """The person to place is not an active member of the organisation."""
 

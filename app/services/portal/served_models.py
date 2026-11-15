@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 
 from app.services.ai.pool_manager import PoolManager
-from app.services.portal.group_errors import ModelNotServed
+from app.services.ai.providers.kinds import Wire
+from app.services.portal.group_errors import ModelNotForChatCompletions, ModelNotServed
 
 logger = logging.getLogger(__name__)
 
@@ -42,3 +43,21 @@ class ServedModels:
         served = {name for name, _ in pairs}
         if model not in served:
             raise ModelNotServed(model, served)
+
+    async def refuse_unroutable_pin(self, model: str | None) -> None:
+        """Refuse a group model that nothing serves, or that only `/v1/messages` serves.
+
+        A group's pin applies to a `/v1/chat/completions` request that
+        names no model; an Anthropic Messages request always names one.
+        Skipped like :meth:`refuse_unserved` when the pool cannot be read.
+        """
+        await self.refuse_unserved(model)
+        if not model:
+            return
+        try:
+            chat_models = await self._pools.get_pool().models_on(Wire.OPENAI)
+        except Exception as exc:  # noqa: BLE001 — a broken pool must not block group edits
+            logger.warning('Could not check model %r against the chat-completions pool: %s', model, exc)
+            return
+        if model not in chat_models:
+            raise ModelNotForChatCompletions(model, chat_models)

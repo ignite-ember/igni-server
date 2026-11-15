@@ -291,6 +291,7 @@ class TestWhatTheChatProxyAsksFor:
         """POST /chat/completions as *caller*; the pool's acquire, which refuses so nothing goes upstream."""
         pool = AsyncMock()
         pool.acquire = AsyncMock(side_effect=ModelNotAvailableError(model='any', available=[]))
+        pool.models_on = AsyncMock(return_value={name for name, _ in MODELS})
         with patch('app.services.ai.pool_manager.PoolManager.get_pool', new=lambda _self: pool):
             await client.post(
                 '/chat/completions',
@@ -508,3 +509,61 @@ class TestPerAgentModel:
         assert by_name['contracts']['model'] == 'legal-reviewer'
         assert by_name['general']['model'] is None
         assert pack['default_model'] == 'igni-1.0-27b'
+
+
+class TestOnlyAChatCompletionsModelCanBePinned:
+    """A group's pin is for a chat request that names no model, and only
+    `/v1/chat/completions` takes one without: an Anthropic Messages
+    request always names its model. Pinning a model only `/v1/messages`
+    serves (a cloud key-pool node) was accepted and offered, never applied
+    there, and on `/v1/chat/completions` turned every model-less request
+    from the group's members into a 404."""
+
+    @pytest.fixture(autouse=True)
+    def a_messages_only_model(self, monkeypatch):
+        async def _all(self):
+            return [*MODELS, ('MiniMax-M3.1-Flash', 'https://api.minimax.io/anthropic')]
+
+        async def _on(self, wire):
+            return {'igni-1.0-27b', 'legal-reviewer'} if wire == 'openai' else {'MiniMax-M3.1-Flash'}
+
+        monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.list_available_models', _all)
+        monkeypatch.setattr('app.services.ai.backend_pool.InferenceBackendPool.models_on', _on)
+
+    async def test_pinning_a_messages_only_model_is_refused_saying_why(self, client, admin):
+        headers, _ = admin
+        group = (await client.post('/portal/groups', json={'name': 'Cloud'}, headers=headers)).json()
+
+        resp = await client.patch(
+            f'/portal/groups/{group["id"]}', json={'default_model': 'MiniMax-M3.1-Flash'}, headers=headers
+        )
+
+        assert resp.status_code == 409, resp.text
+        assert '/v1/messages' in resp.json()['detail'] and 'legal-reviewer' in resp.json()['detail']
+
+    async def test_a_chat_completions_model_is_still_pinned(self, client, admin):
+        headers, _ = admin
+        resp = await client.post(
+            '/portal/groups', json={'name': 'Legal', 'default_model': 'legal-reviewer'}, headers=headers
+        )
+        assert resp.status_code == 201, resp.text
+
+    async def test_the_portal_is_offered_only_what_a_pin_can_route_to(self, client, admin):
+        headers, _ = admin
+
+        body = (await client.get('/portal/inference/models', headers=headers)).json()
+
+        assert 'MiniMax-M3.1-Flash' in body['models'], 'an agent may still name it'
+        assert body['chat_completions'] == ['igni-1.0-27b', 'legal-reviewer']
+
+    async def test_a_pin_the_endpoint_no_longer_serves_costs_the_pin_not_the_request(self):
+        """Saved while a node served it on chat completions; that node went."""
+        from app.services.ai.chat.proxy import ChatProxy
+        from app.services.ai.pool_manager import PoolManager
+
+        proxy = ChatProxy(
+            callers=None, pools=PoolManager(), queue=None, usage_db=None, streamer=None, completions=None
+        )  # type: ignore[arg-type]
+
+        assert await proxy._routable_pin('MiniMax-M3.1-Flash') is None  # noqa: SLF001
+        assert await proxy._routable_pin('legal-reviewer') == 'legal-reviewer'  # noqa: SLF001

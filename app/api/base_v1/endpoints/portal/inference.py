@@ -124,7 +124,7 @@ async def list_models(
     indistinguishable to the browser from an expired session — so asking
     for it logs the admin out.
     """
-    return AvailableModels(models=await fleet.model_ids())
+    return AvailableModels(models=await fleet.model_ids(), chat_completions=await fleet.chat_model_ids())
 
 
 @router.post(
