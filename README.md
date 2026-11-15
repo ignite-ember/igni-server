@@ -315,7 +315,8 @@ matter most:
 | `LOG_LEVEL` | Default `INFO` |
 | `LOG_FORMAT` | `text` (default) or `json`. JSON is one object per line for a log shipper — see [observability.md](docs/observability.md) |
 | `METRICS_TOKEN` | Bearer token for `GET /metrics` (Prometheus text format). Empty means the endpoint answers 404. Alert rules: `charts/igni/files/alerts.yaml` |
-| `PORTAL_BASE_URL` | Where invite and OAuth links point. Defaults to `http://localhost:3000`. |
+| `PORTAL_BASE_URL` | Where invite and OAuth links point, and the sign-in address in the welcome email. Defaults to `http://localhost:3000`. |
+| `CLIENT_INSTALL_URL` | Optional. Your own page for getting the igni app (intranet, software centre), linked from the welcome email. Empty, the email tells people to ask their administrator; it never names a public install command. |
 | `EMAIL_ENABLED` | Off by default. Every flow has a defined no-email path: invite links come back to the admin, and one-time codes go nowhere unless `LOG_SIGN_IN_CODES` is on. |
 | `LOG_SIGN_IN_CODES` | Off by default. With no relay, writes one-time codes to the server log for an operator to hand on — the way in for first setup with no email. Anyone who can read the logs can then sign in as anybody, so the server warns at startup, on every code and to super admins in the portal; turn it off once a relay or SSO works. |
 | `EMAIL_BACKEND` | `smtp` or `ses`. See self-hosting.md §6 for relay-specific detail. |

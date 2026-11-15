@@ -109,6 +109,10 @@ urls:
   oauthRedirectBase: ""
   # Where the OAuth flow lands the browser afterwards.
   oauthFrontendBase: ""
+  # Your own page for getting the igni app (intranet, software centre).
+  # The welcome email links it; empty, it tells people to ask their
+  # administrator. It never names a public install command.
+  clientInstall: ""
 
 # ── Secrets ──────────────────────────────────────────────────────────
 #

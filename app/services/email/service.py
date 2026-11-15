@@ -121,15 +121,16 @@ class EmailService:
 
     async def send_welcome(self, *, to_email: str, name: str | None = None) -> bool:
         content = self._templates.welcome(email=to_email, name=name)
+        t = self._templates
+        lines = [
+            f'Welcome to {t.brand}! Your igni account is ready.' if t.brand else 'Welcome! Your igni account is ready.',
+            f'Sign in at {t.portal_url}' if t.portal_url else 'Ask your administrator where to sign in.',
+            f'Get the igni app: {t.client_install_url}'
+            if t.client_install_url
+            else 'Ask your administrator how to get the igni app.',
+        ]
         return await self.send_email(
-            to_email=to_email,
-            subject=content.subject,
-            html_body=content.html_body,
-            text_body=(
-                f'Welcome to {self._templates.brand}! Your account has been created successfully.'
-                if self._templates.brand
-                else 'Welcome to igni! Your account has been created successfully.'
-            ),
+            to_email=to_email, subject=content.subject, html_body=content.html_body, text_body='\n'.join(lines)
         )
 
     async def send_team_invite(

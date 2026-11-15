@@ -315,6 +315,15 @@ subject, header or footer names a sender. Setting it — we recommend your
 organisation's name — makes it the From display name and the name in
 every subject (`Verify Your Email — Acme Engineering`), header and footer.
 
+No email names a public install command or an external URL: igni may
+run on a network that cannot reach one, and how the app reaches desktops
+— an internal mirror, managed software deployment, the offline bundle's
+desktop installer — is yours to decide. The welcome email says where to
+sign in (`portal_base_url`) and, if you set `client_install_url` (Helm:
+`urls.clientInstall`) to your own page for getting the app, links it
+as *Get the igni app*. Left empty, it tells people to ask their
+administrator.
+
 **A relay with a certificate from a private CA** (common for an internal
 relay on `starttls` or `tls`) is verified like any other: the API checks
 its certificate against the CA bundle in the image, which holds only the

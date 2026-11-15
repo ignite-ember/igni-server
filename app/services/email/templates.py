@@ -40,13 +40,32 @@ class EmailTemplates:
     have named one read without it (`docs/self-hosting.md` §6).
     """
 
-    def __init__(self, *, markup: EmailMarkup | None = None, brand: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        markup: EmailMarkup | None = None,
+        brand: str | None = None,
+        portal_url: str | None = None,
+        client_install_url: str | None = None,
+    ) -> None:
         self._markup = markup or EmailMarkup()
         self._brand = brand if brand is not None else settings.email_from_name
+        self._portal_url = portal_url if portal_url is not None else settings.portal_base_url
+        self._client_install_url = client_install_url if client_install_url is not None else settings.client_install_url
 
     @property
     def brand(self) -> str:
         return self._brand
+
+    @property
+    def portal_url(self) -> str:
+        """This deployment's portal, where its people sign in; empty if unset."""
+        return self._portal_url.rstrip('/')
+
+    @property
+    def client_install_url(self) -> str:
+        """The operator's own page for getting the igni app; empty if unset."""
+        return self._client_install_url
 
     def sign_up(self, *, code: str, email: str, name: str | None = None) -> EmailContent:
         """The verification code that activates a new account."""
@@ -165,23 +184,29 @@ class EmailTemplates:
         return self._render(subject='Password Reset Code', title='Password Reset', content=content, email=email)
 
     def welcome(self, *, email: str, name: str | None = None) -> EmailContent:
-        """Sent once an account exists: how to get igni, and who to ask."""
+        """Sent once an account exists: where to sign in, and how to get the app.
+
+        igni runs on isolated networks, so this names no public install
+        command or URL: only this deployment's portal and, when the
+        operator configured one, their own page for getting the app
+        (`CLIENT_INSTALL_URL`). Without one, the administrator is who to ask.
+        """
         m = self._markup
+        portal = self.portal_url
+        sign_in = f'Sign in at {m.link(portal)}' if portal else 'Ask your administrator where to sign in.'
+        get_the_app = (
+            m.paragraph(f'Get the igni app: {m.link(self._client_install_url)}', margin='0 0 24px')
+            if self._client_install_url
+            else m.paragraph('Ask your administrator how to get the igni app.', margin='0 0 24px')
+        )
         content = self._join(
             m.section_label('Welcome'),
             m.greeting(name),
-            m.paragraph(f'Your <strong>igni</strong> account{self._with_brand()} is ready.', margin='0 0 24px'),
             m.paragraph(
-                'You can use igni from the desktop app or from the command line. To install the command-line tool:',
-                margin='0 0 8px',
-            ),
-            m.command('brew install ignite-ember/tap/igni-core', margin='0 0 8px'),
-            m.paragraph('or', margin='0 0 8px', muted=True),
-            m.command('pip install igni-core', margin='0 0 24px'),
-            m.paragraph(
-                "Your administrator can tell you where to get the desktop app and the address of your organisation's igni server.",
+                f'Your <strong>igni</strong> account{self._with_brand()} is ready. {sign_in}',
                 margin='0 0 24px',
             ),
+            get_the_app,
             m.paragraph('If you have any questions, ask your administrator.', margin='0', muted=True),
         )
         return self._render(

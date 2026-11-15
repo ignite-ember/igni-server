@@ -234,6 +234,14 @@ class Settings(BaseSettings):
     # somebody else.
     portal_base_url: str = 'http://localhost:3000'
 
+    # Where this organisation's people get the igni app — an intranet
+    # page, a software centre entry. igni runs on isolated networks, so
+    # the welcome email never names a public install command or URL; with
+    # this empty it tells the recipient to ask their administrator.
+    client_install_url: str = Field(
+        default='', description="The operator's own page for getting the igni app; empty for none"
+    )
+
     # Bearer token the identity provider presents to /scim/v2. Empty
     # disables SCIM entirely — every route answers 503: a provisioning
     # API that accepts unauthenticated callers can create and

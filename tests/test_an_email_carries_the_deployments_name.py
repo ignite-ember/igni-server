@@ -11,7 +11,11 @@ display name and in every subject, header and footer
 
 The welcome mail used to be copy from the old hosted service — a public
 beta, a Pro plan, a vendor model, a formula that no longer exists, "our
-support team". None of that is true of a self-hosted install.
+support team". None of that is true of a self-hosted install. Nor may any
+mail name a public install command or URL: igni runs on isolated
+networks, and how the app reaches desktops is the operator's call. The
+only addresses a mail may carry are the deployment's own portal and the
+operator's `CLIENT_INSTALL_URL`.
 """
 
 from __future__ import annotations
@@ -47,7 +51,16 @@ _VENDOR_ONLY = (
     'contact support',
     'we will never',
     'lite, pro',
+    'brew install',
+    'pip install',
+    'pypi',
+    'github.com',
 )
+
+_PORTAL = 'https://igni.acme.test'
+_INSTALL = 'https://intranet.acme.test/software/igni'
+_INVITE = 'https://portal.acme.test/x'
+_URL = re.compile(r'https?://[^\s"<>\']+')
 
 
 class _Captured:
@@ -65,12 +78,29 @@ def _text(html_body: str) -> str:
     return re.sub(r' ([.,])', r'\1', spaced)
 
 
-def _render(template: str, brand: str):
-    return getattr(EmailTemplates(brand=brand), template)(**_EVERY_TEMPLATE[template])
+def _render(template: str, brand: str, *, install: str = ''):
+    templates = EmailTemplates(brand=brand, portal_url=_PORTAL, client_install_url=install)
+    return getattr(templates, template)(**_EVERY_TEMPLATE[template])
 
 
 def test_the_default_name_is_empty():
     assert Settings.model_fields['email_from_name'].default == ''
+
+
+def test_the_default_install_url_is_empty():
+    assert Settings.model_fields['client_install_url'].default == ''
+
+
+@pytest.mark.parametrize('template', sorted(_EVERY_TEMPLATE))
+@pytest.mark.parametrize('install', ['', _INSTALL])
+def test_no_template_carries_an_address_the_operator_did_not_configure(template, install):
+    content = _render(template, '', install=install)
+    configured = {_PORTAL, _INVITE} | ({install} if install else set())
+
+    # The inline logo's SVG namespace is an identifier, never fetched.
+    page = content.html_body.replace('xmlns="http://www.w3.org/2000/svg"', '')
+    for url in _URL.findall(content.subject + page):
+        assert url in configured, url
 
 
 @pytest.mark.parametrize('template', sorted(_EVERY_TEMPLATE))
@@ -121,13 +151,34 @@ def test_the_invite_without_a_name_joins_the_organisations_team():
     assert "You have been invited to join your organisation's team on igni as a Member." in text
 
 
-def test_the_welcome_is_true_of_a_self_hosted_install():
+def test_the_welcome_links_the_deployments_portal():
+    content = _render('welcome', '')
+
+    assert f'Your igni account is ready. Sign in at {_PORTAL}' in _text(content.html_body)
+    assert f'href="{_PORTAL}"' in content.html_body
+
+
+def test_the_welcome_links_the_operators_install_page_when_set():
+    content = _render('welcome', '', install=_INSTALL)
+    text = _text(content.html_body)
+
+    assert f'Get the igni app: {_INSTALL}' in text
+    assert f'href="{_INSTALL}"' in content.html_body
+    assert 'how to get the igni app' not in text
+
+
+def test_without_an_install_page_the_welcome_sends_people_to_their_administrator():
     text = _text(_render('welcome', '').html_body)
 
-    assert 'brew install ignite-ember/tap/igni-core' in text
-    assert 'pip install igni-core' in text
-    assert 'desktop app' in text
-    assert 'ask your administrator' in text
+    assert 'Ask your administrator how to get the igni app.' in text
+    assert 'Get the igni app:' not in text
+
+
+def test_without_a_portal_address_the_welcome_links_nothing():
+    content = EmailTemplates(brand='', portal_url='', client_install_url='').welcome(email='a@acme.test')
+
+    assert 'Ask your administrator where to sign in.' in _text(content.html_body)
+    assert 'href=' not in content.html_body
 
 
 def test_the_brand_is_escaped_where_it_enters_markup():
@@ -138,6 +189,8 @@ def test_the_brand_is_escaped_where_it_enters_markup():
 
 async def test_with_no_name_the_from_header_is_the_bare_address(monkeypatch):
     monkeypatch.setattr(settings, 'email_from_name', '')
+    monkeypatch.setattr(settings, 'portal_base_url', _PORTAL + '/')
+    monkeypatch.setattr(settings, 'client_install_url', '')
     transport = _Captured()
     service = EmailService(transport=transport, from_email='igni@acme.test')
 
@@ -149,7 +202,23 @@ async def test_with_no_name_the_from_header_is_the_bare_address(monkeypatch):
         assert ' — ' not in message['Subject']
         for words in _VENDOR_ONLY:
             assert not re.search(words, message.as_string().lower()), words
-    assert transport.messages[1].get_body(('plain',)).get_content().startswith('Welcome to igni!')
+    plain = transport.messages[1].get_body(('plain',)).get_content()
+    assert plain.splitlines() == [
+        'Welcome! Your igni account is ready.',
+        f'Sign in at {_PORTAL}',
+        'Ask your administrator how to get the igni app.',
+    ]
+
+
+async def test_the_welcome_text_part_carries_the_install_page_when_set(monkeypatch):
+    monkeypatch.setattr(settings, 'portal_base_url', _PORTAL)
+    monkeypatch.setattr(settings, 'client_install_url', _INSTALL)
+    transport = _Captured()
+
+    await EmailService(transport=transport, from_email='igni@acme.test').send_welcome(to_email='a@acme.test')
+
+    plain = transport.messages[0].get_body(('plain',)).get_content()
+    assert f'Get the igni app: {_INSTALL}' in plain
 
 
 async def test_the_service_brands_with_email_from_name(monkeypatch):

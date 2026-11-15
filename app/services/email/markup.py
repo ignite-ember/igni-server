@@ -198,6 +198,11 @@ class EmailMarkup:
                                 </tr>
                             </table>"""
 
+    def link(self, url: str) -> str:
+        """An inline link that shows its own address. The URL is text."""
+        safe = self.escape(url)
+        return f'<a href="{safe}" style="color: {self.ACCENT}; text-decoration: underline;">{safe}</a>'
+
     def section_label(self, text: str) -> str:
         """A small uppercase label — matches landing-section-label."""
         return f'                            <p style="margin: 0 0 8px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: {self.ACCENT};">{self.escape(text)}</p>'
