@@ -10,7 +10,7 @@
  * trust the product.
  *
  * The documentation now lives in a separate repository (igni-site) and
- * is published at `https://ignite-ember.sh/docs`, so the manifest this
+ * is published at `https://igni.sh/docs`, so the manifest this
  * used to read is no longer here. `PUBLISHED_SLUGS` is the site's
  * article list at the time of the split. It is a copy and can go stale;
  * what it still catches is a typo in a slug, or a link to an article
@@ -55,7 +55,7 @@ const articleLinks = resourceItems
 
 describe('the sidebar resource links', () => {
   it('point at the published documentation', () => {
-    expect(DOCS_URL).toBe('https://ignite-ember.sh/docs')
+    expect(DOCS_URL).toBe('https://igni.sh/docs')
     for (const item of resourceItems) {
       expect(item.href === DOCS_URL || item.href.startsWith(`${DOCS_URL}/`), item.href).toBe(true)
     }

@@ -308,7 +308,7 @@ would only load on the vendor's own marketing hostname (`ignite-ember.sh`).
 The portal carries none today: the marketing site and its analytics moved
 to a separate repository on 2026-10-31. A self-hosted portal opens on
 `/dashboard`; its sidebar links to the documentation at
-`https://ignite-ember.sh/docs`, which an air-gapped network will not reach.
+`https://igni.sh/docs`, which an air-gapped network will not reach.
 The client, CodeIndex and Artifacts each have their own copy of the test.
 
 Those scans check source and dependency files. A second, runtime test in
