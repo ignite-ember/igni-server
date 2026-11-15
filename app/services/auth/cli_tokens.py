@@ -11,6 +11,7 @@ from app.db.sql.team import TeamDB
 from app.db.sql.user import UserDB
 from app.security.api_key_sessions import is_api_key_session, REFUSED as API_KEY_SESSION_REFUSED
 from app.security.subject import Subjects
+from app.services.auth.fresh_sessions import FreshSessions
 from app.services.auth.jwt_service import JWTService
 from app.services.portal.group_extensions import GroupExtensions
 
@@ -54,6 +55,7 @@ class CLITokens:
         org_name = str(org.display_name) if org else None
 
         group = await self._groups.group_of(user_id, org_id)
+        await FreshSessions().wait_until_honoured(user_id)
         cli_token = self._jwt.create_token(user_id, org_id=org_id, org_name=org_name, group=group)
         # A minted token is a sign-in for the access review (AC-8): a
         # person who lives in the CLI must not look dormant.

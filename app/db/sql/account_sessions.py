@@ -14,6 +14,14 @@ from app.utils.singleton import SingletonMeta
 class AccountSessionsDB(SQLAlchemySessionManager, metaclass=SingletonMeta):
     """The watermark every token's `iat` is compared against, and the deactivation mark that moves it."""
 
+    async def watermark(self, user_id: str) -> datetime | None:
+        """The person's watermark, or ``None`` when nothing was ever withdrawn (or no such account)."""
+        async with self.session_scope() as session:
+            row = (
+                await session.execute(text('SELECT tokens_valid_after FROM users WHERE user_id = :u'), {'u': user_id})
+            ).first()
+        return None if row is None else row[0]
+
     async def withdraw_sessions(self, user_id: str) -> datetime:
         """Refuse every token this person already holds, from now on.
 

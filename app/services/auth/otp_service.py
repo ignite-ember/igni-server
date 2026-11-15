@@ -38,6 +38,7 @@ from app.db.redis.sealed import seal, unseal
 from app.db.sql.user import UserDB
 from app.security.subject import Subjects
 from app.services.auth.code_throttle import CodeThrottle
+from app.services.auth.fresh_sessions import FreshSessions
 from app.services.auth.jwt_service import JWTService, TokenResponse
 from app.services.identity.account_refusals import AccountRefusals
 from app.services.secrets import SecretDecryptError
@@ -295,6 +296,7 @@ class OTPService(metaclass=SingletonMeta):
             )
 
         Subjects.refuse_if_deactivated(user)
+        await FreshSessions().wait_until_honoured(str(user.user_id))
         token = JWTService().create_token(str(user.user_id))
         await self._users.note_sign_in(str(user.user_id))
         return TokenResponse(access_token=token)
