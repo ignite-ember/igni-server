@@ -619,6 +619,32 @@ class TestNothingIsRoutedToNothing:
 
         assert routes.get('/.well-known') == 'igni-api', routes
 
+    def test_ingress_nginx_admits_the_well_known_path(self, manifests):
+        """ingress-nginx 1.12 validates `Exact` and `Prefix` paths strictly
+        by default (`strict-validate-path-type`), and its pattern has no
+        dot: it refused `/.well-known` as a `Prefix` at admission, so the
+        README's own install failed. `ImplementationSpecific` is not
+        validated, and ingress-nginx matches it as a prefix. Every path that
+        stays `Prefix` or `Exact` has to pass that pattern."""
+        ingress = _of_kind(manifests, 'Ingress')[0]
+        paths = ingress['spec']['rules'][0]['http']['paths']
+        types = {p['path']: p['pathType'] for p in paths}
+
+        assert types['/.well-known'] == 'ImplementationSpecific', types
+        strict = re.compile(r'^/[A-Za-z0-9_\-/]*$')
+        refused = [p for p, t in types.items() if t in ('Prefix', 'Exact') and not strict.match(p)]
+        assert not refused, f'ingress-nginx refuses these at admission: {refused}'
+
+    def test_the_well_known_path_type_can_be_prefix_for_other_controllers(self):
+        """GKE and the AWS load balancer controller match an
+        `ImplementationSpecific` path without a wildcard exactly, which
+        would leave `/.well-known/jwks.json` to the portal. They do not
+        apply ingress-nginx's validation, so `Prefix` is theirs to pick."""
+        manifests = _render(*_FULL, '--set', 'ingress.wellKnownPathType=Prefix')
+        paths = _of_kind(manifests, 'Ingress')[0]['spec']['rules'][0]['http']['paths']
+
+        assert {p['path']: p['pathType'] for p in paths}['/.well-known'] == 'Prefix'
+
     def test_the_api_documentation_is_not_published(self, manifests):
         """`/docs`, `/redoc` and `/openapi.json` are served to anything
         inside the cluster. Publishing them on the internet is a separate

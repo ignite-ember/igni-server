@@ -498,6 +498,12 @@ ingress:
   # Its default of 1 MB refuses both. The API still holds every other
   # route to its own 32 MB.
   annotations: {}
+  # How the Ingress matches /.well-known (the API's signing keys and OpenID
+  # metadata). ingress-nginx refuses a Prefix path with a dot in it unless
+  # strict-validate-path-type is off, and matches ImplementationSpecific as
+  # a prefix. GKE and the AWS load balancer controller match
+  # ImplementationSpecific without a wildcard exactly, so set Prefix there.
+  wellKnownPathType: ImplementationSpecific
   tls:
     enabled: false
     secretName: ""

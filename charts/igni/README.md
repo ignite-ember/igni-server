@@ -210,7 +210,15 @@ Changes to defaults that an upgrade picks up without a values change:
 With `ingress.enabled=true`, one host serves both:
 
 * `/v1` → the API. This is what the CLI talks to.
+* `/.well-known` → the API: its signing keys and OpenID metadata, which
+  services fetch.
 * everything else → the portal.
+
+`/.well-known` is matched with `pathType: ImplementationSpecific`, because
+ingress-nginx (1.12 and later, `strict-validate-path-type` on by default)
+refuses a `Prefix` path containing a dot at admission; it matches
+`ImplementationSpecific` as a prefix. On GKE or the AWS load balancer
+controller, which match it exactly, set `ingress.wellKnownPathType=Prefix`.
 
 `/docs`, `/redoc` and `/openapi.json` are served by the API to anything
 inside the cluster and are **not** routed by the Ingress. Publishing your

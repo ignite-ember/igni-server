@@ -123,7 +123,8 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "className": { "type": "string" },
-        "host": { "type": "string" }
+        "host": { "type": "string" },
+        "wellKnownPathType": { "type": "string", "enum": ["ImplementationSpecific", "Prefix"] }
       }
     },
     "service": {

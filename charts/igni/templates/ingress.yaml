@@ -22,6 +22,12 @@ from publishing them on the internet.
 than `/`, and the Ingress spec says the longest matching path wins
 regardless of the order they appear in.
 
+`/.well-known` is `ImplementationSpecific` by default
+(`ingress.wellKnownPathType`). ingress-nginx 1.12 validates `Prefix` and
+`Exact` paths against a pattern with no dot (`strict-validate-path-type`,
+on by default) and refused this one at admission, failing the install.
+It does not validate `ImplementationSpecific`, and matches it as a prefix.
+
 Nothing on this host belongs to another service. A service is served on
 its own hostname, by its own deployment — this chart publishes none:
 its URL is its identity — the audience of the tokens people get for it,
@@ -60,7 +66,7 @@ spec:
                 port:
                   number: {{ .Values.service.apiPort }}
           - path: /.well-known
-            pathType: Prefix
+            pathType: {{ .Values.ingress.wellKnownPathType | default "ImplementationSpecific" }}
             backend:
               service:
                 name: {{ include "igni.fullname" . }}-api
