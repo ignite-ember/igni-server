@@ -165,16 +165,20 @@ class Retention:
         """Start the loop if any window is configured."""
         if not self.is_configured():
             logger.info(
-                'Retention: no window configured (AUDIT_RETENTION_DAYS and SERVICE_EVENT_RETENTION_DAYS are 0) '
-                '— nothing will be deleted'
+                'Retention: no window configured (AUDIT_RETENTION_DAYS, SERVICE_EVENT_RETENTION_DAYS and '
+                'PRODUCER_FEED_RETENTION_DAYS are 0) — nothing will be deleted'
             )
             return
 
         self._task = asyncio.create_task(self._loop(), name='retention')
+        # Every window, 0 included: an operator who set AUDIT_RETENTION_DAYS=0
+        # to keep everything must see that the others still delete.
         logger.info(
-            'Retention active: audit=%sd producer events=%sd',
+            'Retention active (0 = kept): audit=%sd producer events=%sd producer feed=%sd; '
+            'expired producer exports and revocations are cleared each round',
             settings.audit_retention_days,
             settings.service_event_retention_days,
+            settings.producer_feed_retention_days,
         )
 
     async def stop(self) -> None:

@@ -15,6 +15,7 @@ carries other people's comments too.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 import pathlib
 import uuid
 
@@ -298,3 +299,42 @@ class TestTheRetentionRunner:
         assert 'await retention.stop()' in main, (
             'the loop is never cancelled on shutdown, which leaks the task and can leave the advisory lock held'
         )
+
+
+class TestWhatTheOperatorIsToldAboutRetention:
+    """`retention.auditDays: 0` was described as "keep forever and the
+    retention runner does not start at all", while the runner started on
+    the 30-day defaults of the other two windows and deleted service
+    events, the gateway feed, exports and revocations."""
+
+    def test_the_chart_does_not_say_the_runner_stops_with_the_audit_window(self):
+        root = pathlib.Path(__file__).resolve().parent.parent / 'charts' / 'igni'
+        notes = ' '.join((root / 'templates' / 'NOTES.txt').read_text().split())
+        values = ' '.join((root / 'values.yaml').read_text().split())
+
+        assert 'does not start at all' not in notes
+        assert 'does nothing at all while this is 0' not in values
+        for text in (notes, values):
+            assert 'SERVICE_EVENT_RETENTION_DAYS' in text and 'PRODUCER_FEED_RETENTION_DAYS' in text
+
+    def test_the_audit_window_alone_does_not_stop_the_runner(self, monkeypatch):
+        monkeypatch.setattr(settings, 'audit_retention_days', 0)
+        assert Retention.is_configured() is True, 'the defaults of the other two windows still prune'
+
+    async def test_the_start_line_names_every_window(self, monkeypatch, caplog):
+        monkeypatch.setattr(settings, 'audit_retention_days', 0)
+        retention = Retention(first_run_delay_seconds=3600)
+        with caplog.at_level(logging.INFO, logger='app.services.retention'):
+            retention.start()
+        await retention.stop()
+
+        line = next(r.getMessage() for r in caplog.records if 'Retention active' in r.getMessage())
+        assert 'audit=0d' in line and 'producer feed=30d' in line
+
+    def test_the_idle_line_names_every_window_that_gates_it(self, monkeypatch, caplog):
+        for name in ('audit_retention_days', 'service_event_retention_days', 'producer_feed_retention_days'):
+            monkeypatch.setattr(settings, name, 0)
+        with caplog.at_level(logging.INFO, logger='app.services.retention'):
+            Retention().start()
+
+        assert 'PRODUCER_FEED_RETENTION_DAYS' in caplog.text
