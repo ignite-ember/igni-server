@@ -939,7 +939,7 @@ GET /v1/platform/producers?since=<cursor>&limit=500&wait=25   // limit 1–1000,
                       "profile": {"profile_id", "profile_name", "memory_mib", "normal_memory_mib",
                                   "expected_memory_mib", "vcpus", "idle_before_pause_s",
                                   "packages": {"apt", "pip", "npm"}, "setup_script",
-                                  "volume_max_gib", "erase_after_idle_days"} | null,
+                                  "volume_max_gib", "erase_after_idle_days", "internet"} | null,
                       "volume_gib", "legal_hold", "changed_at"}],
        "cursor": "<opaque: pass it back as since>"}
 → 400 for a cursor the feed did not give
