@@ -320,7 +320,7 @@ matter most:
 | `LOG_SIGN_IN_CODES` | Off by default. With no relay, writes one-time codes to the server log for an operator to hand on — the way in for first setup with no email. Anyone who can read the logs can then sign in as anybody, so the server warns at startup, on every code and to super admins in the portal; turn it off once a relay or SSO works. |
 | `EMAIL_BACKEND` | `smtp` or `ses`. See self-hosting.md §6 for relay-specific detail. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_TLS_MODE` | Your relay |
-| `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` | Sender identity |
+| `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` | Sender identity. `EMAIL_FROM_NAME` is optional — set it to your organisation's name; empty (the default) sends from the bare address and names no sender. |
 | `AUDIT_RETENTION_DAYS` | Delete audit events older than this. `0` (default) keeps everything. |
 | `MCP_GATEWAY_URL` | MCP gateway |
 | `PORTAL_AUTH_BYPASS` | Development only; refused outside `APP_ENV=dev` |

@@ -193,10 +193,14 @@ class Settings(BaseSettings):
         default='starttls', description='starttls (587), tls (465), or none (25, internal relay)'
     )
 
-    # The display name on outbound mail. Configurable because a
-    # self-hosted deployment is the customer's, not ours — their people
-    # should not receive sign-in codes from a vendor's brand.
-    email_from_name: str = Field(default='igni', description='Display name in the From header')
+    # The display name on outbound mail, and the name in its subjects,
+    # header and footer. igni-server is only shipped as images the
+    # customer runs, so the vendor never signs: empty (the default) sends
+    # from the bare EMAIL_FROM_ADDRESS and names no sender anywhere in the
+    # mail. Set it to the organisation's name.
+    email_from_name: str = Field(
+        default='', description="Display name on outbound mail (e.g. the organisation's name); empty for none"
+    )
 
     # ── Which transport carries the mail ─────────────────────────────
     # ``smtp`` works against anything, including SES. ``ses`` uses the

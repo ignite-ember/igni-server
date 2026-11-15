@@ -1,19 +1,27 @@
-"""Mail goes out under the deployment's name, not the vendor's.
+"""Mail goes out under the deployment's name, or under none — never the vendor's.
 
-`docs/self-hosting.md` §6 tells an operator to set `EMAIL_FROM_NAME`
-because "a self-hosted deployment is the customer's, and their people
-should not receive sign-in codes from a vendor's brand". Only the From
-display name followed it: every subject, the header and the footer said
-`ignite-ember.sh`, whatever the operator set.
+igni-server is shipped only as images the customer runs; the vendor runs
+no server and signs nothing. `EMAIL_FROM_NAME` is therefore empty by
+default, and an empty name means the mail names no sender at all: the
+From header is the bare `EMAIL_FROM_ADDRESS`, no subject carries a
+" — <brand>" suffix, the header and footer have no brand line, and the
+sentences that named one read without it. Set, it appears as the From
+display name and in every subject, header and footer
+(`docs/self-hosting.md` §6).
+
+The welcome mail used to be copy from the old hosted service — a public
+beta, a Pro plan, a vendor model, a formula that no longer exists, "our
+support team". None of that is true of a self-hosted install.
 """
 
 from __future__ import annotations
 
 from email.message import EmailMessage
+import re
 
 import pytest
 
-from app.config import settings
+from app.config import Settings, settings
 from app.services.email.service import EmailService
 from app.services.email.templates import EmailTemplates
 
@@ -27,6 +35,20 @@ _EVERY_TEMPLATE = {
     'welcome': {'email': 'a@acme.test'},
 }
 
+# Words that only the vendor's old hosted service could truthfully say.
+_VENDOR_ONLY = (
+    'ignite-ember.sh',
+    'ignite-ember/tap/ignite-ember',
+    'beta',
+    'pro plan',
+    'minimax',
+    'support team',
+    r'\bour team',
+    'contact support',
+    'we will never',
+    'lite, pro',
+)
+
 
 class _Captured:
     def __init__(self) -> None:
@@ -37,19 +59,97 @@ class _Captured:
         return True
 
 
-@pytest.mark.parametrize('template', sorted(_EVERY_TEMPLATE))
-def test_no_template_names_the_vendor(template):
-    content = getattr(EmailTemplates(brand='Acme igni'), template)(**_EVERY_TEMPLATE[template])
+def _text(html_body: str) -> str:
+    """The body's visible words, tags dropped and whitespace collapsed."""
+    spaced = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', html_body))
+    return re.sub(r' ([.,])', r'\1', spaced)
 
-    assert 'ignite-ember.sh' not in content.subject
-    assert 'ignite-ember.sh' not in content.html_body
+
+def _render(template: str, brand: str):
+    return getattr(EmailTemplates(brand=brand), template)(**_EVERY_TEMPLATE[template])
+
+
+def test_the_default_name_is_empty():
+    assert Settings.model_fields['email_from_name'].default == ''
+
+
+@pytest.mark.parametrize('template', sorted(_EVERY_TEMPLATE))
+@pytest.mark.parametrize('brand', ['', 'Acme igni'])
+def test_no_template_says_what_only_the_vendor_could(template, brand):
+    content = _render(template, brand)
+
+    for words in _VENDOR_ONLY:
+        assert not re.search(words, content.subject.lower()), words
+        assert not re.search(words, content.html_body.lower()), words
+
+
+@pytest.mark.parametrize('template', sorted(_EVERY_TEMPLATE))
+def test_with_no_name_nothing_dangles(template):
+    content = _render(template, '')
+    text = _text(content.html_body)
+
+    assert ' — ' not in content.subject and not content.subject.rstrip().endswith('—')
+    # No empty header subtitle or footer line is left behind.
+    assert not re.search(r'<p[^>]*>\s*</p>', content.html_body)
+    # No sentence lost its object: "signing up to .", "on .", "for ,".
+    assert not re.search(r'\b(to|on|for|with)\s*[.,]', text), text
+    assert '<strong></strong>' not in content.html_body
+
+
+@pytest.mark.parametrize('template', sorted(_EVERY_TEMPLATE))
+def test_a_set_name_is_in_the_subject_header_and_footer(template):
+    content = _render(template, 'Acme igni')
+
     assert 'Acme igni' in content.html_body
+    # header subtitle and footer: at least twice in the page.
+    assert content.html_body.count('Acme igni') >= 2
+    if template in ('sign_up', 'team_invite', 'welcome'):
+        assert content.subject.endswith(' — Acme igni')
+
+
+def test_sign_up_without_a_name_reads_naturally():
+    text = _text(_render('sign_up', '').html_body)
+
+    assert 'Thanks for signing up. Use the verification code below' in text
+    assert "If you didn't sign up, please ignore this email." in text
+    assert 'Nobody from your organisation will ask you for it.' in text
+
+
+def test_the_invite_without_a_name_joins_the_organisations_team():
+    text = _text(_render('team_invite', '').html_body)
+
+    assert "You have been invited to join your organisation's team on igni as a Member." in text
+
+
+def test_the_welcome_is_true_of_a_self_hosted_install():
+    text = _text(_render('welcome', '').html_body)
+
+    assert 'brew install ignite-ember/tap/igni-core' in text
+    assert 'pip install igni-core' in text
+    assert 'desktop app' in text
+    assert 'ask your administrator' in text
 
 
 def test_the_brand_is_escaped_where_it_enters_markup():
     body = EmailTemplates(brand='<b>Acme</b>').sign_up(code='1', email='a@acme.test').html_body
 
     assert '<b>Acme</b>' not in body and '&lt;b&gt;Acme&lt;/b&gt;' in body
+
+
+async def test_with_no_name_the_from_header_is_the_bare_address(monkeypatch):
+    monkeypatch.setattr(settings, 'email_from_name', '')
+    transport = _Captured()
+    service = EmailService(transport=transport, from_email='igni@acme.test')
+
+    await service.send_sign_up_code(to_email='a@acme.test', code='654321')
+    await service.send_welcome(to_email='a@acme.test')
+
+    for message in transport.messages:
+        assert message['From'] == 'igni@acme.test'
+        assert ' — ' not in message['Subject']
+        for words in _VENDOR_ONLY:
+            assert not re.search(words, message.as_string().lower()), words
+    assert transport.messages[1].get_body(('plain',)).get_content().startswith('Welcome to igni!')
 
 
 async def test_the_service_brands_with_email_from_name(monkeypatch):
@@ -64,4 +164,5 @@ async def test_the_service_brands_with_email_from_name(monkeypatch):
     sign_up, welcome = transport.messages
     assert sign_up['Subject'].endswith('Verify Your Email — R0 Igni')
     assert sign_up['From'] == 'R0 Igni <igni@acme.test>'
+    assert welcome['Subject'].endswith('Welcome to igni — R0 Igni')
     assert 'ignite-ember.sh' not in welcome.as_string()

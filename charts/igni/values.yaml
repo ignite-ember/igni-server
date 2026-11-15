@@ -287,7 +287,10 @@ email:
   smtpTlsMode: starttls
   smtpUsername: ""
   fromAddress: noreply@igni.local
-  fromName: igni
+  # Display name on outbound mail, and the name in its subjects, header and
+  # footer — set it to your organisation's name. Empty sends from the bare
+  # fromAddress and names no sender.
+  fromName: ""
   # SES only.
   sesRegion: ""
   # With no relay, write one-time codes to the API log so an operator can

@@ -308,10 +308,12 @@ at all while STARTTLS was hardcoded on.
   addresses until AWS grants production access. Worth requesting before
   you need it, not during a rollout.
 
-Set `email_from_name` too — a self-hosted deployment is the customer's,
-and their people should not receive sign-in codes from a vendor's brand.
-It is the From display name and the name in every subject, header and
-footer.
+`email_from_name` is optional. igni-server is shipped only as images you
+run, so no mail it sends is signed by the vendor: left empty (the
+default), the From header is the bare `email_from_address`, and no
+subject, header or footer names a sender. Setting it — we recommend your
+organisation's name — makes it the From display name and the name in
+every subject (`Verify Your Email — Acme Engineering`), header and footer.
 
 **A relay with a certificate from a private CA** (common for an internal
 relay on `starttls` or `tls`) is verified like any other: the API checks

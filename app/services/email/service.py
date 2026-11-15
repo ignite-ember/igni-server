@@ -80,7 +80,9 @@ class EmailService:
             message = EmailMessage()
             # The address must be exactly what the provider expects: SES
             # rejects a From that is not a verified identity in the account.
-            message['From'] = f'{self.from_name} <{self.from_email}>'
+            # An empty EMAIL_FROM_NAME (the default) sends the bare address:
+            # the vendor runs no server and signs nothing.
+            message['From'] = f'{self.from_name} <{self.from_email}>' if self.from_name else self.from_email
             message['To'] = to_email
             message['Subject'] = subject
 
@@ -123,7 +125,11 @@ class EmailService:
             to_email=to_email,
             subject=content.subject,
             html_body=content.html_body,
-            text_body=f'Welcome to {self._templates.brand}! Your account has been created successfully.',
+            text_body=(
+                f'Welcome to {self._templates.brand}! Your account has been created successfully.'
+                if self._templates.brand
+                else 'Welcome to igni! Your account has been created successfully.'
+            ),
         )
 
     async def send_team_invite(
