@@ -58,7 +58,7 @@ export default function App() {
                   {/* The portal opens on its dashboard; someone signed
                   out is sent on to sign in. The public site — landing
                   page and documentation — is a separate repository
-                  (igni-site) served at ignite-ember.sh, and the
+                  (igni-site) served at igni.sh, and the
                   sidebar links to its documentation there. */}
                   <Route index element={<Navigate to="/dashboard" replace />} />
                   <Route path="/login" element={<LoginPage />} />

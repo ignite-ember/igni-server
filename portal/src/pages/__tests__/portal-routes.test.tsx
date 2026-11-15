@@ -12,7 +12,7 @@
  *
  * 1. `/` goes to the portal, never to a sales page.
  * 2. `/docs` is not routed: the documentation is published at
- *    ignite-ember.sh, and the sidebar links there.
+ *    igni.sh, and the sidebar links there.
  * 3. The route table names no site page and reads no site flag.
  *
  * `App` is rendered directly rather than through `renderWithProviders`,
