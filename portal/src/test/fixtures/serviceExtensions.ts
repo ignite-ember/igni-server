@@ -15,7 +15,7 @@
 import type { ServiceExtensionDetail } from '../../types'
 
 export const ARTIFACTS_MANIFEST: Record<string, unknown> = {
-  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+  "$schema": "https://ignite-ember.sh/schema/extension-manifest-1.json",
   "id": "igni.artifacts",
   "version": "0.1.0",
   "contract": ">=1.0 <2",
@@ -133,7 +133,7 @@ export const ARTIFACTS_MANIFEST: Record<string, unknown> = {
 }
 
 export const CODEINDEX_MANIFEST: Record<string, unknown> = {
-  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+  "$schema": "https://ignite-ember.sh/schema/extension-manifest-1.json",
   "id": "igni.codeindex",
   "version": "0.1.0",
   "contract": ">=1.0 <2",
