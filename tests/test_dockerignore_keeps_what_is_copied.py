@@ -165,3 +165,29 @@ def test_nothing_it_copies_is_excluded_from_the_context(dockerfile):
         f'which is a confusing enough error to cost an afternoon — and it only shows up '
         f'when somebody actually builds that image.'
     )
+
+
+def test_every_tracked_file_the_api_image_copies_reaches_it():
+    """A directory can survive while files in it do not. `**/*.md` dropped
+    the Default group's agent and skill seeds from `app/`, so every
+    organisation created on a released image got 4 entries instead of 20
+    — and the log said only "Seed directory ... holds no *.md".
+
+    The API image only: it reads what it copies at runtime. The portal
+    builds from a bundle and the deployer copies the chart, whose README
+    is rightly left out."""
+    import subprocess
+
+    dockerfile = 'containers/be/Dockerfile'
+
+    tracked = subprocess.run(
+        ['git', 'ls-files', '-z', '--', *_copy_sources(_ROOT / dockerfile)],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split('\0')
+
+    dropped = sorted(path for path in tracked if path and _is_excluded(path))
+
+    assert not dropped, f'{dockerfile} copies directories whose tracked files `.dockerignore` drops: {dropped}'

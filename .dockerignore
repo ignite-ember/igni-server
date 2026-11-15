@@ -83,6 +83,11 @@ marketplace
 # the API container (docs/self-hosting.md §1).
 !tools/smoke_provider.py
 **/*.md
+# …except the seed every new organisation's Default group is copied from:
+# read at runtime by app/services/portal/default_group_seed.py. Excluded,
+# the released image seeded new organisations with no agents or skills.
+!app/services/portal/default_group_agents/*.md
+!app/services/portal/default_group_skills/*.md
 **/*.log
 
 # The other images' own build inputs.
