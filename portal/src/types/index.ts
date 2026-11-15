@@ -817,6 +817,10 @@ export interface VmProfileSettings {
    * has its memory, snapshots, volume and keys erased. Null: never.
    */
   erase_after_idle_days?: number | null
+  /** The volume a new VM of this profile gets, in GiB. Absent: the platform's standard. */
+  volume_gib?: number
+  /** How far an org admin may grow one VM's volume, in GiB. Absent: the platform's standard. */
+  volume_max_gib?: number
   /**
    * Whether a VM with the profile may reach the internet. False: only what
    * its node allows. A security grant; a node that may not grant it

@@ -81,6 +81,11 @@ function ProfileForm({
     initial.erase_after_idle_days == null ? '' : String(initial.erase_after_idle_days),
   )
   const [internet, setInternet] = useState(initial.internet === true)
+  // Empty on a new profile: the platform's standard size. An existing one
+  // shows and sends back what it has, so saving never resets a volume set
+  // through the API.
+  const [volume, setVolume] = useState(initial.volume_gib == null ? '' : String(initial.volume_gib))
+  const [volumeMax, setVolumeMax] = useState(initial.volume_max_gib == null ? '' : String(initial.volume_max_gib))
 
   return (
     <form
@@ -98,6 +103,8 @@ function ProfileForm({
           setup_script: script.trim() ? script : null,
           erase_after_idle_days: eraseDays.trim() ? Number(eraseDays) : null,
           internet,
+          ...(volume.trim() && { volume_gib: Number(volume) }),
+          ...(volumeMax.trim() && { volume_max_gib: Number(volumeMax) }),
         })
       }}
     >
@@ -129,6 +136,30 @@ function ProfileForm({
           <Checkbox checked={never} onChange={(e) => setNever(e.target.checked)} />
           <FormControl.Label>Never suspend</FormControl.Label>
         </FormControl>
+        <Stack direction="horizontal" gap="normal" wrap="wrap">
+          <FormControl>
+            <FormControl.Label>Volume (GiB)</FormControl.Label>
+            <TextInput
+              type="number"
+              min={1}
+              value={volume}
+              placeholder="Standard"
+              onChange={(e) => setVolume(e.target.value)}
+            />
+            <FormControl.Caption>The disk a new VM of this profile gets.</FormControl.Caption>
+          </FormControl>
+          <FormControl>
+            <FormControl.Label>Largest volume (GiB)</FormControl.Label>
+            <TextInput
+              type="number"
+              min={1}
+              value={volumeMax}
+              placeholder="Standard"
+              onChange={(e) => setVolumeMax(e.target.value)}
+            />
+            <FormControl.Caption>How far an admin may grow one VM&apos;s volume. Empty: the platform&apos;s standard.</FormControl.Caption>
+          </FormControl>
+        </Stack>
         <FormControl>
           <FormControl.Label>Expected memory (MiB)</FormControl.Label>
           <TextInput type="number" min={128} value={expected} onChange={(e) => setExpected(e.target.value)} />

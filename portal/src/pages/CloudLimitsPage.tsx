@@ -62,14 +62,14 @@ function CapsForm({ caps, onSaved }: { caps: PlatformVmCaps; onSaved: Saved }) {
   const [eraseDays, setEraseDays] = useState(
     caps.max_erase_after_idle_days == null ? '' : String(caps.max_erase_after_idle_days),
   )
+  const [volume, setVolume] = useState(caps.max_volume_gib == null ? '' : String(caps.max_volume_gib))
   const save = useMutation({
     mutationFn: () =>
       client.put('/portal/vm-caps', {
         max_memory_mib: Number(memory),
         max_vcpus: Number(vcpus),
         max_idle_before_pause_s: noIdleLimit ? null : Number(idle),
-        // Not edited here: sent back as it is, so saving the others never resets it.
-        ...(caps.max_volume_gib !== undefined && { max_volume_gib: caps.max_volume_gib }),
+        ...(volume.trim() && { max_volume_gib: Number(volume) }),
         max_erase_after_idle_days: eraseDays.trim() ? Number(eraseDays) : null,
       }),
     onSuccess: () => {
@@ -100,6 +100,10 @@ function CapsForm({ caps, onSaved }: { caps: PlatformVmCaps; onSaved: Saved }) {
           <FormControl disabled={noIdleLimit}>
             <FormControl.Label>Longest idle before suspend (s)</FormControl.Label>
             <TextInput type="number" min={0} value={idle} onChange={(e) => setIdle(e.target.value)} />
+          </FormControl>
+          <FormControl>
+            <FormControl.Label>Largest volume (GiB)</FormControl.Label>
+            <TextInput type="number" min={1} value={volume} onChange={(e) => setVolume(e.target.value)} />
           </FormControl>
         </Stack>
         <FormControl>

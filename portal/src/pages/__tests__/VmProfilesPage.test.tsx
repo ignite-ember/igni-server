@@ -83,6 +83,52 @@ describe('VmProfilesPage', () => {
     expect(screen.getByText('Internal only')).toBeInTheDocument()
   })
 
+  test("editing a profile keeps the volume it was given, and can change it", async () => {
+    let sent: Record<string, unknown> | null = null
+    const sized = { ...BROWSER, volume_gib: 20, volume_max_gib: 80 }
+    server.use(
+      http.get('/v1/portal/orgs/demo-org-001/vm-profiles', () =>
+        HttpResponse.json({ ...OVERVIEW, profiles: [OVERVIEW.profiles[0], sized] }),
+      ),
+      http.put('/v1/portal/orgs/demo-org-001/vm-profiles/p-browser', async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(sized)
+      }),
+    )
+
+    renderWithProviders(<VmProfilesPage />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit Browser' }))
+    expect(screen.getByRole('spinbutton', { name: /^Volume/ })).toHaveValue(20)
+    const largest = screen.getByRole('spinbutton', { name: /Largest volume/ })
+    expect(largest).toHaveValue(80)
+    await userEvent.clear(largest)
+    await userEvent.type(largest, '100')
+    await userEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+
+    await expect.poll(() => sent?.name).toBe('Browser')
+    expect([sent!.volume_gib, sent!.volume_max_gib]).toEqual([20, 100])
+  })
+
+  test("a new profile left at the standard volume sends none, so the server's standard applies", async () => {
+    let sent: Record<string, unknown> | null = null
+    server.use(
+      http.get('/v1/portal/orgs/demo-org-001/vm-profiles', () => HttpResponse.json(OVERVIEW)),
+      http.post('/v1/portal/orgs/demo-org-001/vm-profiles', async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(BROWSER, { status: 201 })
+      }),
+    )
+
+    renderWithProviders(<VmProfilesPage />)
+    await userEvent.click(await screen.findByRole('button', { name: 'New profile' }))
+    await userEvent.type(screen.getByRole('textbox', { name: /^Name/ }), 'Plain')
+    await userEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+
+    await expect.poll(() => sent?.name).toBe('Plain')
+    expect(sent).not.toHaveProperty('volume_gib')
+    expect(sent).not.toHaveProperty('volume_max_gib')
+  })
+
   test('sends the expected memory when one is given', async () => {
     let sent: Record<string, unknown> | null = null
     server.use(
