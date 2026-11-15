@@ -60,6 +60,13 @@ class BackendMisconfiguredRefusal(ChatRefused):
         super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
 
+class AllNodesDrainedRefusal(ChatRefused):
+    """Every node was taken out of rotation from the portal: a 503 that says who can put one back."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+
+
 class UpstreamRefusal(ChatRefused):
     """The nodes tried did not produce a usable answer; the failure says which way."""
 

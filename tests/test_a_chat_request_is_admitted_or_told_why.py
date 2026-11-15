@@ -14,6 +14,7 @@ import pytest
 from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.chat.admission import ChatAdmission
 from app.services.ai.chat.errors import (
+    AllNodesDrainedRefusal,
     BackendMisconfiguredRefusal,
     ModelUnavailableRefusal,
     QueueFullRefusal,
@@ -21,7 +22,7 @@ from app.services.ai.chat.errors import (
 )
 from app.services.ai.chat.schemas import ChatCaller
 from app.services.ai.fair_queue import FairQueue
-from app.services.ai.schemas import ModelNotAvailableError, NoBackendAvailableError
+from app.services.ai.schemas import AllBackendsDrainedError, ModelNotAvailableError, NoBackendAvailableError
 from tests.chat_proxy import lease
 
 
@@ -113,6 +114,18 @@ async def test_a_misconfigured_pool_is_a_503_in_its_own_words():
         'No inference backends are available.',
         None,
     )
+
+
+async def test_every_node_drained_is_a_503_saying_how_to_resume_one():
+    """Every node taken out of rotation from the portal was a bare 500 on
+    /v1/chat/completions; the pool's own sentence names the fix."""
+    error = AllBackendsDrainedError(['gpu-01'])
+
+    with pytest.raises(AllNodesDrainedRefusal) as caught:
+        await _admission(_Pool(error)).admit(caller=ADA, model='m-1')
+
+    assert (caught.value.status_code, caught.value.detail, caught.value.retry_after) == (503, str(error), None)
+    assert 'Resume one from the portal' in caught.value.detail
 
 
 async def test_a_full_queue_is_refused_at_once():
