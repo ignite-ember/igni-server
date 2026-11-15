@@ -39,9 +39,12 @@ from app.services.portal.group_refusals import GroupRefusals
 logger = logging.getLogger(__name__)
 
 DEFAULT_GROUP_NAME = 'Default'
+#: Shown to admins in the portal. The group is read-only (`GroupIsStandard`),
+#: so this says how to change it rather than inviting an edit that is refused.
+#: Existing groups were brought to it by tenant migration t0032.
 DEFAULT_GROUP_DESCRIPTION = (
-    'What igni ships, as a starting point. Edit or delete any of it here — '
-    'members pick the changes up on their next sync.'
+    'What igni ships, as a starting point. It cannot be changed here: '
+    'create a group from it to make your own version.'
 )
 
 
