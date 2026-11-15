@@ -314,8 +314,8 @@ class TestWhatTheOperatorIsToldAboutRetention:
 
         assert 'does not start at all' not in notes
         assert 'does nothing at all while this is 0' not in values
-        for text in (notes, values):
-            assert 'SERVICE_EVENT_RETENTION_DAYS' in text and 'PRODUCER_FEED_RETENTION_DAYS' in text
+        for told in (notes, values):
+            assert 'SERVICE_EVENT_RETENTION_DAYS' in told and 'PRODUCER_FEED_RETENTION_DAYS' in told
 
     def test_the_audit_window_alone_does_not_stop_the_runner(self, monkeypatch):
         monkeypatch.setattr(settings, 'audit_retention_days', 0)
