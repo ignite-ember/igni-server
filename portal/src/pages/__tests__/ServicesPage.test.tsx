@@ -72,6 +72,16 @@ const ORDER = {
 }
 
 describe('ServicesPage', () => {
+  test("badges Fleet's gateway as a platform client, not an app", async () => {
+    serve([{ ...PENDING, client_id: 'client-gateway', kind: 'platform', name: 'igni-gateway' }])
+
+    renderWithProviders(<ServicesPage />)
+
+    const card = await screen.findByRole('listitem', { name: 'igni-gateway' })
+    expect(within(card).getByText('Platform')).toBeInTheDocument()
+    expect(within(card).queryByText('App')).not.toBeInTheDocument()
+  })
+
   test('marks a service whose update asks for more than was approved', async () => {
     serve([{ ...APPROVED, held_version: '0.2.0' }, PENDING])
 

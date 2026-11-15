@@ -347,7 +347,8 @@ export interface LicenceOverview {
 
 // ─── Registered clients ─────────────────────────────────────────────
 
-export type RegisteredClientKind = 'service' | 'app'
+/** `platform`: Fleet's gateway and node agents, approved by a super admin like a service. */
+export type RegisteredClientKind = 'service' | 'app' | 'platform'
 export type RegisteredClientState = 'pending' | 'approved' | 'revoked'
 
 /**

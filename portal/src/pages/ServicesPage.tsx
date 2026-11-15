@@ -17,7 +17,7 @@ import client from '../api/client'
 import { refusalOf } from '../api/refusal'
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { useServiceDecision, type ServiceDecision } from '../hooks/useServiceDecision'
-import { STATE_LABEL, STATE_ORDER } from '../lib/registeredClients'
+import { KIND_LABEL, STATE_LABEL, STATE_ORDER } from '../lib/registeredClients'
 import type { ExtensionPriority, RegisteredClient, UserMe } from '../types'
 import './cards.css'
 import './ServicesPage.css'
@@ -52,7 +52,7 @@ function ClientCard({
       <Stack direction="horizontal" align="center" justify="space-between" wrap="wrap" gap="condensed">
         <Stack direction="horizontal" align="center" gap="condensed" wrap="wrap">
           <Text weight="semibold">{registration.name}</Text>
-          <Label variant="secondary">{registration.kind === 'service' ? 'Service' : 'App'}</Label>
+          <Label variant="secondary">{KIND_LABEL[registration.kind]}</Label>
           <Label variant={state.variant}>{state.text}</Label>
           {registration.held_version && (
             <Label variant="attention">Update asks for more: {registration.held_version}</Label>
