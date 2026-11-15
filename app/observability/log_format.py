@@ -96,3 +96,27 @@ def configure(level: str, *, as_json: bool) -> None:
         handlers=[handler],
         force=True,
     )
+
+    if as_json:
+        _route_everything_through_the_root()
+
+
+#: uvicorn's loggers, which it gives handlers of their own with
+#: `propagate=False`: their records never reach the root handler above.
+_UVICORN_LOGGERS = ('uvicorn', 'uvicorn.error', 'uvicorn.access')
+
+
+def _route_everything_through_the_root() -> None:
+    """Make every line in the stream a JSON object, not only ours.
+
+    uvicorn's startup lines and every access line (`"GET /health HTTP/1.1"
+    200`) kept uvicorn's own plain-text handlers, so a shipper parsing the
+    stream line by line choked on most of it; and Python warnings went to
+    stderr raw. Their handlers are dropped so the records propagate to the
+    root handler, and warnings are captured as `py.warnings` records.
+    """
+    for name in _UVICORN_LOGGERS:
+        uvicorn_logger = logging.getLogger(name)
+        uvicorn_logger.handlers.clear()
+        uvicorn_logger.propagate = True
+    logging.captureWarnings(True)
