@@ -69,3 +69,23 @@ async def test_a_member_without_a_key_is_forbidden_and_a_stranger_unauthorised()
     with pytest.raises(HTTPException) as stranger:
         await require_deployment_admin(_REQUEST, x_super_admin_key=None, current_user=None)
     assert (member.value.status_code, stranger.value.status_code) == (403, 401)
+
+
+@pytest.mark.parametrize(
+    'stored',
+    [
+        'a-password-pasted-where-the-hash-goes',
+        # What docker compose leaves of `$2b$12$<53 more>` in an env file: each
+        # `$name` is interpolated away, 38 characters arrive instead of 60.
+        '$2b$' + 'abcdefghijklmnopqrstuvwxyz0123456789'[:34],
+    ],
+)
+async def test_a_stored_value_that_is_not_a_bcrypt_hash_fails_closed_with_a_diagnosis(monkeypatch, stored):
+    """It was a 500 (`ValueError: Invalid salt`) on every break-glass call."""
+    monkeypatch.setattr(settings, 'super_admin_password_hash', stored)
+
+    with pytest.raises(HTTPException) as refused:
+        await require_deployment_admin(_REQUEST, x_super_admin_key=stored, current_user=None)
+
+    assert refused.value.status_code == 503
+    assert 'not a bcrypt hash' in refused.value.detail and '$$' in refused.value.detail
