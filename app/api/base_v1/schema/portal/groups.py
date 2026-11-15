@@ -118,13 +118,24 @@ class CopyGroupRequest(BaseModel):
     """Copy a group: its entries, extensions and settings, under a new name, with nobody in it."""
 
     name: str = Field(..., min_length=1, max_length=120, description='Name of the copy (unique within org)')
-    description: str | None = Field(None, description="The copy's description. Omit to keep the original's.")
+    description: str | None = Field(
+        None,
+        description=(
+            "The copy's description. Omit to keep the original's, except the Default group's, which says it "
+            'cannot be changed and so is not carried to a copy that can.'
+        ),
+    )
 
     def to_settings(self, source: OrgGroup) -> GroupSettings:
-        """The copy's settings: its own name, and the rest *source*'s unless this request supplies them."""
+        """The copy's settings: its own name, and the rest *source*'s unless this request supplies them.
+
+        The Default group's description is igni's note that it is read-only;
+        the copy is an ordinary, editable group, so it starts with none.
+        """
+        kept = None if source.is_default else source.description
         return GroupSettings(
             name=self.name,
-            description=self.description if self.description is not None else source.description,
+            description=self.description if self.description is not None else kept,
             default_model=source.default_model,
             theme=source.theme,
         )

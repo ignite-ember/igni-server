@@ -2229,7 +2229,7 @@
                 "type": "null"
               }
             ],
-            "description": "The copy's description. Omit to keep the original's.",
+            "description": "The copy's description. Omit to keep the original's, except the Default group's, which says it cannot be changed and so is not carried to a copy that can.",
             "title": "Description"
           },
           "name": {
