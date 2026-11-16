@@ -114,8 +114,9 @@ def backend_installs_extension(j: Journey) -> Outcome | str:
                 )
                 if token:
                     # The window token goes to the client on its stdin: an
-                    # argument is visible in the process list.
-                    holder.stdin.write(token + '\n')
+                    # argument is visible in the process list. The pipe is
+                    # a byte pipe, so the token goes in as bytes.
+                    holder.stdin.write((token + '\n').encode())
                 holder.stdin.close()
                 j.note(f'$ node browser.mjs ws-hold --url {ws_url} (a client window attaches)')
             if holder is not None and holder.poll() is not None:
