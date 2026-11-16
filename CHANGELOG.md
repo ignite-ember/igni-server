@@ -15,6 +15,56 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-16
+
+The first release after 0.7.0, and the one the end-to-end campaign's
+findings were fixed in. It changes no interface: every entry below is a
+fix, an addition that keeps what it was, or a correction to what the
+documentation said.
+
+### Added
+
+- **The chart can mount files into the API pod.** `extraVolumes` and
+  `extraVolumeMounts` add volumes and mounts to the API pod, so
+  `INFERENCE_BACKENDS_PATH` can name a file — the case
+  `app/config.py` calls the normal one — and not only the inline
+  `INFERENCE_BACKENDS`. `values.yaml` carries the backends ConfigMap as
+  the example. [charts/igni](charts/igni).
+- **A second igni can run on the same host.** The production compose
+  file's container names follow `IGNI_STACK` and its host ports
+  `IGNI_API_PORT` / `IGNI_PORTAL_PORT`, as the local file's do. The
+  defaults are unchanged, so an install that set them by hand still
+  works.
+- **Organisation databases have a downgrade.** `python -m
+  app.db.sql.tenant_migrations --downgrade <revision>` (and `make
+  downgrade-tenants REV=...`) takes the tenant template and every active
+  organisation back, so a rollback to the previous image does not stop at
+  "Can't locate revision" in migrate. The README and the chart README
+  describe both steps.
+- **The portal shows and keeps a VM profile's volume.** The profile form
+  had no volume fields, and `PUT` replaces the whole profile, so any
+  portal edit reset a volume set through the API to the standard 10/50
+  GiB and sent that out on the producer feed. The form now shows and
+  sends `volume_gib` and `volume_max_gib`; a new profile left empty
+  takes the server's standard.
+
+### Changed
+
+- **A group's pinned model is one chat completions actually serves.** A
+  group's model is for a chat request that names none, and only
+  `/v1/chat/completions` accepts that. Pinning a model that only
+  `/v1/messages` serves was accepted and offered, never applied there,
+  and turned every model-less chat completion from the group into a 404.
+  Saving refuses such a pin and says why, the portal offers only the
+  chat-completions models, and a pin whose model has since left that
+  endpoint costs the group its pin, not the request.
+- **The scheduled vulnerability scan scans the newest release's
+  images.** The scheduled scan is the only rescan a shipped image gets,
+  and it rebuilt the default branch: when `main` moved dnspython to
+  2.9.2 the scan went green while the released 0.7.0 images still
+  carried 2.9.1. The job now checks out the newest `vX.Y.Z` tag and
+  builds that.
+
 ### Fixed
 
 - **The portal image is tagged with the release version.** The release
@@ -25,6 +75,119 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
   it; the portal's does not, and the 0.7.0 release run hit exactly that.
   The version is written now, and both builds refuse an empty one rather
   than push a tag that names nothing.
+- **A drained fleet answers 503, and a fleet with no nodes answers an
+  empty model list.** With every node drained, chat admission let
+  `AllBackendsDrainedError` out as a bare 500 on `/v1/chat/completions`
+  and `/v1/messages`; it is now a 503 in the pool's own words ("Resume
+  one from the portal"). With no node at all — none configured, or the
+  last registered one stopped or expired — `GET /v1/chat/models` answered
+  500; it is now an empty list, not cached, so client model discovery
+  survives the GPUs being off.
+- **A timed-out non-streamed completion is not asked again.** A
+  non-streamed request that timed out was retried up to three times, on
+  the same node when it was the only one: with the timeout at 4 s the
+  caller waited 12.8 s, and the busy node received the work three times,
+  past its concurrency limit. A read timeout now ends a non-streamed chat
+  completion or message; refusals, 5xx, unreadable answers and connect
+  timeouts are still tried on another node.
+- **A sign-in right after "sign out everywhere" is not refused by its own
+  token.** For up to two seconds after a withdrawal the watermark (rounded
+  up to the next second) was at or after any new token's whole-second
+  `iat`, so a sign-in answered 200 with a token refused on its first
+  request, for ever. Password, code, social and CLI sign-in now wait until
+  a token minted then postdates the watermark — at most about two
+  seconds, only right after a withdrawal, never to wait out clock skew.
+- **The break-glass key fails closed with a diagnosis on a hash that is
+  not bcrypt.** `require_deployment_admin` passed the hash straight to
+  `bcrypt.checkpw`, so a value that is not a bcrypt hash answered every
+  break-glass call with a 500 (`ValueError: Invalid salt`). The usual
+  cause is a compose env file interpolating the hash's `$`. It now
+  answers 503 saying the value is not a bcrypt hash and to write `$` as
+  `$$` in a compose env file.
+- **The retention loop runs on every install.** The runner did not start
+  when all three retention windows were 0, so exports of removed members'
+  data and 31-day revocations — which `DATA_RETENTION.md` says are always
+  cleared — stayed for ever. The loop now always starts, and every
+  operator-facing text (the chart README, the chart's NOTES and values,
+  the compliance tracker and the alert) says what 0 keeps.
+- **A copy of the Default group carries no read-only note.** The portal's
+  copy dialog asks only for a name, so a copy kept the Default group's
+  "It cannot be changed here" line and showed it next to the Edit button
+  of a group that can be changed. A copy now starts with no description
+  unless the request gives one.
+- **The Default group's description does not invite edits it refuses.**
+  It told admins to "Edit or delete any of it here", and every edit of
+  the Default group answers 409. It now says to create a group from it,
+  and tenant migration `t0032` replaces igni's old line in existing
+  organisations.
+- **The Default group's seed reaches the API image.** `.dockerignore`'s
+  `**/*.md` dropped the agent and skill seeds under `app/services/portal`,
+  so every organisation created on a released image got a Default group of
+  4 entries instead of 20, while migrated ones got all of them. Both seed
+  directories are negated now.
+- **The chart's Ingress is admitted by ingress-nginx.**
+  ingress-nginx 1.12 turns strict path-type validation on by default, and
+  its pattern for `Prefix` and `Exact` paths has no dot, so it refused
+  the chart's Ingress at admission and the README's own install failed.
+  `/.well-known` is `ImplementationSpecific`, which it admits.
+- **The exit check's archive restores onto a plain PostgreSQL.** The
+  runbook's restore targets a PostgreSQL 17 with no igni software, so it
+  has no `igni` role, and the command stopped at the first `ALTER ...
+  OWNER TO igni`, restoring nothing. It now passes `--no-owner
+  --no-privileges` and says why.
+- **A removed member's export is served as the zip it is.** The node
+  agent uploads what `igni-cloud db export-producer` wrote, unchanged, and
+  that is a zip; the download named it `export-<id>.tar.gz` as
+  `application/octet-stream`, so `tar -xzf` failed on it. It is now
+  `application/zip`, named `export-<id>.zip`, and the docs say so.
+- **The directory says a removed member is not a former one.** Removal
+  deletes the membership, so the directory answered for a removed person
+  as for somebody who never belonged. §7 now says *former* means
+  deactivated, and what a service does about a removed author.
+- **The Services pages say a platform client ships no extension.** They
+  told super admins that Fleet's gateway and node agents had not uploaded
+  theirs yet, but a platform client may not upload one.
+- **A platform client is badged Platform, not App.** The badge said
+  Service for a service and App for anything else, so Fleet's gateway and
+  node agents were shown as apps.
+- **The producers feed's documented profile carries `internet`.** §11.3's
+  feed block left it out, although the feed serves it and §12 says so; a
+  gateway written from §11.3 would have dropped the one field that is a
+  security grant.
+- **uvicorn's lines and Python warnings are JSON under
+  `LOG_FORMAT=json`.** Only records reaching the root logger were JSON:
+  uvicorn.error and uvicorn.access keep uvicorn's own plain-text
+  handlers with propagate off, so the startup lines and every access line
+  stayed text in the same stream, and warnings went to stderr raw.
+- **An outgoing call's span names the host it went to.**
+  `docs/observability.md` promises an outgoing-call span carries method,
+  host, status and duration, but the httpx instrumentation named its
+  target only in `http.url`, which the scrubber drops. The scrubber adds
+  `server.address` and `server.port` now.
+- **The published API schema matches the routes.**
+  `/portal/inference/models` gained `chat_completions` with the
+  group-pin fix; `docs/openapi.json` is regenerated.
+- **The welcome email names no public install command.** igni runs on
+  isolated networks, where `brew install` and `pip install` fail, and how
+  the app reaches desktops is the operator's call. The email now links
+  this deployment's own portal, and a new optional `CLIENT_INSTALL_URL`
+  (Helm: `urls.clientInstall`) names the operator's own page for getting
+  the app.
+- **Mail names no sender unless the operator sets one.**
+  `EMAIL_FROM_NAME` now defaults to empty, and empty means the mail names
+  no sender: the From header is the bare address, subjects carry no brand
+  suffix, and the header subtitle and footer line are left out. A set
+  name is used exactly as before. The welcome mail's copy — a public
+  beta, a free Pro plan, a vendor model, a Homebrew formula that no
+  longer exists and "our support team" — is gone with it.
+
+### Security
+
+- **dnspython 2.9.2 (CVE-2026-128089) is in the image.** The 0.7.0
+  images carry 2.9.1; this release carries the fixed version, and the
+  scheduled scan now rescans the newest release's images rather than the
+  default branch's, so a shipped image's CVEs are found rather than
+  assumed fixed.
 
 ## [0.7.0] - 2026-11-10
 
@@ -235,7 +398,8 @@ version that has ever shipped is 0.7.0.
 - Every GitHub Action is pinned by commit SHA, and an OpenSSF Scorecard
   runs on the public repository.
 
-[Unreleased]: https://github.com/ignite-ember/igni-server/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/ignite-ember/igni-server/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/ignite-ember/igni-server/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/ignite-ember/igni-server/releases/tag/v0.7.0
 # 0.6.0 was prepared and never tagged, so there is no release page to
 # point at: its entry names the commit that carried it.
