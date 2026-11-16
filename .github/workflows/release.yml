@@ -254,10 +254,9 @@ jobs:
 
       # ── SBOM ─────────────────────────────────────────────────────────
       #
-      # CM-8 in COMPLIANCE_TRACKER.md. Both marketplaces increasingly
-      # expect one, and SOC 2 CC7.1 vulnerability management is a great
-      # deal easier when a customer can answer "what is in this" without
-      # asking us.
+      # CM-8 in COMPLIANCE_TRACKER.md. A customer asks for one, and SOC 2
+      # CC7.1 vulnerability management is a great deal easier when a
+      # customer can answer "what is in this" without asking us.
       #
       # Generated from the *pushed image* rather than from `uv.lock`,
       # because the lock file is only half of what ships: this SBOM comes

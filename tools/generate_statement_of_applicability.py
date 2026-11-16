@@ -266,8 +266,8 @@ ORGANIZATIONAL: tuple[Control, ...] = (
         'Information security for use of cloud services',
         'operator',
         'The customer chooses the cloud and configures it. What the software guarantees is that '
-        'the choice stays theirs: nothing phones home, and the marketplace deployments run '
-        'entirely in their project (DP-5).',
+        'the choice stays theirs: nothing phones home, and the images run entirely in the '
+        "customer's own registry and cluster (DP-5).",
     ),
     _c(
         '5.24',

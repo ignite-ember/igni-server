@@ -54,6 +54,8 @@ _DOCS = [_ROOT / 'README.md', *sorted((_ROOT / 'docs').glob('*.md'))]
 #: Top-level directories a backticked path could plausibly refer to. A
 #: prefix list rather than "anything with a slash", because documents
 #: quote URL paths, glob patterns and provider paths in backticks too.
+#: `marketplace` is not a directory any more, and is here so that a stale
+#: reference to the withdrawn one is caught rather than ignored.
 _REPO_DIRS = (
     'alembic',
     'app',
@@ -111,16 +113,16 @@ _ENV_CELL = re.compile(r'\|\s*`([A-Z][A-Z0-9_]{3,})`\s*\|')
 #: deleted — and rewriting that history to keep a path resolving would
 #: destroy the evidence the log exists to hold.
 #:
-#: None needs it today. The review log and the documentation-verification
-#: log both used it; neither is in this repository any more, and
-#: `REVIEW_FINDINGS.md`, the public index of the review log, quotes no
-#: path that is gone. Kept as an empty, asserted-empty mechanism so a new
-#: dated record has to argue its way in.
+#: The compliance tracker needs it. Its log names the files that existed
+#: when each change was made, and the distribution path withdrawn on
+#: 2026-11-16 took several of them with it. `REVIEW_FINDINGS.md`, the
+#: public index of the review log, quotes no path that is gone, so it
+#: does not.
 #:
 #: Keyed by the word its own opening prose must contain, so the
 #: exemption cannot be claimed by a document that does not say what it
 #: is. Checked below, per entry.
-_HISTORICAL: dict[str, str] = {}
+_HISTORICAL: dict[str, str] = {'COMPLIANCE_TRACKER.md': 'dated record'}
 
 
 def _settings_env_names() -> set[str]:
@@ -303,7 +305,9 @@ class TestTheHistoricalExemptionIsNarrow:
     `REVIEW_FINDINGS.md` indexes a review log: a finding names the file
     it was about, and a later change may have deleted that file. The
     finding is still the record of what was found, and editing the path
-    out would leave a finding about nothing.
+    out would leave a finding about nothing. The compliance tracker is
+    the same shape: its log names the files that existed when each
+    change was made.
 
     What stops this becoming a general escape hatch is that the exemption
     is per-document and asserted small — not a per-path allow-list, which
@@ -311,10 +315,21 @@ class TestTheHistoricalExemptionIsNarrow:
     """
 
     def test_only_dated_records_are_exempt(self):
-        assert set(_HISTORICAL) == set(), (
-            f'the exemption has grown to {sorted(_HISTORICAL)}. A document that needs it is '
-            'either a dated record — in which case say so in its own text — or it is '
-            'stale and should be fixed.'
+        """The exemption is granted by the document, not by the checker: a
+        document that needs one has to be a dated record that says so in
+        its own opening. The check below is per document; this one holds
+        the list to documents that survive it, so a stale document cannot
+        be added to the exemption quietly."""
+        claimed = {
+            name
+            for name, word in _HISTORICAL.items()
+            if word in ' '.join((_ROOT / 'docs' / name).read_text().split())[:2000].lower()
+        }
+
+        assert set(_HISTORICAL) == claimed, (
+            f'{sorted(set(_HISTORICAL) - claimed)} are exempt from the path rule without '
+            'saying in their own opening that they are dated records. A document that is '
+            'merely stale should be fixed rather than exempted.'
         )
 
     @pytest.mark.parametrize('name, word', sorted(_HISTORICAL.items()))

@@ -201,7 +201,7 @@ startup check for its password, the settings key — went with the
 release.
 
 That expects Postgres and Redis to exist already. For one instance
-serving one customer — the pre-marketplace shape — run them alongside,
+serving one customer — the single-host shape — run them alongside,
 and terminate TLS in front:
 
 ```bash
@@ -255,10 +255,10 @@ Kubernetes:
 helm install igni ./charts/igni -f my-values.yaml
 ```
 
-Google Cloud Marketplace listing artefacts — the deployer parameters,
-the deployer image and the Application object — are in
-[marketplace/](marketplace/), including what a person still has to do
-that a repository cannot.
+Distribution is container images published to a registry — GHCR — and the
+Helm chart in [charts/igni/](charts/igni/). A customer pulls the images
+into their own registry, points the chart's image references at them and
+installs the chart. Nothing else is needed to run igni.
 
 The chart is the customer-facing artefact: API, portal, and the
 migration as a hook that must succeed before anything serves. It refuses

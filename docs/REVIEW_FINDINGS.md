@@ -129,7 +129,7 @@ the compliance documents is listed here.
 | F106 | The encryption key could not be rotated, and the tool that rotates it was written in a gitignored directory | Built | — |
 | F107 | Every sign-in handed a bearer token to the browser in a query string | Fixed | `portal/src/auth/__tests__/LoginPage.exchange.test.tsx`, `tests/test_a_token_cannot_become_a_password.py`, `tests/test_auth_oauth.py`, `tests/test_the_token_is_not_in_the_url.py` |
 | F108 | No licence file, and both images declared themselves unlicensed | Built | — |
-| F109 | No GCP listing artefacts, and nothing would have connected the form to the chart’s refusals | Built | `tests/test_the_marketplace_listing_can_deploy.py` |
+| F109 | No GCP listing artefacts, and nothing would have connected the form to the chart’s refusals | Withdrawn — the listing was withdrawn on 2026-11-16; the images and the Helm chart are the distribution path | — |
 | F110 | A session token could replace the account password and lock the owner out | Removed | `tests/test_a_token_cannot_become_a_password.py` |
 | F111 | The live chat path logged the prompt, and F83’s guard against exactly that covered two directories | Fixed | `tests/test_nothing_blocks_the_event_loop.py`, `tests/test_the_prompt_stays_out_of_the_logs.py`, `tests/test_the_token_is_not_in_the_url.py` |
 | F112 | Anonymous callers could enumerate accounts and make the deployment send unlimited mail | Fixed | `tests/test_a_node_joining_the_fleet_is_recorded.py`, `tests/test_a_personal_address_is_not_a_company.py`, `tests/test_anonymous_email_cannot_be_abused.py`, `tests/test_auth_signup.py`, `tests/test_email_delivery.py`, `tests/test_otp_hardening.py` |

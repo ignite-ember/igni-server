@@ -5,9 +5,9 @@ SMTP needs a username and password that live in configuration forever;
 the API uses whatever the AWS SDK resolves — and on EC2, ECS or EKS that
 is the instance profile, task role or pod identity. A deployment then
 stores **no mail secret at all**, which is the difference between a
-rotatable role and a password in a Helm values file. It also matters for
-a Marketplace listing, where "bring your own IAM role" is expected and
-"paste an SMTP password" is a smell.
+rotatable role and a password in a Helm values file. It also matters in
+the customer's own AWS account, where "bring your own IAM role" is what
+a deployment is expected to do and "paste an SMTP password" is a smell.
 
 Credentials are deliberately never passed explicitly here unless the
 customer sets them. ``boto3.client`` with no keys walks the standard

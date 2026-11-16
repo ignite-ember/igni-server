@@ -11,8 +11,11 @@ self-hosted deployment needs instead, and how big the gap is.
 ## The decision this follows from
 
 **Self-hosted only.** There is no hosted tier and no multi-tenant
-deployment. Distribution is the GCP and AWS marketplaces; the marketplace
-meters and invoices, so there is no in-app billing.
+deployment. Distribution is container images published to a registry and
+the Helm chart. A customer pulls the images into their own registry,
+points the chart's image references at them and installs the chart. Their
+registry and their infrastructure carry and bill the images, so there is
+no in-app billing.
 
 The argument for a hosted tier was a pricing floor: $2.50/developer
 assumes 200 developers amortising one ~$504/month GH200, so at ten
@@ -345,7 +348,7 @@ credentials endpoint, IMDS — so a deployment on EC2, ECS or EKS
 authenticates with its instance profile, task role or pod identity and
 **stores no mail secret at all**. That is the difference between a role
 AWS rotates and a password in a Helm values file, and it is what a
-Marketplace listing is expected to support.
+deployment in the customer's own AWS account is expected to do.
 
 ```
 EMAIL_BACKEND=ses
@@ -388,9 +391,10 @@ blanks, because aiosmtplib authenticates whenever a username is not
 ## 7. Billing — delete
 
 Six files plus the Stripe webhook, the portal billing page, and the
-subscription tables. The marketplace meters and invoices. Nothing about
-entitlement lives in the application: a customer has CodeIndex because
-code-index is deployed for them, and that is the whole check.
+subscription tables. The customer's own registry and infrastructure
+carry and bill the images. Nothing about entitlement lives in the
+application: a customer has CodeIndex because code-index is deployed for
+them, and that is the whole check.
 
 ## 8. Telemetry
 

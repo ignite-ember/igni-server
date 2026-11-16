@@ -316,10 +316,10 @@ email:
 
 api:
   replicaCount: 2
-  # Requests are what the scheduler honours and what a marketplace review
-  # looks for. Limits are set on memory only: a CPU limit throttles an
-  # asyncio process into latency that looks like a network fault, while
-  # unbounded memory takes the node down with it.
+  # Requests are what the scheduler honours, and what a cluster asks for
+  # before it schedules the pod. Limits are set on memory only: a CPU
+  # limit throttles an asyncio process into latency that looks like a
+  # network fault, while unbounded memory takes the node down with it.
   resources:
     requests:
       cpu: 250m
@@ -583,24 +583,6 @@ networkPolicy:
   # The old form, kept so existing values files render: every port to
   # each CIDR, for the api, migrate and backup pods. Prefer `egress`.
   egressCidrs: []
-
-# Google Cloud Marketplace. Off unless the marketplace deployer is
-# installing this, because the Application object below is an `app.k8s.io`
-# CRD — rendering it into a cluster without the kubernetes-sigs
-# Application controller fails the install with `no matches for kind`.
-#
-# The deployer sets these; a person installing by hand has no reason to.
-marketplace:
-  enabled: false
-  partnerId: ''
-  productId: igni
-  partnerName: ''
-  docsUrl: ''
-  supportUrl: ''
-  # A 100x100 PNG, base64-encoded, which the console shows beside the
-  # deployment. Empty renders an annotation with no payload, which the
-  # console tolerates.
-  iconBase64: ''
 
 # ── Pod-level defaults ───────────────────────────────────────────────
 

@@ -110,14 +110,15 @@ jobs:
 
   # The *image* was never scanned — only the repository. `pip-audit` above
   # reads `uv.lock`, which is not what ships: the runtime image also carries
-  # a base OS, its system packages, and whatever `pip` itself pulled in. A
-  # marketplace listing is scanned as an image, so this is the check that
-  # matches how it will be judged.
+  # a base OS, its system packages, and whatever `pip` itself pulled in. The
+  # image is what a customer deploys, so this is the check that matches how
+  # it will be judged.
   #
   # Also the place a root user would have been caught. Both images ran as
-  # root until the marketplace pass; `tests/test_images_are_marketplace_shaped.py`
-  # asserts the Dockerfiles, and Trivy's `--scanners misconfig` asserts the
-  # built result.
+  # root until they were moved off root;
+  # `tests/test_the_images_run_as_a_non_root_user.py` asserts the
+  # Dockerfiles, and Trivy's `--scanners misconfig` asserts the built
+  # result.
   #
   # `exit-code: 0` on the vulnerability scan deliberately: a new CVE in a
   # base image is not this repository's regression and should not turn every

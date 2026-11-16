@@ -195,7 +195,7 @@ class TestTheProdImageIsNotAGuess:
 
 
 class TestTheSingleInstanceStackIsWhole:
-    """What a pre-marketplace customer gets: one host, `docker compose up`.
+    """What a single-host customer gets: one host, `docker compose up`.
     The prod file used to be the API, a worker, Flower and the
     migration — no web UI and no datastores, so "one instance and
     compose" meant standing up RDS and ElastiCache first."""

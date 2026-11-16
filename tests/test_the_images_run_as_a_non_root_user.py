@@ -1,8 +1,9 @@
 """The published images must not run as root.
 
-Distribution is the GCP and AWS marketplaces. GCP's container requirements
-forbid running as root outright, and every image scanner an AWS listing
-goes through flags it. Both images did:
+Distribution is container images and the Helm chart. The images are
+published to a registry and installed with `charts/igni/`, and Kubernetes
+refuses to start a container it cannot prove is non-root. Every image
+scanner flags a root container too. Both images did:
 
     docker run --rm <backend> id -u   → 0
     docker run --rm <portal>  id -u   → 0
@@ -17,8 +18,7 @@ nginx master, and the portal still answered 200 with its `index.html`.
 `runAsNonRoot: true` inspects the image's configured user and refuses to
 start a container whose user it cannot prove is non-zero. A *named* user
 fails with "container has runAsNonRoot and image has non-numeric user",
-so a marketplace Kubernetes listing would be rejected by a `USER igni`
-that works perfectly under Docker.
+so the pod is refused by a `USER igni` that works perfectly under Docker.
 """
 
 from __future__ import annotations
@@ -138,8 +138,8 @@ def test_the_portal_listens_above_1024():
     ids=['backend', 'portal'],
 )
 def test_the_image_says_what_it_is(path, image):
-    """Both marketplaces expect an image to carry its own provenance, and
-    scanners and `docker inspect` read these labels."""
+    """An image has to carry its own provenance, and scanners and
+    `docker inspect` read these labels."""
     text = path.read_text()
 
     for label in (

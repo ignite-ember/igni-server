@@ -50,26 +50,6 @@ tests
 docs
 tools
 scripts
-marketplace
-
-# …except the one file the marketplace deployer copies.
-#
-# F2. `marketplace/Dockerfile` is built from the repository root — its
-# own instructions say so, because the chart is a sibling directory —
-# and excluding `marketplace` here meant that build failed with
-# "/marketplace/schema.yaml: not found". Nobody saw it, because the
-# deployer image had never been built: a correct change (slimming a
-# 1.3 GB context) made another artefact false, and nothing connected
-# the two.
-#
-# A negation rather than a `marketplace/Dockerfile.dockerignore`, which
-# would have been more precise and would also have reintroduced exactly
-# what the note at the top of this file is about: the per-Dockerfile
-# form is BuildKit-only and is silently ignored without it.
-#
-# The cost is 11 KB in the API image's context, which that image does
-# not copy and therefore never carries.
-!marketplace/schema.yaml
 
 # …and the tool that finishes an encryption-key rotation. The runbook
 # runs it inside the API container (`kubectl exec deploy/igni-api --

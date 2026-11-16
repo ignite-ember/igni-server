@@ -86,7 +86,6 @@ igni-server/
 ├── alembic_tenant/               # Migrations: each organisation's own database
 ├── charts/igni/                  # The customer-facing Helm chart
 ├── containers/                   # Dockerfiles and compose files
-├── marketplace/                  # GCP listing artefacts
 ├── portal/                       # React admin portal
 ├── tools/                        # Document generators, drills, kind
 └── tests/
@@ -276,7 +275,7 @@ an empty schema is not a downgrade.
 
 ## Deployment
 
-Three shapes, all self-hosted:
+Two shapes, all self-hosted:
 
 - **compose** — `containers/docker-compose.prod.yml`. Migration, API,
   portal, and optionally bundled Postgres and Redis under the `bundled`
@@ -285,7 +284,6 @@ Three shapes, all self-hosted:
   `pre-upgrade` hook that must succeed before anything serves. It refuses
   to render without the images, the datastore hosts, an encryption key
   and the server's public URL, each refusal naming what is missing.
-- **marketplace** — `marketplace/`, GCP listing artefacts.
 
 Nothing calls out to the vendor from any of them, asserted by
 `tests/test_nothing_phones_home.py`.

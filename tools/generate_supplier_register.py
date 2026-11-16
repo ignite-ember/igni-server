@@ -52,7 +52,6 @@ PLACEHOLDER = '`__ORGANISATION_TO_COMPLETE__`'
 IMAGE_SOURCES = (
     'containers/be/Dockerfile',
     'portal/Dockerfile',
-    'marketplace/Dockerfile',
     'containers/docker-compose.prod.yml',
     'containers/docker-compose.local.yml',
     'charts/igni/values.yaml',
@@ -114,15 +113,6 @@ SUPPLIERS: tuple[Supplier, ...] = (
         "Local development only: the chart routes through the cluster's ingress and never "
         "ships this image. It holds no secret; a compromise would misroute a developer's own "
         'traffic.',
-    ),
-    Supplier(
-        'gcr.io/cloud-marketplace-tools/k8s/deployer_helm:0.13',
-        'Google Cloud Marketplace deployer',
-        'Required by the marketplace listing format. Used only when a customer installs through '
-        'GCP Marketplace, and never at runtime.',
-        "Install-time only, and it is Google's own image — a customer installing from their "
-        'marketplace has already accepted that trust relationship. It is here because a register '
-        'that omitted it would be describing a supply chain the marketplace path does not have.',
     ),
     Supplier(
         'postgres:17.6-alpine',

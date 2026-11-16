@@ -95,7 +95,7 @@ RUN apt-get update \
 # itself) goes with it.
 # No torch here. Embedding is igni__artifacts' own image (its
 # `embedder/`); this server makes no vectors, and this image is pulled
-# per API replica and by two marketplaces.
+# once per API replica.
 RUN pip install --no-cache-dir -r requirements.txt \
  && pip uninstall --yes pip \
  && ! python -c "import pip" 2>/dev/null
@@ -119,8 +119,10 @@ COPY tools/smoke_provider.py ./tools/smoke_provider.py
 
 # ── Run as a non-root user ────────────────────────────────────────────
 #
-# Required by the GCP Marketplace container requirements, and flagged by
-# every image scanner an AWS Marketplace listing goes through. It was root:
+# The image is distributed as a container image and installed with the
+# Helm chart, so it runs inside a Kubernetes cluster. `runAsNonRoot`
+# refuses a container it cannot prove is non-root, and every image
+# scanner flags a root container. It was root:
 # `docker run --rm <image> id -u` printed 0.
 #
 # **Numeric**, not a name. Kubernetes' `runAsNonRoot: true` inspects the
@@ -148,13 +150,13 @@ USER 10001
 
 # ── Provenance labels ────────────────────────────────────────────────
 #
-# Both marketplaces expect an image to say what it is and where it came
-# from; scanners and `docker inspect` read these.
+# An image has to say what it is and where it came from; scanners and
+# `docker inspect` read these.
 LABEL org.opencontainers.image.title="igni server" \
       org.opencontainers.image.description="igni server — API (sign-in, roles, SCIM, audit, inference routing)" \
       org.opencontainers.image.source="https://github.com/ignite-ember/igni-server" \
-      # SPDX identifier, which is what a scanner and a marketplace review
-      # read. `NOASSERTION` was the placeholder and it is the literal
+      # SPDX identifier, which is what a scanner reads. `NOASSERTION`
+      # was the placeholder and it is the literal
       # string tooling uses for "nobody said", so it reported as an
       # unlicensed image rather than an unfinished label.
       org.opencontainers.image.licenses="Apache-2.0" \

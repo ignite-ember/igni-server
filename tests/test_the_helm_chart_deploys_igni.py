@@ -1,10 +1,9 @@
 """The Helm chart renders a deployment somebody could actually run.
 
-F98, and the last of §41's two marketplace blockers. Both marketplaces
-want a chart: a GCP Kubernetes listing needs one plus a `schema.yaml` of
-deployer parameters, and an AWS container listing accepts one in place of
-CloudFormation. `docker-compose.prod.yml` is a real working artefact and
-is neither.
+F98. The chart is how a customer installs igni on Kubernetes, so it has
+to render a deployment that starts, and it has to refuse to render at
+all when something is missing. `docker-compose.prod.yml` is a real
+working artefact and is neither.
 
 This file renders the chart with `helm template` and asserts on the
 manifests, because a chart is a program and reading one proves very
@@ -226,9 +225,9 @@ class TestTheChartRendersAtAll:
 
 
 class TestEveryWorkloadIsHardened:
-    """The container requirements both marketplaces review against, and
-    the ones an image scanner flags. F89 moved the images off root; this
-    is the half of that which lives in the pod spec."""
+    """The container requirements a cluster enforces, and the ones an
+    image scanner flags. F89 moved the images off root; this is the half
+    of that which lives in the pod spec."""
 
     def test_every_pod_runs_as_a_numeric_non_root_user(self, manifests):
         for name, spec in _pod_specs(manifests).items():
@@ -287,11 +286,11 @@ class TestEveryWorkloadIsHardened:
             assert tmp['emptyDir'].get('sizeLimit'), f'{name}: /tmp emptyDir has no sizeLimit'
 
     def test_every_container_declares_what_it_needs(self, manifests):
-        """Requests are what the scheduler honours and what a marketplace
-        review looks for. A memory limit is what stops one pod taking the
-        node down; a CPU limit is deliberately absent, since throttling an
-        asyncio process produces latency that looks like a network
-        fault."""
+        """Requests are what the scheduler honours, and what a cluster asks
+        for before it schedules the pod. A memory limit is what stops one
+        pod taking the node down; a CPU limit is deliberately absent,
+        since throttling an asyncio process produces latency that looks
+        like a network fault."""
         for name, spec in _pod_specs(manifests).items():
             for container in spec['containers']:
                 resources = container.get('resources', {})
@@ -1254,8 +1253,6 @@ class TestNothingIsPulledFromAPublicRegistry:
         '--set',
         'networkPolicy.metricsFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=monitoring',
         '--set',
-        'marketplace.enabled=true',
-        '--set',
         'ingress.tls.enabled=true',
         '--set',
         'ingress.tls.secretName=igni-tls',
@@ -1283,7 +1280,7 @@ class TestNothingIsPulledFromAPublicRegistry:
         rendered = _render(*self._EVERYTHING)
         kinds = {m['kind'] for m in rendered}
 
-        assert {'CronJob', 'NetworkPolicy', 'ServiceMonitor', 'PrometheusRule', 'Application'} <= kinds, kinds
+        assert {'CronJob', 'NetworkPolicy', 'ServiceMonitor', 'PrometheusRule'} <= kinds, kinds
 
     def test_every_image_comes_from_the_customers_registry(self):
         rendered = _render(*self._EVERYTHING)

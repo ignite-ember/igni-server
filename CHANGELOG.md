@@ -65,6 +65,21 @@ documentation said.
   carried 2.9.1. The job now checks out the newest `vX.Y.Z` tag and
   builds that.
 
+### Removed
+
+- **The cloud marketplace distribution path.** igni is distributed as
+  container images published to a registry and the Helm chart in
+  `charts/igni/`; there is no cloud marketplace listing. The listing's
+  artefacts go with it: the `marketplace/` directory — the deployer's
+  Dockerfile, its README and the listing schema — the
+  `tools/marketplace/verify.sh` script that built the deployer image and
+  checked the listing against the chart, and the chart's `marketplace`
+  values with the `app.k8s.io` Application object the deployer
+  installed. The images keep their non-root user, their provenance and
+  their licence, and the chart still refuses to render without the
+  images, the datastores, an encryption key and the server's public URL.
+  igni's own plugin marketplace is a different thing and is untouched.
+
 ### Fixed
 
 - **The portal image is tagged with the release version.** The release
