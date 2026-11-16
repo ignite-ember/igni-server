@@ -1,6 +1,6 @@
 """The answer when an item, or a request about items, is refused.
 
-`ProducerEvents` and `EventRateLimit` raise typed errors and decide no
+`ProducerEvents` raises typed errors and decides no
 status code. This is the one place they become HTTP responses, with the
 status and words callers have always been given.
 """
@@ -18,13 +18,12 @@ from app.services.cloud.producer_event_errors import (
     NoSuchEvent,
     NotAPerson,
     PayloadTooLarge,
-    TooManyEvents,
     ViewTooLarge,
 )
 
 
 class ProducerEventRefusals:
-    """`with ProducerEventRefusals(): ...` turns an item refusal into a 400, 403, 404, 413 or 429.
+    """`with ProducerEventRefusals(): ...` turns an item refusal into a 400, 403, 404 or 413.
 
     Anything else passes through untouched.
     """
@@ -38,12 +37,6 @@ class ProducerEventRefusals:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        if isinstance(exc, TooManyEvents):
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=str(exc),
-                headers={'Retry-After': str(exc.retry_after)},
-            ) from exc
         if isinstance(exc, ExpiryPast | AttachmentsUnavailable):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         if isinstance(exc, PayloadTooLarge | ViewTooLarge):

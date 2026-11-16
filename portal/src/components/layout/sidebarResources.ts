@@ -5,7 +5,7 @@
  * The documentation is published on the public site, not served by the
  * portal: it moved out with the landing page on 2026-10-31, into its
  * own repository (igni-site). So these are absolute links to
- * `https://ignite-ember.sh/docs`, and an air-gapped deployment's
+ * `https://igni.sh/docs`, and an air-gapped deployment's
  * sidebar points at a host it cannot reach — the same as any other
  * outbound link, and no worse than shipping a stale copy of the docs
  * inside every portal.
@@ -25,7 +25,7 @@
 import { BookIcon, PlugIcon, RocketIcon } from '@primer/octicons-react'
 
 /** Where the documentation is published. */
-export const DOCS_URL = 'https://ignite-ember.sh/docs'
+export const DOCS_URL = 'https://igni.sh/docs'
 
 export const resourceItems = [
   { label: 'Documentation', href: DOCS_URL, icon: BookIcon },
