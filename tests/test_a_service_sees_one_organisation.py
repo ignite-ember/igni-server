@@ -45,6 +45,21 @@ async def two_orgs(db):
     }
 
 
+@pytest.fixture
+async def removable_member(two_orgs, db):
+    """A member of Acme the test removes.
+
+    The user is made here, not in the test body: `db` is one session with one
+    pool, and a connection it checked out while this fixture ran belongs to
+    the loop this fixture ran in. The test body may run in another one, and a
+    pooled connection cannot cross that line — it is the same failure the
+    whole suite sees as "attached to a different loop".
+    """
+    gone = await create_user(db, email='gone@acme.com', full_name='Gail Gone')
+    await add_member(db, two_orgs['acme'], str(gone.user_id))
+    return str(gone.user_id)
+
+
 async def _service_token(client, world, org: str) -> dict[str, str]:
     response = await client.post(
         '/oauth/token', data=world['service'].authenticated('client_credentials', organisation=org)
@@ -113,17 +128,15 @@ class TestOneOrganisation:
 
         assert response.json()['name'] == 'Lena Left'
 
-    async def test_a_removed_member_is_not_remembered(self, client, two_orgs, db):
+    async def test_a_removed_member_is_not_remembered(self, client, two_orgs, removable_member):
         """Removal deletes the membership, so the directory cannot tell a
         removed person from one who never belonged — and says so in
         `docs/service-identity.md` §7 rather than calling them former."""
-        gone = await create_user(db, email='gone@acme.com', full_name='Gail Gone')
-        await add_member(db, two_orgs['acme'], str(gone.user_id))
         admin = auth_header(make_token(two_orgs['ada'], org_id=two_orgs['acme']))
-        assert (await client.delete(f'/portal/team/{gone.user_id}', headers=admin)).status_code in (200, 204)
+        assert (await client.delete(f'/portal/team/{removable_member}', headers=admin)).status_code in (200, 204)
         headers = await _service_token(client, two_orgs, two_orgs['acme'])
 
-        person = await client.get(f'/directory/people/{gone.user_id}', headers=headers)
+        person = await client.get(f'/directory/people/{removable_member}', headers=headers)
         former = await client.get('/directory/members', params={'include_former': True}, headers=headers)
 
         assert person.status_code == 404

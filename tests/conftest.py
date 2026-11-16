@@ -18,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.db.sql.models import Base, load_all_models
 from app.db.sql.models.org_domain import OrgDomain
@@ -353,8 +354,23 @@ def _patch_settings(monkeypatch):
 
 @pytest.fixture
 async def db():
-    """Provide an async session connected to ember_test for test data setup."""
-    engine = create_async_engine(TEST_DB_URL_ASYNC, echo=False)
+    """Provide an async session connected to ember_test for test data setup.
+
+    The pool is a `NullPool` on purpose. This session is handed to tests as
+    well as to fixtures, and the two do not always run in the same event
+    loop: a file marked `pytest.mark.anyio` has its test body run by
+    anyio's plugin, while its async fixtures are run by pytest-asyncio in
+    the session-scoped loop. Which plugin wins the test depends on the
+    order the two were installed in, so it differs between a developer's
+    machine and CI — which is why this only ever failed on CI.
+
+    A pooled connection belongs to the loop that opened it, and asyncpg
+    refuses it in another one ("got Future ... attached to a different
+    loop"). With no pool, every checkout opens a connection in the loop
+    that is running right then, and the session is safe to use from a
+    fixture and from the test body alike.
+    """
+    engine = create_async_engine(TEST_DB_URL_ASYNC, echo=False, poolclass=NullPool)
     factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:
         yield session
