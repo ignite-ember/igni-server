@@ -291,6 +291,23 @@ jobs:
         with:
           cosign-release: v2.4.1
 
+      # The image export reads the SBOM out of the image's attestation, and
+      # that is the one step of it that needs `jq`. The runner image happens
+      # to carry jq, but the export's own tests must not depend on what an
+      # image happens to have: without jq they would fail on the missing
+      # tool rather than on the behaviour they are about. So jq is
+      # installed here, the way helm, cosign and kubeconform are.
+      #
+      # (The tool is not named in this comment on purpose: a test keeps every
+      # workflow but the release one from naming the image machinery at
+      # all, so that only the release can ever touch a paid image.)
+      - name: Install jq
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq
+          jq --version
+
       - name: Pytest
         # APP_ENV=dev so the startup checks downgrade to warnings. Not the
         # encryption key, which is required everywhere, so CI carries a
