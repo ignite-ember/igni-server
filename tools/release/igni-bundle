@@ -8,7 +8,8 @@
 # Two steps, because only the first needs a network:
 #
 #   igni-bundle export-image --staging DIR --name NAME \
-#       --repository REPO --source-tag TAG --tag TAG [--cosign-key KEY]
+#       --repository REPO --source-tag TAG --tag TAG [--cosign-key KEY] \
+#       [--source-tls-verify BOOL]
 #
 #     Copies one image from REPO:SOURCE-TAG (in CD, a release tag of
 #     ghcr.io/ignite-ember/NAME) into DIR/images/NAME/ in
@@ -19,6 +20,13 @@
 #     up with is the digest that was signed, so the cosign signature still
 #     verifies there. A docker-format manifest put through `docker save`
 #     or converted to OCI comes out with a different digest.
+#
+#     --source-tls-verify BOOL is `true` unless it is said otherwise, and
+#     `false` is for a source registry that speaks plain HTTP — the
+#     air-gap rehearsal's own staging registry, on the loopback
+#     interface. It turns off the transport check and nothing else: the
+#     image's signature is still verified against the release key, which
+#     is what says what the image is.
 #
 #     With --cosign-key, the image's signature is checked first and its
 #     CycloneDX attestation is written to DIR/sboms/NAME.cdx.json, so the
@@ -103,7 +111,7 @@ sha256_of() {
 }
 
 export_image() {
-    local staging='' name='' repository='' source_tag='' tag='' cosign_key=''
+    local staging='' name='' repository='' source_tag='' tag='' cosign_key='' source_tls_verify=''
     while [ $# -gt 0 ]; do
         case "$1" in
             --staging) staging="$2"; shift 2 ;;
@@ -112,6 +120,7 @@ export_image() {
             --source-tag) source_tag="$2"; shift 2 ;;
             --tag) tag="$2"; shift 2 ;;
             --cosign-key) cosign_key="$2"; shift 2 ;;
+            --source-tls-verify) source_tls_verify="${2:?--source-tls-verify needs true or false}"; shift 2 ;;
             *) die "export-image: unknown option '$1'" ;;
         esac
     done
@@ -120,7 +129,29 @@ export_image() {
     [[ "$name" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "image name '$name' is not a plain repository name"
     [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "tag '$tag' is not a valid tag"
     [ ! -e "$staging/images/$name" ] || die "$name is already in $staging"
+    case "$source_tls_verify" in '' | true | false) ;; *) die '--source-tls-verify takes true or false' ;; esac
     need skopeo
+
+    # **The source registry's TLS is verified unless it is said not to be.**
+    #
+    # In production the source is ghcr.io over HTTPS, and the default
+    # leaves that verification on. A lab — the air-gap rehearsal's own
+    # staging registry — is a plain-HTTP registry on the loopback
+    # interface, and there skopeo and cosign have to be told, or they
+    # refuse to talk to it at all.
+    #
+    # So the choice is explicit and off by default, and it is the same
+    # shape as `igni-import --dest-tls-verify`: `false` means the
+    # transport is not verified, and nothing else about the image is.
+    # The signature is still checked against the release key, which is
+    # the part that says what the image is; the transport is what says
+    # who answered.
+    local skopeo_args=() cosign_args=()
+    [ -z "$source_tls_verify" ] || skopeo_args+=("--src-tls-verify=$source_tls_verify")
+    [ "$source_tls_verify" != false ] || cosign_args+=(--allow-insecure-registry --allow-http-registry)
+    # `skopeo inspect` has one TLS switch and no source/destination pair.
+    local inspect_args=()
+    [ -z "$source_tls_verify" ] || inspect_args+=("--tls-verify=$source_tls_verify")
 
     # The sha256 of the raw manifest, not `inspect --format {{.Digest}}`:
     # without --raw skopeo first picks the image-index entry for the
@@ -130,7 +161,7 @@ export_image() {
     # `copy --all --preserve-digests` stores.
     local digest raw
     raw="$(mktemp)"
-    skopeo inspect --raw "docker://$repository:$source_tag" > "$raw" \
+    skopeo inspect --raw ${inspect_args[@]+"${inspect_args[@]}"} "docker://$repository:$source_tag" > "$raw" \
         || { rm -f "$raw"; die "could not read the manifest of $repository:$source_tag"; }
     digest="sha256:$(sha256_of "$raw")"
     rm -f "$raw"
@@ -143,18 +174,19 @@ export_image() {
         need jq
         # Key-based and offline-verifiable, as the customer will check it:
         # no transparency log, because CD does not upload to one.
-        cosign verify --key "$cosign_key" --insecure-ignore-tlog=true "$ref" > /dev/null \
+        cosign verify --key "$cosign_key" --insecure-ignore-tlog=true ${cosign_args[@]+"${cosign_args[@]}"} "$ref" > /dev/null \
             || die "$ref is not signed with the release key; refusing to bundle it"
-        cosign verify-attestation --key "$cosign_key" --insecure-ignore-tlog=true --type cyclonedx "$ref" \
+        cosign verify-attestation --key "$cosign_key" --insecure-ignore-tlog=true --type cyclonedx \
+            ${cosign_args[@]+"${cosign_args[@]}"} "$ref" \
             | head -n 1 | jq -r '.payload' | base64 -d | jq '.predicate' > "$staging/sboms/$name.cdx.json" \
             || die "$ref has no verifiable CycloneDX attestation"
     fi
 
-    skopeo copy --all --preserve-digests "docker://$ref" "dir:$staging/images/$name/image"
+    skopeo copy --all --preserve-digests ${skopeo_args[@]+"${skopeo_args[@]}"} "docker://$ref" "dir:$staging/images/$name/image"
     local kind
     for kind in sig att; do
-        if skopeo inspect --raw "docker://$repository:${digest/:/-}.$kind" > /dev/null 2>&1; then
-            skopeo copy --all --preserve-digests "docker://$repository:${digest/:/-}.$kind" \
+        if skopeo inspect --raw ${inspect_args[@]+"${inspect_args[@]}"} "docker://$repository:${digest/:/-}.$kind" > /dev/null 2>&1; then
+            skopeo copy --all --preserve-digests ${skopeo_args[@]+"${skopeo_args[@]}"} "docker://$repository:${digest/:/-}.$kind" \
                 "dir:$staging/images/$name/$kind"
         elif [ -n "$cosign_key" ]; then
             die "$ref has no .$kind artefact to carry into the bundle"
