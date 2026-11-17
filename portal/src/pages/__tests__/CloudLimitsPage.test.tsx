@@ -88,6 +88,37 @@ describe('CloudLimitsPage', () => {
     })
   })
 
+  test('sets the largest volume a profile may grow to', async () => {
+    let sent: Record<string, unknown> | null = null
+    server.use(
+      http.get('/v1/portal/me', () => HttpResponse.json(BOSS)),
+      http.get('/v1/portal/vm-caps', () =>
+        HttpResponse.json({
+          max_memory_mib: 8192,
+          max_vcpus: 4,
+          max_idle_before_pause_s: 3600,
+          max_volume_gib: 300,
+          max_erase_after_idle_days: null,
+          updated_at: null,
+        }),
+      ),
+      http.get('/v1/portal/deployment/organizations', () => HttpResponse.json([])),
+      http.put('/v1/portal/vm-caps', async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ max_memory_mib: 8192, max_vcpus: 4, max_idle_before_pause_s: 3600 })
+      }),
+    )
+
+    renderWithProviders(<CloudLimitsPage />)
+    const field = await screen.findByRole('spinbutton', { name: /Largest volume/ })
+    expect(field).toHaveValue(300)
+    await userEvent.clear(field)
+    await userEvent.type(field, '120')
+    await userEvent.click(screen.getByRole('button', { name: 'Save limits' }))
+
+    await expect.poll(() => sent?.max_volume_gib).toBe(120)
+  })
+
   test('is not for anybody else', async () => {
     server.use(http.get('/v1/portal/me', () => HttpResponse.json({ ...BOSS, is_super_admin: false })))
 

@@ -172,9 +172,12 @@ deployment loses history by upgrading.
 **3. ~~No SBOM.~~ Built — CM-4.**
 
 `release.yml` generates a CycloneDX SBOM for the shipped image, not from the
-lock file — the lock file is half of what ships. Both marketplaces
-increasingly expect one and it is the artefact auditors ask for, where
-`pip-audit`, `npm audit` and Trivy only cover detection.
+lock file — the lock file is half of what ships. The supply chain is the
+images, the chart that installs them and the release keys that sign them,
+and an SBOM is the artefact an auditor asks for about it, where `pip-audit`,
+`npm audit` and Trivy only cover detection. The plugin marketplace clone is
+not part of that chain: it is a client-side default, off under
+`air_gapped: true`.
 
 **4. ~~No test defends the air-gap claim.~~ Built — DP-5.**
 

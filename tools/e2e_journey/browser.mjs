@@ -4,7 +4,7 @@
 //   node browser.mjs sso-wrong-password  --portal URL --label "Acme SSO" --email E --password P --shot F
 //   node browser.mjs cli-authorize       --url CLI_LOGIN_URL --portal URL --label ... --email E --password P --shot F
 //   node browser.mjs approve-vm-profile  --portal URL --token T --org O --app NAME --shot F
-//   node browser.mjs ws-hold             --url WS_URL --seconds N
+//   node browser.mjs ws-hold             --url WS_URL --token-stdin 1 --seconds N
 //
 // Every command prints one JSON line and exits 0 when the outcome it
 // checks for happened. PORTAL_DIR is the portal checkout whose
@@ -23,6 +23,15 @@ const TIMEOUT = 30000
 function emit(result) {
   console.log(JSON.stringify(result))
   if (!result.ok) process.exitCode = 1
+}
+
+// The window token, read from this process's stdin. It is never an
+// argument: an argument is visible in the process list to every other
+// process on the machine.
+async function readStdin() {
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(chunk)
+  return Buffer.concat(chunks).toString('utf8').trim()
 }
 
 async function withPage(fn) {
@@ -121,8 +130,17 @@ const commands = {
     }),
 
   // Attach to an igni backend's WebSocket as a client window does, and stay.
+  // A backend started by hand has no launcher to give it a secret, so it
+  // mints its own window token and prints it once; every window connection
+  // must offer that token as a WebSocket subprotocol, or the backend
+  // refuses the handshake. The token arrives on stdin, never on the
+  // command line, and the server answers with 'igni.v1' only, so it is
+  // never echoed back.
   'ws-hold': async () => {
-    const ws = new WebSocket(opts.url, ['igni.v1'])
+    const protocols = ['igni.v1']
+    const token = opts['token-stdin'] ? await readStdin() : ''
+    if (token) protocols.push(`igni-token.${token}`)
+    const ws = new WebSocket(opts.url, protocols)
     await new Promise((resolve, reject) => {
       ws.onopen = resolve
       ws.onerror = () => reject(new Error('WebSocket did not open'))

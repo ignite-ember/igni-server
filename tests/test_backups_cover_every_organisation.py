@@ -302,3 +302,19 @@ class TestTheScriptAgreesWithTheApplication:
         names = TenantNames()
         assert names.name(7) == f'{names.base_name()}_t7'
         assert "= :'db' || '_t'" in script
+
+
+def test_the_exit_runbooks_restore_works_on_a_server_without_the_igni_role():
+    """C6 restores into "a plain PostgreSQL 17 instance with no igni
+    software", which has no `igni` role: the command as written stopped at
+    the first `ALTER ... OWNER TO igni` and restored nothing."""
+    import pathlib
+    import re
+
+    runbook = (pathlib.Path(__file__).resolve().parent.parent / 'docs' / 'EXIT_TEST_RUNBOOK.md').read_text()
+    c6 = runbook.split('C6.', 1)[1].split('C7.', 1)[0]
+    restores = re.findall(r'^pg_restore .*$', c6, re.M)
+
+    assert restores, 'C6 no longer restores anything'
+    for line in restores:
+        assert '--no-owner' in line and '--no-privileges' in line, line

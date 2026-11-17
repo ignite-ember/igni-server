@@ -8,6 +8,7 @@ and exports, and nothing that was paid for is ever switched off.
 from __future__ import annotations
 
 from datetime import timedelta
+import os
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,20 @@ from app.services.licence.source import RECHECK
 from tests.licence_kit import EXPIRES, FakeClock, licence_file, payload, signed
 
 ALL = {Operation.ALWAYS, Operation.READ, Operation.WRITE}
+
+
+def _written_later(path: Path) -> None:
+    """Say that the file was written a second after it was.
+
+    The reader notices that the licence file changed by its timestamp and
+    its size. A renewed licence is the same size — the same fields, with
+    different values — so the timestamp is all there is to notice, and two
+    writes in the same tick of the filesystem's clock carry the same one.
+    That is a property of the clock, not of the renewal, so the test says
+    when the file changed and leaves the renewal itself as the subject.
+    """
+    stamp = path.stat().st_mtime_ns + 1_000_000_000
+    os.utime(path, ns=(stamp, stamp))
 
 
 def _allowed(status) -> set[Operation]:
@@ -159,6 +174,7 @@ def test_a_renewed_file_is_picked_up_without_a_restart(tmp_path: Path) -> None:
 
     renewed = {Module.CODEINDEX: Entitlement(users=200, expires=EXPIRES + timedelta(days=365))}
     path.write_bytes(signed(payload(renewed, licence_id='IE-TEST-0043')))
+    _written_later(path)
     clock.advance(RECHECK)
 
     status = source.status(Module.CODEINDEX)

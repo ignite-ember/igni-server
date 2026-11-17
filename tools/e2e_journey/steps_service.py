@@ -18,6 +18,18 @@ from tools.e2e_journey.harness import HERE, Journey, Outcome, Step, StepFailed
 
 NO_SERVICE = Outcome(status='SKIP', detail='no service running (JOURNEY_SERVICE=none, or NO_SERVICE=1)')
 
+#: A backend started by hand has no launcher to give it the per-launch
+#: secret, so it mints its own window token and prints it once. Every
+#: window connection must offer that token as a WebSocket subprotocol, so
+#: the journey reads it out of the backend's output and hands it to the
+#: client it attaches.
+WINDOW_TOKEN_RE = re.compile(r'igni window token for this backend[^:]*:\s*(\S+)')
+
+
+def _redact(text: str, token: str | None) -> str:
+    """The window token is a credential: it reaches no log and no note."""
+    return text.replace(token, '***') if token else text
+
 
 def approve_service(j: Journey) -> Outcome | str:
     if not j.o.service_log:
@@ -61,21 +73,57 @@ def backend_installs_extension(j: Journey) -> Outcome | str:
     with open(log, 'w') as out:
         proc = subprocess.Popen(cmd, cwd=j.project, env=j.igni_env(), stdout=out, stderr=subprocess.STDOUT)
     j.note(f"$ (cd project && HOME=… {' '.join(cmd[1:])}) pid={proc.pid}, log {log}")
-    listing, holder = '', None
+    listing, holder, token = '', None, None
+    ws_url = None
+    started = time.time()
+    # The token is printed at startup, long before the backend is ready, so
+    # a short wait is enough to tell "minted one" from "takes none".
+    token_wait_until = started + 15
     try:
-        deadline = time.time() + 240
+        deadline = started + 240
         while time.time() < deadline:
             if proc.poll() is not None:
-                raise StepFailed(f'backend exited rc={proc.returncode}: {log.read_text()[-400:]}')
-            found = re.search(r'"ws_url": "([^"]+)"', log.read_text(errors='replace'))
-            if found and holder is None:
+                raise StepFailed(f'backend exited rc={proc.returncode}: {_redact(log.read_text()[-400:], token)}')
+            text = log.read_text(errors='replace')
+            found = re.search(r'"ws_url": "([^"]+)"', text)
+            minted = WINDOW_TOKEN_RE.search(text)
+            if minted:
+                token = minted.group(1)
+            if found:
+                ws_url = found.group(1)
+            # A backend that takes no token (the cloud's gateway does the
+            # authenticating) never prints one, so the client waits a moment
+            # for the token before attaching without it.
+            if ws_url and holder is None and (token or time.time() > token_wait_until):
                 # Extensions start once a client window attaches (BackendApp: wait_for_connection).
                 holder = subprocess.Popen(
-                    ['node', str(HERE / 'browser.mjs'), 'ws-hold', '--url', found.group(1), '--seconds', '230'],
+                    [
+                        'node',
+                        str(HERE / 'browser.mjs'),
+                        'ws-hold',
+                        '--url',
+                        ws_url,
+                        '--token-stdin',
+                        '1',
+                        '--seconds',
+                        '230',
+                    ],
+                    stdin=subprocess.PIPE,
                     stdout=open(Path(j.o.out) / 'logs' / 'ws-hold.log', 'w'),
                     stderr=subprocess.STDOUT,
                 )
-                j.note(f'$ node browser.mjs ws-hold --url {found.group(1)} (a client window attaches)')
+                if token:
+                    # The window token goes to the client on its stdin: an
+                    # argument is visible in the process list. The pipe is
+                    # a byte pipe, so the token goes in as bytes.
+                    holder.stdin.write((token + '\n').encode())
+                holder.stdin.close()
+                j.note(f'$ node browser.mjs ws-hold --url {ws_url} (a client window attaches)')
+            if holder is not None and holder.poll() is not None:
+                # The client is gone: say why, rather than wait four minutes.
+                said = Path(j.o.out) / 'logs' / 'ws-hold.log'
+                why = said.read_text(errors='replace').strip()[-300:] if said.exists() else ''
+                raise StepFailed(f'the client window could not attach: {why}')
             q = subprocess.run(
                 [j.o.igni_bin, 'ext', 'list'],
                 cwd=j.project,
@@ -96,9 +144,17 @@ def backend_installs_extension(j: Journey) -> Outcome | str:
             proc.wait(15)
         except subprocess.TimeoutExpired:
             proc.kill()
+        if token:
+            # The token is a credential: the uploaded logs do not carry it.
+            try:
+                log.write_text(_redact(log.read_text(errors='replace'), token))
+            except OSError:
+                pass
     j.note(f'$ igni ext list -> {listing[-300:]!r}')
     if j.o.extension_id not in listing:
-        hints = [line for line in log.read_text(errors='replace').splitlines() if 'xtension' in line][-6:]
+        hints = [
+            line for line in _redact(log.read_text(errors='replace'), token).splitlines() if 'xtension' in line
+        ][-6:]
         return Outcome(status='FAIL', detail=f'`igni ext list` never showed {j.o.extension_id}; backend log: {hints}')
     return f'`igni ext list` shows: {listing.strip()[-200:]}'
 

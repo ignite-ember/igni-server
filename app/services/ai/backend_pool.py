@@ -232,6 +232,17 @@ class InferenceBackendPool:
                     served.setdefault(name, backend.wire)
         return served
 
+    async def models_on(self, wire: Wire) -> set[str]:
+        """Every model a routable backend serves on `wire` — a model may be served on both."""
+        backends = await self._provider.load()
+        drained = await self._drains.drained_ids()
+        return {
+            name
+            for backend in backends
+            if backend.id not in drained and backend.wire == wire
+            for name in backend.models
+        }
+
     async def list_available_models(self) -> list[tuple[str, str]]:
         """Distinct ``(model, base_url)`` pairs.
 

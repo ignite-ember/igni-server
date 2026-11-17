@@ -37,12 +37,17 @@ Two things worth checking before you hand this to anyone.
 
 2. Retention. AUDIT_RETENTION_DAYS={{ .Values.retention.auditDays }}.
 {{ if eq (int .Values.retention.auditDays) 0 -}}
-   That is 0, which means keep forever and the retention runner does not
-   start at all. Defensible only if you can defend it: GDPR Art. 5(1)(e)
-   asks for a limit rather than a preference.
+   That is 0, which keeps the audit trail forever. Defensible only if you
+   can defend it: GDPR Art. 5(1)(e) asks for a limit rather than a
+   preference.
 {{- else -}}
-   The retention runner is active and prunes daily.
+   Audit events older than that are deleted.
 {{- end }}
+   The retention runner runs daily on every install, and two other
+   windows are on by default: SERVICE_EVENT_RETENTION_DAYS (30, settled
+   service events) and PRODUCER_FEED_RETENTION_DAYS (30, the gateway feed's
+   departed producers). Each round also clears expired producer exports and
+   revocations. With all three at 0 (extraEnv) it still clears those.
 
 Registered services each have their own hostname, never a path on
 this one: a service's URL is its identity — the audience of the

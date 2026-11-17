@@ -220,6 +220,12 @@ export interface InferenceStatus {
 /** GET /portal/inference/models: every model id the nodes serve, for choosing one. */
 export interface AvailableModels {
   models: string[]
+  /**
+   * The ones served on /v1/chat/completions: what a group's model can route
+   * to, since only a chat-completions request may name no model. Absent
+   * from an older server.
+   */
+  chat_completions?: string[]
 }
 
 export interface OrgSummary {
@@ -347,7 +353,8 @@ export interface LicenceOverview {
 
 // ─── Registered clients ─────────────────────────────────────────────
 
-export type RegisteredClientKind = 'service' | 'app'
+/** `platform`: Fleet's gateway and node agents, approved by a super admin like a service. */
+export type RegisteredClientKind = 'service' | 'app' | 'platform'
 export type RegisteredClientState = 'pending' | 'approved' | 'revoked'
 
 /**
@@ -817,6 +824,10 @@ export interface VmProfileSettings {
    * has its memory, snapshots, volume and keys erased. Null: never.
    */
   erase_after_idle_days?: number | null
+  /** The volume a new VM of this profile gets, in GiB. Absent: the platform's standard. */
+  volume_gib?: number
+  /** How far an org admin may grow one VM's volume, in GiB. Absent: the platform's standard. */
+  volume_max_gib?: number
   /**
    * Whether a VM with the profile may reach the internet. False: only what
    * its node allows. A security grant; a node that may not grant it

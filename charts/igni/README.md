@@ -173,6 +173,19 @@ Migrations in this project are tested for a downgrade round trip against
 populated data, but a downgrade is still a database operation on your
 data. Take the backup first.
 
+Rolling back to an older release means both planes, run with the **newer**
+image (it has the downgrade scripts) before the older one starts:
+
+```bash
+alembic downgrade <revision the older release is at>                       # shared plane
+python -m app.db.sql.tenant_migrations --downgrade <its alembic_tenant revision>  # every organisation and the template
+```
+
+The first alone leaves the organisations' databases at the newer tenant
+revision, and the older release's migrate hook fails on it ("Can't locate
+revision"). A downgrade can drop what the older schema has no column for:
+`0030`'s removes every cloud inference node.
+
 ### Upgrade notes
 
 Changes to defaults that an upgrade picks up without a values change:
@@ -197,7 +210,15 @@ Changes to defaults that an upgrade picks up without a values change:
 With `ingress.enabled=true`, one host serves both:
 
 * `/v1` → the API. This is what the CLI talks to.
+* `/.well-known` → the API: its signing keys and OpenID metadata, which
+  services fetch.
 * everything else → the portal.
+
+`/.well-known` is matched with `pathType: ImplementationSpecific`, because
+ingress-nginx (1.12 and later, `strict-validate-path-type` on by default)
+refuses a `Prefix` path containing a dot at admission; it matches
+`ImplementationSpecific` as a prefix. On GKE or the AWS load balancer
+controller, which match it exactly, set `ingress.wellKnownPathType=Prefix`.
 
 `/docs`, `/redoc` and `/openapi.json` are served by the API to anything
 inside the cluster and are **not** routed by the Ingress. Publishing your
@@ -241,10 +262,18 @@ ports. `egressCidrs` still works, on every port. See
 
 ## Retention
 
-`retention.auditDays` defaults to `0`, which means keep forever, and the
-retention runner does not start at all while it is 0. Defensible only if
-you can defend it — GDPR Art. 5(1)(e) asks for a limit rather than a
-preference. See `docs/COMPLIANCE_TRACKER.md` for what it maps to.
+`retention.auditDays` defaults to `0`, which keeps the audit trail
+forever. Defensible only if you can defend it — GDPR Art. 5(1)(e) asks for
+a limit rather than a preference. See `docs/COMPLIANCE_TRACKER.md` for
+what it maps to.
+
+It keeps the audit trail only. The retention runner starts on every
+install and runs once a day: it deletes service events settled more than
+`SERVICE_EVENT_RETENTION_DAYS` (30) ago and the gateway feed's departed
+producers after `PRODUCER_FEED_RETENTION_DAYS` (30), both set through
+`extraEnv` and kept by 0, and it always clears exports of removed
+members' data after `PRODUCER_EXPORT_RETENTION_DAYS` (7) and revocations
+after 31 days. `docs/DATA_RETENTION.md` lists every window.
 
 ## Backups
 

@@ -41,6 +41,7 @@ data:
   PORTAL_BASE_URL: {{ .Values.urls.portalBase | quote }}
   OAUTH_REDIRECT_BASE_URL: {{ .Values.urls.oauthRedirectBase | quote }}
   OAUTH_FRONTEND_BASE_URL: {{ .Values.urls.oauthFrontendBase | quote }}
+  CLIENT_INSTALL_URL: {{ .Values.urls.clientInstall | quote }}
 
   EMAIL_ENABLED: {{ .Values.email.enabled | quote }}
   EMAIL_CODES_HOURLY_LIMIT: {{ .Values.email.codesHourlyLimit | quote }}

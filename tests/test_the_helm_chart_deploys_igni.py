@@ -1,10 +1,9 @@
 """The Helm chart renders a deployment somebody could actually run.
 
-F98, and the last of §41's two marketplace blockers. Both marketplaces
-want a chart: a GCP Kubernetes listing needs one plus a `schema.yaml` of
-deployer parameters, and an AWS container listing accepts one in place of
-CloudFormation. `docker-compose.prod.yml` is a real working artefact and
-is neither.
+F98. The chart is how a customer installs igni on Kubernetes, so it has
+to render a deployment that starts, and it has to refuse to render at
+all when something is missing. `docker-compose.prod.yml` is a real
+working artefact and is neither.
 
 This file renders the chart with `helm template` and asserts on the
 manifests, because a chart is a program and reading one proves very
@@ -226,9 +225,9 @@ class TestTheChartRendersAtAll:
 
 
 class TestEveryWorkloadIsHardened:
-    """The container requirements both marketplaces review against, and
-    the ones an image scanner flags. F89 moved the images off root; this
-    is the half of that which lives in the pod spec."""
+    """The container requirements a cluster enforces, and the ones an
+    image scanner flags. F89 moved the images off root; this is the half
+    of that which lives in the pod spec."""
 
     def test_every_pod_runs_as_a_numeric_non_root_user(self, manifests):
         for name, spec in _pod_specs(manifests).items():
@@ -287,11 +286,11 @@ class TestEveryWorkloadIsHardened:
             assert tmp['emptyDir'].get('sizeLimit'), f'{name}: /tmp emptyDir has no sizeLimit'
 
     def test_every_container_declares_what_it_needs(self, manifests):
-        """Requests are what the scheduler honours and what a marketplace
-        review looks for. A memory limit is what stops one pod taking the
-        node down; a CPU limit is deliberately absent, since throttling an
-        asyncio process produces latency that looks like a network
-        fault."""
+        """Requests are what the scheduler honours, and what a cluster asks
+        for before it schedules the pod. A memory limit is what stops one
+        pod taking the node down; a CPU limit is deliberately absent,
+        since throttling an asyncio process produces latency that looks
+        like a network fault."""
         for name, spec in _pod_specs(manifests).items():
             for container in spec['containers']:
                 resources = container.get('resources', {})
@@ -618,6 +617,32 @@ class TestNothingIsRoutedToNothing:
         routes = {p['path']: p['backend']['service']['name'] for p in paths}
 
         assert routes.get('/.well-known') == 'igni-api', routes
+
+    def test_ingress_nginx_admits_the_well_known_path(self, manifests):
+        """ingress-nginx 1.12 validates `Exact` and `Prefix` paths strictly
+        by default (`strict-validate-path-type`), and its pattern has no
+        dot: it refused `/.well-known` as a `Prefix` at admission, so the
+        README's own install failed. `ImplementationSpecific` is not
+        validated, and ingress-nginx matches it as a prefix. Every path that
+        stays `Prefix` or `Exact` has to pass that pattern."""
+        ingress = _of_kind(manifests, 'Ingress')[0]
+        paths = ingress['spec']['rules'][0]['http']['paths']
+        types = {p['path']: p['pathType'] for p in paths}
+
+        assert types['/.well-known'] == 'ImplementationSpecific', types
+        strict = re.compile(r'^/[A-Za-z0-9_\-/]*$')
+        refused = [p for p, t in types.items() if t in ('Prefix', 'Exact') and not strict.match(p)]
+        assert not refused, f'ingress-nginx refuses these at admission: {refused}'
+
+    def test_the_well_known_path_type_can_be_prefix_for_other_controllers(self):
+        """GKE and the AWS load balancer controller match an
+        `ImplementationSpecific` path without a wildcard exactly, which
+        would leave `/.well-known/jwks.json` to the portal. They do not
+        apply ingress-nginx's validation, so `Prefix` is theirs to pick."""
+        manifests = _render(*_FULL, '--set', 'ingress.wellKnownPathType=Prefix')
+        paths = _of_kind(manifests, 'Ingress')[0]['spec']['rules'][0]['http']['paths']
+
+        assert {p['path']: p['pathType'] for p in paths}['/.well-known'] == 'Prefix'
 
     def test_the_api_documentation_is_not_published(self, manifests):
         """`/docs`, `/redoc` and `/openapi.json` are served to anything
@@ -1228,8 +1253,6 @@ class TestNothingIsPulledFromAPublicRegistry:
         '--set',
         'networkPolicy.metricsFrom.namespaceSelector.kubernetes\\.io/metadata\\.name=monitoring',
         '--set',
-        'marketplace.enabled=true',
-        '--set',
         'ingress.tls.enabled=true',
         '--set',
         'ingress.tls.secretName=igni-tls',
@@ -1257,7 +1280,7 @@ class TestNothingIsPulledFromAPublicRegistry:
         rendered = _render(*self._EVERYTHING)
         kinds = {m['kind'] for m in rendered}
 
-        assert {'CronJob', 'NetworkPolicy', 'ServiceMonitor', 'PrometheusRule', 'Application'} <= kinds, kinds
+        assert {'CronJob', 'NetworkPolicy', 'ServiceMonitor', 'PrometheusRule'} <= kinds, kinds
 
     def test_every_image_comes_from_the_customers_registry(self):
         rendered = _render(*self._EVERYTHING)
@@ -1296,3 +1319,29 @@ class TestGoogleSignInIsOffUntilItIsConfigured:
         )
 
         assert off == []
+
+
+class TestAFileSettingCanBeMounted:
+    """`INFERENCE_BACKENDS_PATH` reads a file, "the normal case (a ConfigMap
+    or bind mount)", and `extraEnv` can name it — but the chart had no way
+    to put the file in the pod, so only the inline form worked."""
+
+    def test_extra_volumes_reach_the_api_pod(self):
+        rendered = _render(
+            *_MINIMAL,
+            '--set', 'extraVolumes[0].name=backends',
+            '--set', 'extraVolumes[0].configMap.name=igni-inference-backends',
+            '--set', 'extraVolumeMounts[0].name=backends',
+            '--set', 'extraVolumeMounts[0].mountPath=/etc/igni/backends',
+            '--set', 'extraVolumeMounts[0].readOnly=true',
+            '--set', 'extraEnv[0].name=INFERENCE_BACKENDS_PATH',
+            '--set', 'extraEnv[0].value=/etc/igni/backends/backends.json',
+        )  # fmt: skip
+        api = next(
+            m for m in _of_kind(rendered, 'Deployment') if m['metadata']['name'].endswith('-api')
+        )['spec']['template']['spec']
+        container = api['containers'][0]
+
+        assert {'name': 'backends', 'configMap': {'name': 'igni-inference-backends'}} in api['volumes']
+        assert {'name': 'backends', 'mountPath': '/etc/igni/backends', 'readOnly': True} in container['volumeMounts']
+        assert {'name': 'tmp', 'mountPath': '/tmp'} in container['volumeMounts'], 'the chart\'s own mounts are kept'

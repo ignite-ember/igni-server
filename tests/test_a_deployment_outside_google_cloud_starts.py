@@ -1,8 +1,8 @@
 """A deployment with no Google Cloud starts, and the shipped template boots.
 
-F97, and §41's first marketplace blocker. The distribution target is
-self-hosted through the AWS and GCP marketplaces, which makes "starts on
-AWS" a product requirement rather than a nicety.
+F97. The distribution target is self-hosted: a customer runs igni in
+their own cloud account, on their own infrastructure. That makes "starts
+on AWS" a product requirement rather than a nicety.
 
 Two bugs of the same shape motivated this, and neither was a bug in any
 code path — both were in configuration that outlived what it configured:

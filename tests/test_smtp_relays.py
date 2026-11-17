@@ -150,3 +150,16 @@ class TestDelivery:
         monkeypatch.setattr('app.services.email.transports.smtp.aiosmtplib.send', _boom)
         service = EmailService(transport=SmtpTransport(host='relay.test'))
         assert await service.send_email(to_email='a@b.test', subject='s', html_body='<p>b</p>') is False
+
+
+def test_the_guide_says_how_to_trust_a_relays_private_ca():
+    """A relay signed by a private CA failed with CERTIFICATE_VERIFY_FAILED
+    while the code request still answered 200, and nothing said how to
+    trust the CA."""
+    import pathlib
+
+    guide = (pathlib.Path(__file__).resolve().parent.parent / 'docs' / 'self-hosting.md').read_text()
+    section = guide.split('## 6. Email', 1)[1].split('\n## 7', 1)[0]
+
+    assert 'CERTIFICATE_VERIFY_FAILED' in section
+    assert '`SSL_CERT_FILE`' in section

@@ -77,15 +77,12 @@ class TestCodesAreNotLoggedByDefault:
         assert Settings.model_fields['log_sign_in_codes'].default is False
 
     def test_the_shipped_configuration_leaves_it_off(self):
-        """`dist.env` is what a deployment copies, the chart's values are
-        what it installs with, and the marketplace form is what a buyer
-        fills in. Each says off."""
+        """`dist.env` is what a deployment copies and the chart's values
+        are what it installs with. Each says off."""
         root = pathlib.Path(__file__).resolve().parent.parent
         assert re.search(r'^LOG_SIGN_IN_CODES=false$', (root / 'dist.env').read_text(), re.M)
         values = yaml.safe_load((root / 'charts/igni/values.yaml').read_text())
         assert values['email']['logSignInCodes'] is False
-        schema = yaml.safe_load((root / 'marketplace/schema.yaml').read_text())
-        assert schema['properties']['email.logSignInCodes']['default'] is False
 
     def test_the_code_is_not_logged(self, delivery, caplog):
         with caplog.at_level(logging.DEBUG):

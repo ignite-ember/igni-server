@@ -41,13 +41,15 @@ async def get_export(export_id: str, authority: OrgAuthority = Depends(require_o
 async def download(
     request: Request, export_id: str, authority: OrgAuthority = Depends(require_org_authority)
 ) -> StreamingResponse:
+    # The node agent uploads what `igni-cloud db export-producer` wrote,
+    # unchanged, and that is a zip (manifest.json, rows.jsonl, attachments/).
     row, chunks = await ProducerExports().archive(authority.org_id, export_id)
     RequestAudit.of(request).set_target(target_type='producer_export', target_id=export_id)
     return StreamingResponse(
         chunks,
-        media_type='application/octet-stream',
+        media_type='application/zip',
         headers={
             'Content-Length': str(row.size or 0),
-            'Content-Disposition': f'attachment; filename="export-{export_id}.tar.gz"',
+            'Content-Disposition': f'attachment; filename="export-{export_id}.zip"',
         },
     )

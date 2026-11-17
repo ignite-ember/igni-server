@@ -191,6 +191,25 @@ class TestWhatIsTraced:
         for leaked in (BODY_SECRET, QUERY_SECRET, 'igni-cli/1.0', '127.0.0.1:'):
             assert leaked not in everything, f'{leaked!r} was exported'
 
+    def test_an_outgoing_call_names_the_host_it_went_to(self, telemetry):
+        """docs/observability.md: "An outgoing call | httpx | Method, host,
+        status, duration". The httpx span named its target only in
+        `http.url`, which is dropped for its query string, so which node or
+        module was called could not be read from the trace."""
+        exported = InMemorySpanExporter()
+        with Upstream() as upstream:
+            app = relay_app(upstream.url + f'?token={QUERY_SECRET}')
+            assert telemetry.start(app, configured(), span_exporter=exported).ok
+            TestClient(app).post('/v1/relay', json={})
+            telemetry.flush()
+            host, port = upstream.url.split('//', 1)[1].split('/', 1)[0].split(':')
+
+        (client,) = [s for s in exported.get_finished_spans() if s.kind is otel_trace.SpanKind.CLIENT]
+        attributes = dict(client.attributes or {})
+        assert (attributes['server.address'], attributes['server.port']) == (host, int(port))
+        assert QUERY_SECRET not in json.dumps(attributes), 'the host, not the URL'
+        assert attributes.get('http.method', attributes.get('http.request.method')) == 'POST'
+
     def test_a_statement_is_traced_on_an_engine_the_database_layer_reports(self, telemetry):
         exported = InMemorySpanExporter()
         assert telemetry.start(FastAPI(), configured(), span_exporter=exported).ok

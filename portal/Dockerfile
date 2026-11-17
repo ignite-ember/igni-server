@@ -12,8 +12,8 @@ RUN npm run build && node scripts/check-no-cdn.mjs
 # Stage 2: Serve with nginx
 #
 # ``nginx-unprivileged`` rather than ``nginx``: the stock image starts its
-# master process as root, which the GCP Marketplace container requirements
-# forbid and every image scanner an AWS listing passes through flags.
+# master process as root, which Kubernetes' ``runAsNonRoot`` refuses and
+# every image scanner flags.
 # ``docker run --rm <image> id -u`` printed 0.
 #
 # This variant runs as uid 101 throughout and has ``/var/cache/nginx``,
@@ -56,8 +56,8 @@ ENV API_UPSTREAM="igni_api:7777"
 LABEL org.opencontainers.image.title="igni portal" \
       org.opencontainers.image.description="igni server — admin portal" \
       org.opencontainers.image.source="https://github.com/ignite-ember/igni-server" \
-      # SPDX identifier, which is what a scanner and a marketplace review
-      # read. `NOASSERTION` was the placeholder and it is the literal
+      # SPDX identifier, which is what a scanner reads. `NOASSERTION`
+      # was the placeholder and it is the literal
       # string tooling uses for "nobody said", so it reported as an
       # unlicensed image rather than an unfinished label.
       org.opencontainers.image.licenses="Apache-2.0" \

@@ -1,11 +1,11 @@
 """The licence is declared, complete, and free of placeholders.
 
-The last of the marketplace listing's items that is engineering rather than
-paperwork. Both container images declared
-`org.opencontainers.image.licenses="NOASSERTION"` — which is not an empty
-label, it is the literal string SPDX tooling uses for "nobody said". So
-every scanner and every marketplace review read the images as
-unlicensed, and there was no `LICENSE` file in the repository at all.
+The licence has to be declared on the images as well as in the
+repository, which is engineering rather than paperwork. Both container
+images declared `org.opencontainers.image.licenses="NOASSERTION"` — which
+is not an empty label, it is the literal string SPDX tooling uses for
+"nobody said". So every scanner read the images as unlicensed, and there
+was no `LICENSE` file in the repository at all.
 
 Two things are checked here, and the second is the one that earns its
 keep.

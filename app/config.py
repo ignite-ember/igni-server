@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     # and the chart's `appVersion` said 0.1.0 — and the chart's default
     # `image.tag` is its `appVersion`, so the default install asked for
     # a tag nothing had ever published.
-    app_version: str = '0.7.0'
+    app_version: str = '0.7.1'
     app_configure_logging_level: str = 'INFO'
     app_root_path: str = ROOT_PATH
     log_level: str = 'INFO'
@@ -193,10 +193,14 @@ class Settings(BaseSettings):
         default='starttls', description='starttls (587), tls (465), or none (25, internal relay)'
     )
 
-    # The display name on outbound mail. Configurable because a
-    # self-hosted deployment is the customer's, not ours — their people
-    # should not receive sign-in codes from a vendor's brand.
-    email_from_name: str = Field(default='igni', description='Display name in the From header')
+    # The display name on outbound mail, and the name in its subjects,
+    # header and footer. igni-server is only shipped as images the
+    # customer runs, so the vendor never signs: empty (the default) sends
+    # from the bare EMAIL_FROM_ADDRESS and names no sender anywhere in the
+    # mail. Set it to the organisation's name.
+    email_from_name: str = Field(
+        default='', description="Display name on outbound mail (e.g. the organisation's name); empty for none"
+    )
 
     # ── Which transport carries the mail ─────────────────────────────
     # ``smtp`` works against anything, including SES. ``ses`` uses the
@@ -229,6 +233,14 @@ class Settings(BaseSettings):
     # invite link, instead of pointing at a domain that resolves for
     # somebody else.
     portal_base_url: str = 'http://localhost:3000'
+
+    # Where this organisation's people get the igni app — an intranet
+    # page, a software centre entry. igni runs on isolated networks, so
+    # the welcome email never names a public install command or URL; with
+    # this empty it tells the recipient to ask their administrator.
+    client_install_url: str = Field(
+        default='', description="The operator's own page for getting the igni app; empty for none"
+    )
 
     # Bearer token the identity provider presents to /scim/v2. Empty
     # disables SCIM entirely — every route answers 503: a provisioning

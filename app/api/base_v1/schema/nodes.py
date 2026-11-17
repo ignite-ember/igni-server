@@ -270,3 +270,8 @@ class AvailableModels(BaseModel):
     """
 
     models: list[str] = []
+    #: The ones served on `/v1/chat/completions`: what a group's model can
+    #: route to, since only a chat-completions request may name no model.
+    #: `models` also holds what only `/v1/messages` serves, which an agent
+    #: may still name.
+    chat_completions: list[str] = []

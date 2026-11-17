@@ -54,7 +54,10 @@ export function GroupModel({
     onError: (err: unknown) => onFeedback('critical', refusalOf(err, 'Failed to set the model')),
   })
 
-  const models = modelsQuery.data?.models ?? []
+  // Only what /v1/chat/completions serves: a pin applies to a chat request
+  // that names no model, and a /v1/messages request always names one, so a
+  // model served only there could never be routed to (the server refuses it).
+  const models = modelsQuery.data?.chat_completions ?? modelsQuery.data?.models ?? []
 
   // No label of its own: this renders inside a card already headed
   // "Model", and saying it twice is how a settings page starts looking

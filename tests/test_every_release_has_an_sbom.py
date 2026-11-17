@@ -1,8 +1,8 @@
 """Every image that ships has an SBOM, and the portal has two.
 
-CM-8 in `COMPLIANCE_TRACKER.md`. Both marketplaces increasingly expect a
-software bill of materials, and SOC 2 CC7.1 vulnerability management is
-easier when a customer can answer "what is in this" without asking.
+CM-8 in `COMPLIANCE_TRACKER.md`. A customer asks for a software bill of
+materials, and SOC 2 CC7.1 vulnerability management is easier when a
+customer can answer "what is in this" without asking.
 
 Two things make this worth a rule rather than two workflow steps.
 
@@ -104,7 +104,7 @@ class TestEveryPushedImageHasAnSbom:
 
         assert not missing, (
             f'release.yml pushes these images with no SBOM step naming them: {missing}. '
-            'A customer or a marketplace listing asking what is inside would get '
+            'A customer asking what is inside would get '
             'nothing for them.'
         )
 
@@ -122,7 +122,7 @@ class TestEveryPushedImageHasAnSbom:
 
     def test_the_format_is_a_standard_one(self):
         """CycloneDX or SPDX. A bespoke listing is not an SBOM as far as a
-        marketplace review or a customer's tooling is concerned."""
+        customer's tooling is concerned."""
         release = _workflow(_RELEASE)
         # Steps that *declare* a format. The `Upload ... SBOM` steps also
         # have "SBOM" in their names and no format at all, which the first

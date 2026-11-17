@@ -6,6 +6,7 @@ from app.api.base_v1.schema.chat import ChatCompletionRequest
 from app.config import settings
 from app.db.sql.chat_usage import ChatUsageDB
 from app.services.ai.backend import BackendLease
+from app.services.ai.backend_provider import BackendConfigError
 from app.services.ai.chat.admission import ChatAdmission
 from app.services.ai.chat.answers import CallerLeft, ChatAnswer, CompletedAnswer, StreamedAnswer
 from app.services.ai.chat.callers import ChatCallerResolver
@@ -16,6 +17,7 @@ from app.services.ai.chat.schemas import ChatCaller, UpstreamChatRequest
 from app.services.ai.chat.streaming import ChatStreamer
 from app.services.ai.fair_queue import FairQueue
 from app.services.ai.pool_manager import PoolManager
+from app.services.ai.providers.kinds import Wire
 
 
 class ChatProxy:
@@ -50,6 +52,8 @@ class ChatProxy:
         caller leaves. A stream is returned unstarted.
         """
         model = await self._callers.preferred_model(caller=caller, requested=body.model)
+        if model and not body.model:
+            model = await self._routable_pin(model)
         lease = await presence.unless_it_closes(self._admission().admit(caller=caller, model=model))
         if lease is None:
             return CallerLeft()
@@ -61,6 +65,19 @@ class ChatProxy:
         if response is None:
             return CallerLeft()
         return CompletedAnswer(response=response)
+
+    async def _routable_pin(self, pinned: str) -> str | None:
+        """A group's pin, or the deployment default when this endpoint does not serve it.
+
+        Saving refuses a pin `/v1/chat/completions` cannot serve, but the
+        nodes change after: a pin left naming a model only `/v1/messages`
+        serves must cost the group its pin, not every member's request.
+        """
+        try:
+            served = await self._pools.get_pool().models_on(Wire.OPENAI)
+        except BackendConfigError:
+            return pinned
+        return pinned if pinned in served else None
 
     def _admission(self) -> ChatAdmission:
         """Admission against the pool as it is now."""

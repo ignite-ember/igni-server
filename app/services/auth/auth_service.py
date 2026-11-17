@@ -16,6 +16,7 @@ from app.db.sql.user import UserDB
 from app.security.account_domains import refuse_public_mail
 from app.security.subject import Subjects
 from app.services.auth.auth_errors import InvalidCredentials
+from app.services.auth.fresh_sessions import FreshSessions
 from app.services.auth.jwt_service import JWTService, TokenResponse
 from app.services.auth.otp_service import OTPResult, OTPService
 from app.services.auth.passwords import Passwords
@@ -129,6 +130,7 @@ class AuthService:
 
     async def _session_for(self, user_id: str) -> TokenResponse:
         """A fresh session for *user_id*, noted as a sign-in."""
+        await FreshSessions().wait_until_honoured(user_id)
         token = self._jwt.create_token(user_id)
         await self._users.note_sign_in(user_id)
         return TokenResponse(access_token=token)

@@ -15,6 +15,7 @@ carries other people's comments too.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 import pathlib
 import uuid
 
@@ -161,10 +162,10 @@ class TestTheRetentionRunner:
     """A setting is not a limit. SOC 2 asks whether a control *operates*.
 
     `app/services/retention.py` is what applies the window. Its two
-    interesting properties are that it does nothing unless configured —
-    so a deployment that has not made a retention decision gets no
-    background task and no surprise deletions — and that only one replica
-    prunes per round.
+    interesting properties are that a window of 0 deletes nothing from what
+    it governs — so a deployment that has not made a retention decision
+    gets no surprise deletions of its audit trail — and that only one
+    replica prunes per round.
     """
 
     async def test_it_does_nothing_when_no_window_is_set(self, monkeypatch):
@@ -173,7 +174,6 @@ class TestTheRetentionRunner:
         monkeypatch.setattr(settings, 'producer_feed_retention_days', 0)
         _deployment_event(occurred_at=datetime.now(timezone.utc) - timedelta(days=900))
 
-        assert Retention.is_configured() is False
         nothing = {
             'audit_events': 0,
             'producer_events': 0,
@@ -298,3 +298,58 @@ class TestTheRetentionRunner:
         assert 'await retention.stop()' in main, (
             'the loop is never cancelled on shutdown, which leaks the task and can leave the advisory lock held'
         )
+
+
+class TestWhatTheOperatorIsToldAboutRetention:
+    """`retention.auditDays: 0` was described as "keep forever and the
+    retention runner does not start at all", while the runner started on
+    the 30-day defaults of the other two windows and deleted service
+    events, the gateway feed, exports and revocations."""
+
+    def test_the_chart_does_not_say_the_runner_stops_with_the_audit_window(self):
+        root = pathlib.Path(__file__).resolve().parent.parent / 'charts' / 'igni'
+        notes = ' '.join((root / 'templates' / 'NOTES.txt').read_text().split())
+        values = ' '.join((root / 'values.yaml').read_text().split())
+
+        assert 'does not start at all' not in notes
+        assert 'does nothing at all while this is 0' not in values
+        for told in (notes, values):
+            assert 'SERVICE_EVENT_RETENTION_DAYS' in told and 'PRODUCER_FEED_RETENTION_DAYS' in told
+
+    def test_no_operator_text_says_the_runner_does_not_start(self):
+        """The chart's README, the compliance tracker and the shipped alert
+        kept the old claim after NOTES and values were corrected."""
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for relative in (
+            'charts/igni/README.md',
+            'charts/igni/templates/NOTES.txt',
+            'charts/igni/values.yaml',
+            'charts/igni/files/alerts.yaml',
+            'docs/COMPLIANCE_TRACKER.md',
+            'docs/DATA_RETENTION.md',
+        ):
+            told = ' '.join((root / relative).read_text().split())
+            for claim in (
+                'does not start at all',
+                'not started at all',
+                'Expected if AUDIT_RETENTION_DAYS is 0',
+                'nothing is deleted',
+            ):
+                assert claim not in told, f'{relative} still says {claim!r}'
+
+    async def test_the_audit_window_alone_does_not_stop_the_runner(self, monkeypatch):
+        monkeypatch.setattr(settings, 'audit_retention_days', 0)
+        retention = Retention(first_run_delay_seconds=3600)
+        retention.start()
+        assert retention.running, 'the defaults of the other two windows still prune'
+        await retention.stop()
+
+    async def test_the_start_line_names_every_window(self, monkeypatch, caplog):
+        monkeypatch.setattr(settings, 'audit_retention_days', 0)
+        retention = Retention(first_run_delay_seconds=3600)
+        with caplog.at_level(logging.INFO, logger='app.services.retention'):
+            retention.start()
+        await retention.stop()
+
+        line = next(r.getMessage() for r in caplog.records if 'Retention active' in r.getMessage())
+        assert 'audit=0d' in line and 'producer feed=30d' in line

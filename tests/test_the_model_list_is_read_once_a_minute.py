@@ -100,3 +100,15 @@ async def test_a_caller_that_changes_its_list_does_not_change_the_cache():
     (await catalog.models()).clear()
 
     assert len(await catalog.models()) == 2
+
+
+async def test_no_node_at_all_is_an_empty_list_and_not_cached():
+    """The last registered node stopped or expired — a cluster stopped
+    overnight — answered 500 to every client's model discovery."""
+    from app.services.ai.backend_provider import BackendConfigError
+
+    pool = _Pool(BackendConfigError('No inference backends are available.'), _TWO)
+    catalog = _catalog(pool)
+
+    assert await catalog.models() == []
+    assert [m.id for m in await catalog.models()] == ['m-a', 'm-b'], 'the first node back is listed at once'

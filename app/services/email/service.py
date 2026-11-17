@@ -45,9 +45,9 @@ class EmailService:
         # reach one template method.
         self._transport = transport
         self._settings = settings
-        self._templates = templates or EmailTemplates()
         self.from_email = from_email if from_email is not None else settings.email_from_address
         self.from_name = from_name if from_name is not None else settings.email_from_name
+        self._templates = templates or EmailTemplates(brand=self.from_name)
 
     @property
     def transport(self) -> EmailTransport:
@@ -80,7 +80,9 @@ class EmailService:
             message = EmailMessage()
             # The address must be exactly what the provider expects: SES
             # rejects a From that is not a verified identity in the account.
-            message['From'] = f'{self.from_name} <{self.from_email}>'
+            # An empty EMAIL_FROM_NAME (the default) sends the bare address:
+            # the vendor runs no server and signs nothing.
+            message['From'] = f'{self.from_name} <{self.from_email}>' if self.from_name else self.from_email
             message['To'] = to_email
             message['Subject'] = subject
 
@@ -119,11 +121,18 @@ class EmailService:
 
     async def send_welcome(self, *, to_email: str, name: str | None = None) -> bool:
         content = self._templates.welcome(email=to_email, name=name)
+        t = self._templates
+        lines = [
+            f'Welcome to {t.brand}! Your igni account is ready.' if t.brand else 'Welcome! Your igni account is ready.',
+            f'Sign in at {t.portal_url}' if t.portal_url else 'Ask your administrator where to sign in.',
+            (
+                f'Get the igni app: {t.client_install_url}'
+                if t.client_install_url
+                else 'Ask your administrator how to get the igni app.'
+            ),
+        ]
         return await self.send_email(
-            to_email=to_email,
-            subject=content.subject,
-            html_body=content.html_body,
-            text_body='Welcome to ignite-ember.sh! Your account has been created successfully.',
+            to_email=to_email, subject=content.subject, html_body=content.html_body, text_body='\n'.join(lines)
         )
 
     async def send_team_invite(

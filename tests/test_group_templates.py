@@ -13,7 +13,7 @@ it came from must not change under it afterwards.
 import pytest
 
 from app.db.sql.group_extensions import GroupExtensionsDB
-from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup
+from app.services.portal.default_group import DEFAULT_GROUP_DESCRIPTION, DEFAULT_GROUP_NAME, DefaultGroup
 from app.services.portal.default_group_seed import BUNDLED_SEED
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
@@ -299,6 +299,26 @@ class TestTheCopyAction:
         assert sorted((e['kind'], e['entry_name']) for e in copied) == sorted(
             (entry.kind, entry.entry_name) for entry in BUNDLED_SEED.entries()
         )
+
+    async def test_a_copy_of_the_default_group_does_not_say_it_cannot_be_changed(self, client, admin):
+        """The Default group's description says it cannot be changed. The
+        portal's dialog sends only a name, so the copy, which can be
+        changed, inherited that sentence and showed it beside Edit."""
+        headers, _ = admin
+        groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
+        default = next(g for g in groups if g['is_default'])
+        assert default['description'] == DEFAULT_GROUP_DESCRIPTION
+
+        copy = (
+            await client.post(f'/portal/groups/{default["id"]}/copy', json={'name': 'Mine'}, headers=headers)
+        ).json()
+        assert copy['description'] is None
+        named = (
+            await client.post(
+                f'/portal/groups/{default["id"]}/copy', json={'name': 'Ours', 'description': 'Ours'}, headers=headers
+            )
+        ).json()
+        assert named['description'] == 'Ours'
 
     async def test_a_taken_name_is_refused(self, client, admin):
         headers, _ = admin

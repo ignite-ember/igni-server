@@ -67,18 +67,22 @@ async def test_a_round_that_raises_is_counted_and_the_next_one_runs(monkeypatch,
     assert not quick.running
 
 
-async def test_nothing_starts_without_a_window(monkeypatch, caplog):
+async def test_it_starts_with_every_window_at_zero(monkeypatch, caplog):
+    """Exports and revocations have no 0 that keeps them: with the three
+    windows at 0 the loop still has to run, or both stay for ever."""
     monkeypatch.setattr(settings, 'audit_retention_days', 0)
     monkeypatch.setattr(settings, 'service_event_retention_days', 0)
     monkeypatch.setattr(settings, 'producer_feed_retention_days', 0)
-    idle = Retention()
+    idle = Retention(first_run_delay_seconds=3600)
 
     with caplog.at_level(logging.INFO, logger=retention.__name__):
         idle.start()
 
+    assert idle.running
+    assert 'expired producer exports and revocations are cleared each round' in caplog.text
+    assert 'nothing will be deleted' not in caplog.text
+    await idle.stop()
     assert not idle.running
-    assert 'nothing will be deleted' in caplog.text
-    await idle.stop()  # nothing to stop is not an error
 
 
 async def test_stopping_waits_for_the_loop_and_says_when_it_had_died(monkeypatch, quick, windows, caplog):

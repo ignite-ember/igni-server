@@ -243,3 +243,51 @@ def test_the_portal_user_schema_is_unchanged_by_any_of_this():
     """A canary: none of the observability work should have touched the
     shape of an authenticated user."""
     assert 'org_id' in PortalUser.model_fields
+
+
+class TestEveryLineIsJson:
+    """`LOG_FORMAT=json` "makes every line an object a log shipper can filter
+    on". Only records reaching the root logger were: uvicorn's startup and
+    access lines kept uvicorn's own plain-text handlers (`propagate=False`),
+    and Python warnings went to stderr raw — 12 of 20 lines of a real
+    `docker logs` did not parse."""
+
+    @pytest.fixture
+    def uvicorn_configured_first(self):
+        """uvicorn's own logging config, as it is installed before `app.main` is imported."""
+        import logging.config
+
+        from uvicorn.config import LOGGING_CONFIG
+
+        root = logging.getLogger()
+        saved = (root.handlers[:], root.level)
+        saved_uvicorn = {
+            name: (logging.getLogger(name).handlers[:], logging.getLogger(name).propagate)
+            for name in ('uvicorn', 'uvicorn.error', 'uvicorn.access')
+        }
+        logging.config.dictConfig(LOGGING_CONFIG)
+        yield
+        logging.captureWarnings(False)
+        root.handlers[:], root.level = saved[0], saved[1]
+        for name, (handlers, propagate) in saved_uvicorn.items():
+            logging.getLogger(name).handlers[:] = handlers
+            logging.getLogger(name).propagate = propagate
+
+    def test_uvicorns_lines_and_warnings_are_objects_too(self, uvicorn_configured_first, capsys):
+        import warnings
+
+        from app.observability.log_format import configure
+
+        configure('INFO', as_json=True)
+        logging.getLogger('uvicorn.error').info('Started server process [%d]', 1)
+        logging.getLogger('uvicorn.access').info(
+            '%s - "%s %s HTTP/%s" %d', '127.0.0.1:52262', 'GET', '/health', '1.1', 200
+        )
+        warnings.warn('something is deprecated', DeprecationWarning, stacklevel=1)
+
+        captured = capsys.readouterr()
+        lines = [line for line in (captured.err + captured.out).splitlines() if line.strip()]
+        parsed = [json.loads(line) for line in lines]
+
+        assert [p['logger'] for p in parsed] == ['uvicorn.error', 'uvicorn.access', 'py.warnings']
+        assert parsed[1]['message'] == '127.0.0.1:52262 - "GET /health HTTP/1.1" 200'

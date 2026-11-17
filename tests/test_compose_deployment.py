@@ -195,7 +195,7 @@ class TestTheProdImageIsNotAGuess:
 
 
 class TestTheSingleInstanceStackIsWhole:
-    """What a pre-marketplace customer gets: one host, `docker compose up`.
+    """What a single-host customer gets: one host, `docker compose up`.
     The prod file used to be the API, a worker, Flower and the
     migration — no web UI and no datastores, so "one instance and
     compose" meant standing up RDS and ElastiCache first."""
@@ -844,3 +844,28 @@ class TestTheLocalStackIsTheOneTheReadmeDescribes:
             assert paths == ['../.env'], (name, paths)
         makefile = (_ROOT.parent / 'Makefile').read_text()
         assert '--env-file ../.env' in makefile, '`make up` interpolates from containers/.env'
+
+
+class TestASecondStackFitsOnTheHost:
+    """The production file fixed `igni__*` container names and host ports
+    7777/3000, so a second igni on the same host could not run it
+    unmodified — the local file already took `IGNI_STACK` and the ports."""
+
+    @pytest.mark.parametrize('which', ['docker-compose.prod.yml', 'docker-compose.tls.yml'])
+    def test_container_names_follow_the_stack(self, which):
+        names = [str(s['container_name']) for s in _load(which)['services'].values() if 'container_name' in s]
+
+        assert names and all(n.startswith('${IGNI_STACK:-igni}__') for n in names), names
+
+    def test_the_host_ports_are_variables(self, prod):
+        assert _published(prod['services']['igni_api']) == ['${IGNI_API_BIND:-127.0.0.1}:${IGNI_API_PORT:-7777}:7777']
+        assert _published(prod['services']['portal']) == [
+            '${IGNI_PORTAL_BIND:-127.0.0.1}:${IGNI_PORTAL_PORT:-3000}:3000'
+        ]
+
+    def test_the_readme_describes_the_file_as_it_is(self):
+        readme = ' '.join((_ROOT.parent / 'README.md').read_text().split())
+
+        assert 'this file has no portal service' not in readme
+        assert 'Both variables are required' not in readme
+        assert '`IGNI_PORTAL_IMAGE`' in readme and 'IGNI_STACK=<name>' in readme

@@ -1284,6 +1284,14 @@
       "AvailableModels": {
         "description": "Model ids this deployment serves, deduplicated and sorted.\n\nIncludes LoRA adapters, since a node answers to each of them by name\nand any of them is a legitimate choice for a group.",
         "properties": {
+          "chat_completions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Chat Completions",
+            "type": "array"
+          },
           "models": {
             "default": [],
             "items": {
@@ -2221,7 +2229,7 @@
                 "type": "null"
               }
             ],
-            "description": "The copy's description. Omit to keep the original's.",
+            "description": "The copy's description. Omit to keep the original's, except the Default group's, which says it cannot be changed and so is not carried to a copy that can.",
             "title": "Description"
           },
           "name": {
@@ -13590,7 +13598,7 @@
   },
   "info": {
     "title": "igni.sh: API",
-    "version": "0.7.0"
+    "version": "0.7.1"
   },
   "openapi": "3.1.0",
   "paths": {

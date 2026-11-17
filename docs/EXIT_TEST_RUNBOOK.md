@@ -418,11 +418,14 @@ igni and send it a request, to prove the weights work without igni.
 
 C6. Prove the archives are usable without igni. Restore one organisation's
 archive into a plain PostgreSQL 17 instance with no igni software, and query
-it:
+it. `--no-owner --no-privileges`, because the archive names the role that
+owned it on the deployment (`igni`), which a plain instance does not have:
+without them the restore stops at the first `ALTER ... OWNER TO igni` and
+restores nothing. The restored objects belong to whoever runs the restore.
 
 ```bash
 createdb exit_check
-pg_restore -d exit_check --exit-on-error igni-<stamp>/org-<org_id>-igni_t<n>.dump
+pg_restore -d exit_check --exit-on-error --no-owner --no-privileges igni-<stamp>/org-<org_id>-igni_t<n>.dump
 psql -d exit_check -c '\dt'
 psql -d exit_check -c 'SELECT count(*) FROM audit_events'
 ```
@@ -533,7 +536,7 @@ are in `shared-<db>.dump`.
   as withheld (`app/services/subject_access/personal_columns.py`).
 * `POST /v1/portal/orgs/{org_id}/producers/person/{user_id}/exports` queues an
   export of a removed member's data while it waits for erasure, downloaded
-  as `.tar.gz` from `GET /v1/portal/orgs/{org_id}/exports/{export_id}/download`.
+  as a `.zip` (`manifest.json`, `rows.jsonl`, `attachments/`) from `GET /v1/portal/orgs/{org_id}/exports/{export_id}/download`.
   The archive is produced by the cloud node agent running
   `igni-cloud db export-producer` (`app/services/cloud/producer_exports.py`),
   so it depends on Fleet being deployed. It does not include the workspace

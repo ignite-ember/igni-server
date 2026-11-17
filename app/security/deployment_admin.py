@@ -26,6 +26,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from app.api.base_v1.schema.portal.user import PortalAccount
 from app.config import settings
 from app.security.portal_auth import get_current_account_optional
+from app.security.super_admin import looks_like_bcrypt
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,20 @@ async def require_deployment_admin(
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
                 detail='Super-admin auth is not configured',
+            )
+        if not looks_like_bcrypt(stored):
+            # Fails closed, with the diagnosis the startup warning gives:
+            # `bcrypt.checkpw` raised `ValueError: Invalid salt` here, a 500
+            # on every break-glass call. The usual cause is a compose env
+            # file, which interpolates `$` and leaves 38 of the hash's 60
+            # characters unless each is written `$$`.
+            logger.error('SUPER_ADMIN_PASSWORD_HASH is set but is not a bcrypt hash; break-glass is unavailable')
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    'SUPER_ADMIN_PASSWORD_HASH is not a bcrypt hash (60 characters starting $2b$). '
+                    'In a docker compose env file, write each $ in it as $$.'
+                ),
             )
         if bcrypt.checkpw(x_super_admin_key.encode(), stored.encode()):
             return None

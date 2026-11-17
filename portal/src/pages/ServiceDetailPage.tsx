@@ -28,7 +28,7 @@ import {
   type ManifestPackaging,
   type ManifestPromptEdit,
 } from '../lib/extensionManifest'
-import { STATE_LABEL } from '../lib/registeredClients'
+import { KIND_LABEL, STATE_LABEL } from '../lib/registeredClients'
 import type { ExtensionReview, RegisteredClientDetail, ServiceExtensionDetail, UserMe } from '../types'
 import './cards.css'
 import './ServicesPage.css'
@@ -775,7 +775,7 @@ export function ServiceDetailPage() {
         </PageHeader.Actions>
         <PageHeader.Description>
           <Stack direction="horizontal" align="center" gap="condensed" wrap="wrap">
-            <Label variant="secondary">{registration.kind === 'service' ? 'Service' : 'App'}</Label>
+            <Label variant="secondary">{KIND_LABEL[registration.kind]}</Label>
             <Label variant={state.variant}>{state.text}</Label>
             {registration.held_version && (
               <Label variant="attention">Update asks for more: {registration.held_version}</Label>
@@ -834,6 +834,17 @@ export function ServiceDetailPage() {
 
       {extension ? (
         <TheExtension extension={extension} />
+      ) : registration.kind === 'platform' ? (
+        <Blankslate>
+          <Blankslate.Visual>
+            <PackageIcon size={24} />
+          </Blankslate.Visual>
+          <Blankslate.Heading>Ships no extension</Blankslate.Heading>
+          <Blankslate.Description>
+            A platform client, such as Fleet&apos;s gateway or a node agent, runs igni&apos;s own infrastructure
+            and puts nothing on people&apos;s machines, so it has no extension to show.
+          </Blankslate.Description>
+        </Blankslate>
       ) : (
         <Blankslate>
           <Blankslate.Visual>

@@ -52,7 +52,6 @@ shipped something malicious, because a list of names is not an assessment.
 | `node:26-alpine` | Build stage for the portal bundle | `portal/Dockerfile` |
 | `nginxinc/nginx-unprivileged:alpine` | Runtime image for the portal | `portal/Dockerfile` |
 | `nginx:1.27-alpine` | The local edge for igni's own host in the compose stack | `containers/docker-compose.local.yml` |
-| `gcr.io/cloud-marketplace-tools/k8s/deployer_helm:0.13` | Google Cloud Marketplace deployer | `marketplace/Dockerfile` |
 | `postgres:17.6-alpine` | The database, in the shipped compose stack and the backup job | `containers/docker-compose.prod.yml`, `containers/docker-compose.local.yml`, `tools/kind/datastores.yaml` |
 | `redis:7.4-alpine` | Concurrency leases and one-time sign-in codes in the shipped compose stack | `containers/docker-compose.prod.yml`, `containers/docker-compose.local.yml`, `tools/kind/datastores.yaml` |
 | `PyPI` | Every Python dependency | a registry, not an image |
@@ -82,12 +81,6 @@ Serves the compiled bundle. The unprivileged variant because CM-4 requires a non
 Fronts the API on :7777 in `containers/docker-compose.local.yml`, as the first rule of the chart's ingress does. It routes to no other service: igni__artifacts has its own name, as every service has its own host in production.
 
 **Exposure.** Local development only: the chart routes through the cluster's ingress and never ships this image. It holds no secret; a compromise would misroute a developer's own traffic.
-
-### `gcr.io/cloud-marketplace-tools/k8s/deployer_helm:0.13`
-
-Required by the marketplace listing format. Used only when a customer installs through GCP Marketplace, and never at runtime.
-
-**Exposure.** Install-time only, and it is Google's own image — a customer installing from their marketplace has already accepted that trust relationship. It is here because a register that omitted it would be describing a supply chain the marketplace path does not have.
 
 ### `postgres:17.6-alpine`
 

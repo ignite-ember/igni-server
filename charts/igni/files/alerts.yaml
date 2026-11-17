@@ -121,10 +121,11 @@ groups:
         annotations:
           summary: igni retention has never run
           description: >-
-            Expected if AUDIT_RETENTION_DAYS is 0, which means keep
-            everything forever — a lawful choice
-            only if you can defend it. If you did set a window, the runner is
-            not starting: check the API logs at startup.
+            The runner starts on every API replica, whatever the retention
+            windows are, and its first round is a minute after startup, so
+            it is not starting or every round is failing: check the API logs
+            for "Retention active" at startup and for "Retention round
+            failed".
 
       # Added because a test refused to let the counter exist without a
       # rule. Distinct from the two above: those detect a runner that

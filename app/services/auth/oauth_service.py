@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from app.db.redis.oauth_state import OAuthStateDB
 from app.db.sql.user import UserDB
 from app.security.subject import Subjects
+from app.services.auth.fresh_sessions import FreshSessions
 from app.services.auth.google_sign_in import GoogleSignIn
 from app.services.auth.jwt_service import JWTService, TokenResponse
 from app.services.auth.oauth_errors import InvalidOAuthState, OAuthExchangeFailed
@@ -112,6 +113,7 @@ class OAuthService:
             logger.debug('OAuth user %s already exists', user.user_id)
 
         user_id = str(user.user_id)
+        await FreshSessions().wait_until_honoured(user_id)
         token = self._jwt.create_token(user_id)
         await self._users.note_sign_in(user_id)
         return OAuthTokenResult(

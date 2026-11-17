@@ -22,7 +22,7 @@ from app.db.sql.group_entries import GroupEntriesDB
 from app.db.sql.group_members import GroupMembersDB
 from app.db.sql.groups import GroupsDB
 from app.db.sql.schemas.group import GroupPage
-from app.services.portal.default_group import DEFAULT_GROUP_NAME, DefaultGroup
+from app.services.portal.default_group import DEFAULT_GROUP_DESCRIPTION, DEFAULT_GROUP_NAME, DefaultGroup
 from app.services.portal.default_group_seed import BUNDLED_SEED, SeedEntry
 from tests.conftest import add_member, auth_header, create_org, create_user, make_token
 
@@ -237,6 +237,41 @@ class TestItCannotBeChanged:
         resp = await client.patch(f'/portal/groups/{default_id}', json={'description': 'mine now'}, headers=headers)
 
         assert resp.status_code == 409
+
+    async def test_its_description_does_not_invite_an_edit_it_refuses(self, client, member):
+        """It said "Edit or delete any of it here", and every edit is a 409."""
+        headers, _ = member
+        default_id = await _default_id(client, headers)
+
+        groups = (await client.get('/portal/groups', headers=headers)).json()
+        default = next(g for g in groups['groups'] if g['id'] == default_id)
+
+        assert 'Edit or delete' not in default['description']
+        assert 'create a group from it' in default['description'].lower()
+
+    async def test_an_existing_group_is_brought_to_the_new_description(self, client, member):
+        """The description cannot be edited, so an organisation made before
+        the change keeps the old line unless a migration replaces it (t0032)."""
+        import asyncio
+
+        from alembic import command
+
+        from app.db.sql.tenant_migrator import TenantMigrator
+        from app.db.sql.tenant_registry import TenantRegistryDB
+
+        headers, org_id = member
+        default_id = await _default_id(client, headers)
+        config = TenantMigrator().alembic_config(await TenantRegistryDB().database_of(org_id))
+
+        async def description() -> str:
+            groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
+            return next(g['description'] for g in groups if g['id'] == default_id)
+
+        await asyncio.to_thread(command.downgrade, config, 't0031')
+        assert 'Edit or delete any of it here' in await description()
+
+        await asyncio.to_thread(command.upgrade, config, 'head')
+        assert await description() == DEFAULT_GROUP_DESCRIPTION
 
     async def test_its_model_cannot_be_pinned(self, client, member):
         """Copy it and pin the model on the copy."""

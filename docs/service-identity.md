@@ -322,8 +322,18 @@ is never a parameter:
 |---|---|
 | `GET /v1/directory/organisation` | `org_id`, `name`, `slug`, `tenant_number`, `domains` — derive your per-organisation database and Redis index from `tenant_number` |
 | `GET /v1/directory/members?query=&limit=&include_former=` | people: `user_id`, `email`, `name`, `role`, `status`, `super_admin`; prefix search on address or name; at most 500 |
-| `GET /v1/directory/people/{user_id}` | one person, present or former; 404 if never a member |
+| `GET /v1/directory/people/{user_id}` | one person, present or former; 404 otherwise |
 | `POST /v1/directory/people/resolve` `{"identities": [...]}` | user ids or addresses → present and former members only |
+
+A **former** member is a *deactivated* one: their membership is kept, so
+`include_former`, `people/{user_id}` and `resolve` still name them. A
+person an admin **removed** from the organisation (`DELETE
+/v1/portal/team/{user_id}`) is not kept — removal deletes the membership —
+so the directory answers for them exactly as for somebody who was never a
+member: a 404, and absent from `include_former` and `resolve`. A service
+that must go on naming a past author keeps the name it was given while
+they were here; an organisation that wants its leavers named deactivates
+them rather than removing them.
 
 
 A revoked client's service token is refused at once, not after it expires.
@@ -929,7 +939,7 @@ GET /v1/platform/producers?since=<cursor>&limit=500&wait=25   // limit 1–1000,
                       "profile": {"profile_id", "profile_name", "memory_mib", "normal_memory_mib",
                                   "expected_memory_mib", "vcpus", "idle_before_pause_s",
                                   "packages": {"apt", "pip", "npm"}, "setup_script",
-                                  "volume_max_gib", "erase_after_idle_days"} | null,
+                                  "volume_max_gib", "erase_after_idle_days", "internet"} | null,
                       "volume_gib", "legal_hold", "changed_at"}],
        "cursor": "<opaque: pass it back as since>"}
 → 400 for a cursor the feed did not give
@@ -1800,7 +1810,7 @@ igni database:
 |---|---|---|
 | `POST /v1/portal/orgs/{org_id}/producers/person/{user_id}/exports` `{"incarnation"?}` | its org admins, super admin | 202, the export, `requested`; the latest removed incarnation when none is named. 404 when the person has none waiting for erasure; 409 for an incarnation not waiting (erased, or not removed). Audited |
 | `GET /v1/portal/orgs/{org_id}/exports`, `.../exports/{export_id}` | the same | `{"exports": [...]}`, one |
-| `GET /v1/portal/orgs/{org_id}/exports/{export_id}/download` | the same | the archive, `application/octet-stream` (409 until `ready`). Audited |
+| `GET /v1/portal/orgs/{org_id}/exports/{export_id}/download` | the same | the archive, `application/zip`, as `export-<export_id>.zip` (409 until `ready`). Audited |
 
 An export: `{export_id, org_id, producer, incarnation, state:
 requested|handed_out|ready|failed, requested_by_user_id, requested_at,
@@ -1822,7 +1832,7 @@ organisation's copy. A failed export goes a day after it failed.
    handed out again. One whose incarnation was erased meanwhile is
    marked `failed` instead of handed out.
 2. `PUT /v1/platform/orgs/{org_id}/exports/{export_id}/archive` with the
-   archive as the body (at most `PRODUCER_EXPORT_MAX_BYTES`, default
+   archive as the body — the zip `export-producer` wrote, unchanged (at most `PRODUCER_EXPORT_MAX_BYTES`, default
    2 GiB, else 413) → the export, `ready`; 409 unless handed out and
    waiting.
 3. Or `POST /v1/platform/orgs/{org_id}/exports/{export_id}/failed`

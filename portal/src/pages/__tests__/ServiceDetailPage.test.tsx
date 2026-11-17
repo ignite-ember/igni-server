@@ -122,6 +122,24 @@ describe('ServiceDetailPage', () => {
     expect(regions.slice(0, 2)).toEqual(['service-thumbprint', 'held-update'])
   })
 
+  test('says a platform client ships no extension, rather than that it has not uploaded one', async () => {
+    serve({
+      ...CODEINDEX,
+      client_id: 'client-gateway',
+      kind: 'platform',
+      name: 'igni-gateway',
+      redirect_uris: [],
+      extension: null,
+      extension_detail: null,
+    })
+
+    renderAt('client-gateway')
+
+    expect(await screen.findByRole('heading', { name: 'Ships no extension' })).toBeInTheDocument()
+    expect(screen.queryByText(/Has not uploaded its extension/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/uploads its extension when it starts/)).not.toBeInTheDocument()
+  })
+
   test('shows no held update when there is none', async () => {
     serve(ARTIFACTS)
 

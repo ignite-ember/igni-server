@@ -201,7 +201,7 @@ startup check for its password, the settings key — went with the
 release.
 
 That expects Postgres and Redis to exist already. For one instance
-serving one customer — the pre-marketplace shape — run them alongside,
+serving one customer — the single-host shape — run them alongside,
 and terminate TLS in front:
 
 ```bash
@@ -238,12 +238,16 @@ table and not a lost volume. The dumps are mode 600 and as sensitive as
 the database. The Helm chart does the same thing as a CronJob, off until
 you name the volume.
 
-Both variables are required rather than defaulted, and the env file is
+All three variables — `IGNI_IMAGE`, `IGNI_PORTAL_IMAGE` and
+`IGNI_ENV_FILE` — are required rather than defaulted, and the env file is
 named explicitly so a leftover development `.env` cannot be deployed. The
-API binds to loopback unless you set `IGNI_API_BIND=0.0.0.0`; put a
-reverse proxy in front of it. Postgres and Redis are external, and this
-file has no portal service — the compose stack is the API and the
-migration.
+stack is the migration, the API and the portal; Postgres and Redis are
+external unless you add `--profile bundled` (below). The API and the
+portal bind to loopback on 7777 and 3000 unless you set `IGNI_API_BIND` /
+`IGNI_PORTAL_BIND` (e.g. `0.0.0.0`) and `IGNI_API_PORT` / `IGNI_PORTAL_PORT`;
+put a reverse proxy in front of them. Containers are named `igni__<service>`;
+`IGNI_STACK=<name>` (with `-p <name>`) names them `<name>__<service>`, so a
+second igni can run on the same host.
 
 Kubernetes:
 
@@ -251,10 +255,10 @@ Kubernetes:
 helm install igni ./charts/igni -f my-values.yaml
 ```
 
-Google Cloud Marketplace listing artefacts — the deployer parameters,
-the deployer image and the Application object — are in
-[marketplace/](marketplace/), including what a person still has to do
-that a repository cannot.
+Distribution is container images published to a registry — GHCR — and the
+Helm chart in [charts/igni/](charts/igni/). A customer pulls the images
+into their own registry, points the chart's image references at them and
+installs the chart. Nothing else is needed to run igni.
 
 The chart is the customer-facing artefact: API, portal, and the
 migration as a hook that must succeed before anything serves. It refuses
@@ -311,12 +315,13 @@ matter most:
 | `LOG_LEVEL` | Default `INFO` |
 | `LOG_FORMAT` | `text` (default) or `json`. JSON is one object per line for a log shipper — see [observability.md](docs/observability.md) |
 | `METRICS_TOKEN` | Bearer token for `GET /metrics` (Prometheus text format). Empty means the endpoint answers 404. Alert rules: `charts/igni/files/alerts.yaml` |
-| `PORTAL_BASE_URL` | Where invite and OAuth links point. Defaults to `http://localhost:3000`. |
+| `PORTAL_BASE_URL` | Where invite and OAuth links point, and the sign-in address in the welcome email. Defaults to `http://localhost:3000`. |
+| `CLIENT_INSTALL_URL` | Optional. Your own page for getting the igni app (intranet, software centre), linked from the welcome email. Empty, the email tells people to ask their administrator; it never names a public install command. |
 | `EMAIL_ENABLED` | Off by default. Every flow has a defined no-email path: invite links come back to the admin, and one-time codes go nowhere unless `LOG_SIGN_IN_CODES` is on. |
 | `LOG_SIGN_IN_CODES` | Off by default. With no relay, writes one-time codes to the server log for an operator to hand on — the way in for first setup with no email. Anyone who can read the logs can then sign in as anybody, so the server warns at startup, on every code and to super admins in the portal; turn it off once a relay or SSO works. |
 | `EMAIL_BACKEND` | `smtp` or `ses`. See self-hosting.md §6 for relay-specific detail. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_TLS_MODE` | Your relay |
-| `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` | Sender identity |
+| `EMAIL_FROM_ADDRESS` / `EMAIL_FROM_NAME` | Sender identity. `EMAIL_FROM_NAME` is optional — set it to your organisation's name; empty (the default) sends from the bare address and names no sender. |
 | `AUDIT_RETENTION_DAYS` | Delete audit events older than this. `0` (default) keeps everything. |
 | `MCP_GATEWAY_URL` | MCP gateway |
 | `PORTAL_AUTH_BYPASS` | Development only; refused outside `APP_ENV=dev` |
@@ -376,9 +381,21 @@ sets up the hooks.
 
 ```bash
 make migrate                                   # shared plane, then every organisation's database
-make downgrade-one                             # back one revision
+make downgrade-one                             # shared plane back one revision
+make downgrade-tenants REV=t0029               # every organisation's database and the template, back to REV
 uv run alembic revision -m "description"       # new migration
 ```
+
+**Rolling back to an older image** takes both planes back to the
+revisions that image knows, before it starts: the shared plane with
+`alembic downgrade <revision>`, and the organisations' databases and their
+template with `python -m app.db.sql.tenant_migrations --downgrade
+<alembic_tenant revision>` (both in the newer image, which has the
+downgrade scripts). The shared plane alone is not enough: the older
+image's migrate step cannot locate the newer tenant revision, and the
+stack does not start. A downgrade can drop what the older schema cannot
+hold — `0030`'s removes every cloud inference node, which has no form
+without its kind — so take a backup first.
 
 Migrations are round-trip tested against a populated database
 (`tests/test_migration_round_trip.py`) — a downgrade that only works on an

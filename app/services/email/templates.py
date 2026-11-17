@@ -10,9 +10,8 @@ role — goes through `EmailMarkup.escape` where it enters.
 
 from pydantic import BaseModel
 
+from app.config import settings
 from app.services.email.markup import EmailMarkup
-
-_BRAND = 'ignite-ember.sh'
 
 _PASSWORD_TIPS = (
     'Use at least 8 characters',
@@ -31,10 +30,42 @@ class EmailContent(BaseModel):
 
 
 class EmailTemplates:
-    """Renders each outbound email to a subject and an HTML body."""
+    """Renders each outbound email to a subject and an HTML body.
 
-    def __init__(self, *, markup: EmailMarkup | None = None) -> None:
+    `brand` is who the mail says it is from — in the subject, the header
+    and the footer. It is `EMAIL_FROM_NAME` unless given. igni-server is
+    only ever run by the customer, so the vendor never signs: an empty
+    brand (the default) means the mail names no sender at all — no subject
+    suffix, no header subtitle, no footer line, and sentences that would
+    have named one read without it (`docs/self-hosting.md` §6).
+    """
+
+    def __init__(
+        self,
+        *,
+        markup: EmailMarkup | None = None,
+        brand: str | None = None,
+        portal_url: str | None = None,
+        client_install_url: str | None = None,
+    ) -> None:
         self._markup = markup or EmailMarkup()
+        self._brand = brand if brand is not None else settings.email_from_name
+        self._portal_url = portal_url if portal_url is not None else settings.portal_base_url
+        self._client_install_url = client_install_url if client_install_url is not None else settings.client_install_url
+
+    @property
+    def brand(self) -> str:
+        return self._brand
+
+    @property
+    def portal_url(self) -> str:
+        """This deployment's portal, where its people sign in; empty if unset."""
+        return self._portal_url.rstrip('/')
+
+    @property
+    def client_install_url(self) -> str:
+        """The operator's own page for getting the igni app; empty if unset."""
+        return self._client_install_url
 
     def sign_up(self, *, code: str, email: str, name: str | None = None) -> EmailContent:
         """The verification code that activates a new account."""
@@ -43,23 +74,23 @@ class EmailTemplates:
             m.section_label('Account Verification'),
             m.greeting(name),
             m.paragraph(
-                'Thanks for signing up to <strong>ignite-ember.sh</strong>. Use the verification code below to activate your account:',
+                f'Thanks for signing up{self._to_brand()}. Use the verification code below to activate your account:',
                 margin='0 0 24px',
             ),
             m.otp(code),
             m.paragraph('This code will expire in <strong>10 minutes</strong>.'),
             m.callout(
-                "<strong>Security Notice:</strong> If you didn't sign up for ignite-ember.sh, please ignore this email.",
+                f"<strong>Security Notice:</strong> If you didn't sign up{self._for_brand()}, please ignore this email.",
                 style=m.WARNING,
             ),
             m.paragraph(
-                'For your security, never share this code with anyone. Our team will never ask you for it.',
+                'For your security, never share this code with anyone. Nobody from your organisation will ask you for it.',
                 margin='0',
                 muted=True,
             ),
         )
         return self._render(
-            subject='Verify Your Email — ignite-ember.sh', title='Verify Your Email', content=content, email=email
+            subject=self._subject('Verify Your Email'), title='Verify Your Email', content=content, email=email
         )
 
     def sign_in(self, *, code: str, email: str, name: str | None = None) -> EmailContent:
@@ -75,11 +106,11 @@ class EmailTemplates:
             m.otp(code),
             m.paragraph('This code will expire in <strong>10 minutes</strong>.'),
             m.callout(
-                "<strong>Security Notice:</strong> If you didn't request this code, please ignore this email or contact support if you have concerns about your account security.",
+                "<strong>Security Notice:</strong> If you didn't request this code, please ignore this email or contact your administrator if you have concerns about your account security.",
                 style=m.WARNING,
             ),
             m.paragraph(
-                'For your security, never share this code with anyone. Our team will never ask you for this code.',
+                'For your security, never share this code with anyone. Nobody from your organisation will ask you for it.',
                 margin='0',
                 muted=True,
             ),
@@ -105,7 +136,7 @@ class EmailTemplates:
             m.section_label('Team Invitation'),
             m.greeting(name),
             m.paragraph(
-                f'{invited_line} to join the team on <strong>ignite-ember.sh</strong> as a <strong>{role_label}</strong>.',
+                f'{invited_line} to join {self._team()} on <strong>igni</strong> as a <strong>{role_label}</strong>.',
                 margin='0 0 24px',
             ),
             m.cta_button(text='Accept Invitation', url=invite_url),
@@ -119,7 +150,7 @@ class EmailTemplates:
             ),
         )
         return self._render(
-            subject="You've Been Invited to igni — ignite-ember.sh",
+            subject=self._subject("You've Been Invited to igni"),
             title="You're Invited",
             content=content,
             email=email,
@@ -140,12 +171,12 @@ class EmailTemplates:
                 "After verifying this code, you'll be able to set a new password for your account.", margin='0 0 24px'
             ),
             m.callout(
-                "<strong>Important:</strong> If you didn't request a password reset, please contact our support team immediately. Someone may be trying to access your account.",
+                "<strong>Important:</strong> If you didn't request a password reset, please contact your administrator immediately. Someone may be trying to access your account.",
                 style=m.ERROR,
             ),
             m.callout_list(heading='Tips for a Strong Password', items=_PASSWORD_TIPS, style=m.INFO),
             m.paragraph(
-                'For your security, never share this code with anyone, including our support team. We will never ask for your verification code.',
+                'For your security, never share this code with anyone, including your administrator. Nobody from your organisation will ask you for it.',
                 margin='0',
                 muted=True,
             ),
@@ -153,35 +184,58 @@ class EmailTemplates:
         return self._render(subject='Password Reset Code', title='Password Reset', content=content, email=email)
 
     def welcome(self, *, email: str, name: str | None = None) -> EmailContent:
-        """Sent once an account exists: what the beta includes and how to install."""
+        """Sent once an account exists: where to sign in, and how to get the app.
+
+        igni runs on isolated networks, so this names no public install
+        command or URL: only this deployment's portal and, when the
+        operator configured one, their own page for getting the app
+        (`CLIENT_INSTALL_URL`). Without one, the administrator is who to ask.
+        """
         m = self._markup
+        portal = self.portal_url
+        sign_in = f'Sign in at {m.link(portal)}' if portal else 'Ask your administrator where to sign in.'
+        get_the_app = (
+            m.paragraph(f'Get the igni app: {m.link(self._client_install_url)}', margin='0 0 24px')
+            if self._client_install_url
+            else m.paragraph('Ask your administrator how to get the igni app.', margin='0 0 24px')
+        )
         content = self._join(
-            m.section_label('Public Beta'),
+            m.section_label('Welcome'),
             m.greeting(name),
             m.paragraph(
-                'Welcome to the <strong>igni</strong> public beta — where code sparks itself.', margin='0 0 24px'
+                f'Your <strong>igni</strong> account{self._with_brand()} is ready. {sign_in}',
+                margin='0 0 24px',
             ),
-            m.callout(
-                '<strong>You’re on the Pro plan — free during the beta.</strong>'
-                ' You get up to 5 parallel requests powered by MiniMax M2.5, with no usage limits.'
-                ' When the beta ends, we’ll upgrade you to the latest model available and you can'
-                ' continue on a Lite, Pro, or Max plan — each with unlimited usage but different speed and concurrency tiers.',
-                style=m.INFO,
-            ),
-            m.paragraph('Get started by installing igni:', margin='0 0 8px'),
-            m.command('brew install ignite-ember/tap/ignite-ember', margin='0 0 8px'),
-            m.paragraph('or', margin='0 0 8px', muted=True),
-            m.command('pip install igni-core', margin='0 0 24px'),
-            m.paragraph(
-                "If you have any questions, don't hesitate to reach out to our support team.", margin='0', muted=True
-            ),
+            get_the_app,
+            m.paragraph('If you have any questions, ask your administrator.', margin='0', muted=True),
         )
         return self._render(
-            subject='Welcome to igni — ignite-ember.sh', title='Welcome to igni', content=content, email=email
+            subject=self._subject('Welcome to igni'), title='Welcome to igni', content=content, email=email
         )
 
+    def _subject(self, subject: str) -> str:
+        """`subject — brand`, or the subject alone when there is no brand."""
+        return f'{subject} — {self._brand}' if self._brand else subject
+
+    def _to_brand(self) -> str:
+        """' to <brand>' for 'Thanks for signing up', or nothing."""
+        return f' to <strong>{self._markup.escape(self._brand)}</strong>' if self._brand else ''
+
+    def _for_brand(self) -> str:
+        """' for <brand>' for "If you didn't sign up", or nothing."""
+        return f' for {self._markup.escape(self._brand)}' if self._brand else ''
+
+    def _with_brand(self) -> str:
+        """' with <brand>' for 'Your igni account … is ready', or nothing."""
+        return f' with <strong>{self._markup.escape(self._brand)}</strong>' if self._brand else ''
+
+    def _team(self) -> str:
+        """Who the invitee joins: the named team, or their organisation's."""
+        return f'<strong>{self._markup.escape(self._brand)}</strong>' if self._brand else "your organisation's team"
+
     def _render(self, *, subject: str, title: str, content: str, email: str) -> EmailContent:
-        html_body = self._markup.page(title=title, subtitle=_BRAND, content=content, email=email)
+        brand = self._markup.escape(self._brand)
+        html_body = self._markup.page(title=title, subtitle=brand, content=content, email=email, footer=brand)
         return EmailContent(subject=subject, html_body=html_body)
 
     @staticmethod

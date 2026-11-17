@@ -12,6 +12,7 @@ from app.services.ai.fleet_schemas import FleetSnapshot
 from app.services.ai.health import NodeHealthProbe
 from app.services.ai.node_registry import NodeRegistry
 from app.services.ai.pool_manager import PoolManager
+from app.services.ai.providers.kinds import Wire
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,13 @@ class FleetStatus:
         except BackendConfigError:
             statuses = []
         return FleetSnapshot.of(statuses)
+
+    async def chat_model_ids(self) -> list[str]:
+        """Every model id some node serves on `/v1/chat/completions`, sorted; empty when none is configured."""
+        try:
+            return sorted(await self._manager.get_pool().models_on(Wire.OPENAI))
+        except BackendConfigError:
+            return []
 
     async def model_ids(self) -> list[str]:
         """Every model id some node serves, sorted; empty when no GPUs are configured yet."""

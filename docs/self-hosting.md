@@ -11,8 +11,11 @@ self-hosted deployment needs instead, and how big the gap is.
 ## The decision this follows from
 
 **Self-hosted only.** There is no hosted tier and no multi-tenant
-deployment. Distribution is the GCP and AWS marketplaces; the marketplace
-meters and invoices, so there is no in-app billing.
+deployment. Distribution is container images published to a registry and
+the Helm chart. A customer pulls the images into their own registry,
+points the chart's image references at them and installs the chart. Their
+registry and their infrastructure carry and bill the images, so there is
+no in-app billing.
 
 The argument for a hosted tier was a pricing floor: $2.50/developer
 assumes 200 developers amortising one ~$504/month GH200, so at ten
@@ -308,8 +311,33 @@ at all while STARTTLS was hardcoded on.
   addresses until AWS grants production access. Worth requesting before
   you need it, not during a rollout.
 
-Set `email_from_name` too — a self-hosted deployment is the customer's,
-and their people should not receive sign-in codes from a vendor's brand.
+`email_from_name` is optional. igni-server is shipped only as images you
+run, so no mail it sends is signed by the vendor: left empty (the
+default), the From header is the bare `email_from_address`, and no
+subject, header or footer names a sender. Setting it — we recommend your
+organisation's name — makes it the From display name and the name in
+every subject (`Verify Your Email — Acme Engineering`), header and footer.
+
+No email names a public install command or an external URL: igni may
+run on a network that cannot reach one, and how the app reaches desktops
+— an internal mirror, managed software deployment, the offline bundle's
+desktop installer — is yours to decide. The welcome email says where to
+sign in (`portal_base_url`) and, if you set `client_install_url` (Helm:
+`urls.clientInstall`) to your own page for getting the app, links it
+as *Get the igni app*. Left empty, it tells people to ask their
+administrator.
+
+**A relay with a certificate from a private CA** (common for an internal
+relay on `starttls` or `tls`) is verified like any other: the API checks
+its certificate against the CA bundle in the image, which holds only the
+public CAs. Until the private CA is trusted, every message fails with
+`CERTIFICATE_VERIFY_FAILED` in the API log — and the request that sent it
+still answers 200, because a code request never says whether delivery
+worked. Mount a bundle holding the system CAs **and** yours into the API
+container and point the standard `SSL_CERT_FILE` environment variable at
+it (Helm: `extraVolumes`, `extraVolumeMounts` and `extraEnv`). Do not
+switch verification off; `smtp_tls_mode=none` is for a relay on a
+network you trust, not for a certificate you do not.
 
 ### SES without a stored password
 
@@ -320,7 +348,7 @@ credentials endpoint, IMDS — so a deployment on EC2, ECS or EKS
 authenticates with its instance profile, task role or pod identity and
 **stores no mail secret at all**. That is the difference between a role
 AWS rotates and a password in a Helm values file, and it is what a
-Marketplace listing is expected to support.
+deployment in the customer's own AWS account is expected to do.
 
 ```
 EMAIL_BACKEND=ses
@@ -363,9 +391,10 @@ blanks, because aiosmtplib authenticates whenever a username is not
 ## 7. Billing — delete
 
 Six files plus the Stripe webhook, the portal billing page, and the
-subscription tables. The marketplace meters and invoices. Nothing about
-entitlement lives in the application: a customer has CodeIndex because
-code-index is deployed for them, and that is the whole check.
+subscription tables. The customer's own registry and infrastructure
+carry and bill the images. Nothing about entitlement lives in the
+application: a customer has CodeIndex because code-index is deployed for
+them, and that is the whole check.
 
 ## 8. Telemetry
 

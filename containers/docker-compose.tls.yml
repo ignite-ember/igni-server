@@ -22,7 +22,7 @@
 
 services:
   caddy:
-    container_name: igni__caddy
+    container_name: ${IGNI_STACK:-igni}__caddy
     image: caddy:2.10-alpine
     # The only service that binds every interface, and it says so rather
     # than defaulting to it.

@@ -109,6 +109,10 @@ urls:
   oauthRedirectBase: ""
   # Where the OAuth flow lands the browser afterwards.
   oauthFrontendBase: ""
+  # Your own page for getting the igni app (intranet, software centre).
+  # The welcome email links it; empty, it tells people to ask their
+  # administrator. It never names a public install command.
+  clientInstall: ""
 
 # ── Secrets ──────────────────────────────────────────────────────────
 #
@@ -255,15 +259,19 @@ mcpGatewayUrl: ""
 
 ai:
   # How long the API waits for a model to answer. Five minutes, because a
-  # long completion legitimately takes that. Whatever this is,
+  # long completion legitimately takes that. Once per request: a
+  # non-streamed answer that times out is not sent again. Whatever this is,
   # `api.terminationGracePeriodSeconds` below has to be at least as
   # large — a chart test enforces it.
   upstreamTimeout: 300
 
 # Retention windows, in days. 0 means keep forever — which is a lawful
 # choice only if you can defend it, since GDPR Art. 5(1)(e) asks for a
-# limit rather than a preference. The retention runner does nothing at all
-# while this is 0.
+# limit rather than a preference. 0 here keeps the audit trail only: the
+# retention runner still prunes settled service events and the gateway
+# feed (SERVICE_EVENT_RETENTION_DAYS and PRODUCER_FEED_RETENTION_DAYS, 30
+# days each by default, set through extraEnv), and expired exports and
+# revocations with them, which it clears even when all three are 0.
 retention:
   auditDays: 0
 
@@ -283,7 +291,10 @@ email:
   smtpTlsMode: starttls
   smtpUsername: ""
   fromAddress: noreply@igni.local
-  fromName: igni
+  # Display name on outbound mail, and the name in its subjects, header and
+  # footer — set it to your organisation's name. Empty sends from the bare
+  # fromAddress and names no sender.
+  fromName: ""
   # SES only.
   sesRegion: ""
   # With no relay, write one-time codes to the API log so an operator can
@@ -305,10 +316,10 @@ email:
 
 api:
   replicaCount: 2
-  # Requests are what the scheduler honours and what a marketplace review
-  # looks for. Limits are set on memory only: a CPU limit throttles an
-  # asyncio process into latency that looks like a network fault, while
-  # unbounded memory takes the node down with it.
+  # Requests are what the scheduler honours, and what a cluster asks for
+  # before it schedules the pod. Limits are set on memory only: a CPU
+  # limit throttles an asyncio process into latency that looks like a
+  # network fault, while unbounded memory takes the node down with it.
   resources:
     requests:
       cpu: 250m
@@ -487,6 +498,12 @@ ingress:
   # Its default of 1 MB refuses both. The API still holds every other
   # route to its own 32 MB.
   annotations: {}
+  # How the Ingress matches /.well-known (the API's signing keys and OpenID
+  # metadata). ingress-nginx refuses a Prefix path with a dot in it unless
+  # strict-validate-path-type is off, and matches ImplementationSpecific as
+  # a prefix. GKE and the AWS load balancer controller match
+  # ImplementationSpecific without a wildcard exactly, so set Prefix there.
+  wellKnownPathType: ImplementationSpecific
   tls:
     enabled: false
     secretName: ""
@@ -567,24 +584,6 @@ networkPolicy:
   # each CIDR, for the api, migrate and backup pods. Prefer `egress`.
   egressCidrs: []
 
-# Google Cloud Marketplace. Off unless the marketplace deployer is
-# installing this, because the Application object below is an `app.k8s.io`
-# CRD — rendering it into a cluster without the kubernetes-sigs
-# Application controller fails the install with `no matches for kind`.
-#
-# The deployer sets these; a person installing by hand has no reason to.
-marketplace:
-  enabled: false
-  partnerId: ''
-  productId: igni
-  partnerName: ''
-  docsUrl: ''
-  supportUrl: ''
-  # A 100x100 PNG, base64-encoded, which the console shows beside the
-  # deployment. Empty renders an annotation with no payload, which the
-  # console tolerates.
-  iconBase64: ''
-
 # ── Pod-level defaults ───────────────────────────────────────────────
 
 serviceAccount:
@@ -619,6 +618,25 @@ securityContext:
 # for whole ConfigMaps or Secrets.
 extraEnv: []
 extraEnvFrom: []
+
+# Files for the API pod: `extraVolumes` adds volumes to it, and
+# `extraVolumeMounts` mounts them into the API container. For a setting that
+# reads a file — `INFERENCE_BACKENDS_PATH` is the usual one, the backends
+# list kept in a ConfigMap:
+#
+#   extraVolumes:
+#     - name: backends
+#       configMap:
+#         name: igni-inference-backends
+#   extraVolumeMounts:
+#     - name: backends
+#       mountPath: /etc/igni/backends
+#       readOnly: true
+#   extraEnv:
+#     - name: INFERENCE_BACKENDS_PATH
+#       value: /etc/igni/backends/backends.json
+extraVolumes: []
+extraVolumeMounts: []
 
 # Extra labels and annotations on every object this chart creates.
 commonLabels: {}

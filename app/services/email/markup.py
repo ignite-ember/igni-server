@@ -66,12 +66,30 @@ class EmailMarkup:
         """
         return html.escape(str(value), quote=True)
 
-    def page(self, *, title: str, subtitle: str, content: str, email: str) -> str:
+    def page(self, *, title: str, subtitle: str, content: str, email: str, footer: str) -> str:
         """A full HTML email in the landing-page layout.
 
-        `title`, `subtitle` and `content` are markup; `email` is the
-        recipient's address and is escaped here.
+        `title`, `subtitle`, `content` and `footer` (who the mail is from)
+        are markup; `email` is the recipient's address and is escaped here.
+        An empty `subtitle` or `footer` leaves its line out rather than
+        rendering an empty paragraph.
         """
+        subtitle_line = (
+            f"""
+                            <p style="margin: 8px 0 0; font-size: 14px; font-weight: 500; color: {self.FG_MUTED};">
+                                {subtitle}
+                            </p>"""
+            if subtitle
+            else ''
+        )
+        footer_line = (
+            f"""
+                            <p style="margin: 8px 0 0; color: {self.FG_MUTED}; font-size: 12px;">
+                                {footer}
+                            </p>"""
+            if footer
+            else ''
+        )
         return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -89,12 +107,9 @@ class EmailMarkup:
                     <tr>
                         <td style="padding: 40px 40px 32px; text-align: center;">
                             <div style="margin-bottom: 20px;">{self.LOGO_SVG}</div>
-                            <h1 style="margin: 0 0 8px; font-size: 28px; font-weight: 800; letter-spacing: -0.03em; color: {self.FG_DEFAULT};">
+                            <h1 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.03em; color: {self.FG_DEFAULT};">
                                 {title}
-                            </h1>
-                            <p style="margin: 0; font-size: 14px; font-weight: 500; color: {self.FG_MUTED};">
-                                {subtitle}
-                            </p>
+                            </h1>{subtitle_line}
                         </td>
                     </tr>
 
@@ -115,12 +130,9 @@ class EmailMarkup:
                     <!-- Footer -->
                     <tr>
                         <td style="background-color: {self.BG_MUTED}; padding: 24px 40px; text-align: center; border-top: 1px solid {self.BORDER};">
-                            <p style="margin: 0 0 8px; color: {self.FG_MUTED}; font-size: 13px;">
+                            <p style="margin: 0; color: {self.FG_MUTED}; font-size: 13px;">
                                 This email was sent to {self.escape(email)}
-                            </p>
-                            <p style="margin: 0; color: {self.FG_MUTED}; font-size: 12px;">
-                                &copy; 2026 ignite-ember.sh &mdash; where code sparks itself.
-                            </p>
+                            </p>{footer_line}
                         </td>
                     </tr>
                 </table>
@@ -185,6 +197,11 @@ class EmailMarkup:
                                     </td>
                                 </tr>
                             </table>"""
+
+    def link(self, url: str) -> str:
+        """An inline link that shows its own address. The URL is text."""
+        safe = self.escape(url)
+        return f'<a href="{safe}" style="color: {self.ACCENT}; text-decoration: underline;">{safe}</a>'
 
     def section_label(self, text: str) -> str:
         """A small uppercase label — matches landing-section-label."""
