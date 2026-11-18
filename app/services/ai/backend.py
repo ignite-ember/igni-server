@@ -268,6 +268,8 @@ class BackendLease(BaseModel):
     kind: BackendKind = BackendKind.OPENAI
     #: Bedrock signs for its region.
     region: str | None = None
+    #: Vertex serves from, and bills, one project.
+    project: str | None = None
     auth: AuthMethod = AuthMethod.NONE
     auth_settings: dict[str, str] = Field(default_factory=dict)
     credential: str | None = Field(default=None, repr=False)
@@ -284,6 +286,7 @@ class BackendLease(BaseModel):
             api_key=backend.api_key,
             kind=backend.kind,
             region=backend.region,
+            project=backend.project,
             auth=backend.auth or AuthMethod.NONE,
             auth_settings=dict(backend.auth_settings),
             credential=backend.credential,

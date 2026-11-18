@@ -49,6 +49,16 @@ class ProviderCalls:
         self._credentials.invalidate(lease.signer)
 
     async def _headers(self, lease: BackendLease) -> dict[str, str]:
+        headers = await self._auth_headers(lease)
+        # Vertex charges the quota to the project the call names, and refuses
+        # a call that names none: "the aiplatform.googleapis.com API requires
+        # a quota project". The project that serves the model is the one that
+        # carries the quota, so it travels with every call.
+        if lease.kind.is_vertex and lease.project:
+            headers['x-goog-user-project'] = lease.project
+        return headers
+
+    async def _auth_headers(self, lease: BackendLease) -> dict[str, str]:
         if not lease.renews_token:
             return lease.auth_headers()
         try:

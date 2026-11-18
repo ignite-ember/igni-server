@@ -237,6 +237,7 @@ class TestALeaseCarriesWhatSigningNeeds:
             'api_key': None,
             'kind': BackendKind.AZURE_OPENAI,
             'region': None,
+            'project': None,
             'auth': AuthMethod.CLIENT_SECRET,
             'auth_settings': {'tenant_id': 't', 'client_id': 'c'},
             'credential': 'shh',

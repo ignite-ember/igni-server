@@ -111,6 +111,11 @@ class VertexClaudeCall(ClaudeCall):
         self, lease: BackendLease, *, request: MessagesRequest, stream: bool, asked: CallerHeaders
     ) -> MessagesCall:
         headers = {'content-type': 'application/json', 'authorization': f'Bearer {await self._bearer(lease)}'}
+        # Vertex charges the quota to the project the call names, and refuses
+        # a call that names none: "the aiplatform.googleapis.com API requires
+        # a quota project".
+        if lease.project:
+            headers['x-goog-user-project'] = lease.project
         if asked.betas:
             headers['anthropic-beta'] = ','.join(asked.betas)
         payload = {**request.wire(without=frozenset({'model'})), 'anthropic_version': VERTEX_VERSION}
