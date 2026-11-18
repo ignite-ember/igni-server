@@ -106,6 +106,33 @@ Inference, or in the static backend list:
 | `azure_openai`, `azure_anthropic` | `ambient`, `managed_identity` (`client_id`), `client_secret` (`tenant_id`, `client_id`), `api_key` | Cognitive Services OpenAI User (or the Foundry equivalent) on the resource |
 | `anthropic` | `api_key` | — |
 
+On Bedrock the grant is about resources, not only about actions. A
+cross-region inference profile — `eu.anthropic.claude-haiku-4-5-20251001-v1:0`
+is one — is served by the foundation models in the regions it fans out to,
+and the EU profile fans out to six of them: eu-north-1, eu-west-3,
+eu-south-1, eu-south-2, eu-west-1 and eu-central-1. An identity that may
+invoke only the region the server runs in is refused with
+`AccessDeniedException` naming the source region, so the grant has to
+cover the inference profile's own ARN *and* the foundation-model ARNs of
+those regions:
+
+```json
+{"Version":"2012-10-17","Statement":[
+ {"Effect":"Allow","Action":["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],
+  "Resource":["arn:aws:bedrock:eu-central-1:123456789012:inference-profile/eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+              "arn:aws:bedrock:eu-north-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+              "arn:aws:bedrock:eu-west-3::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+              "arn:aws:bedrock:eu-south-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+              "arn:aws:bedrock:eu-south-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+              "arn:aws:bedrock:eu-west-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+              "arn:aws:bedrock:eu-central-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"]}
+]}
+```
+
+Which regions a given profile needs is Bedrock's answer to give, not this
+document's: `aws bedrock list-inference-profiles --region <region>` lists
+the model ARNs under every profile.
+
 A cloud backend makes that cloud a processor of prompts: see R-A in
 [SUPPLIERS.md](SUPPLIERS.md). To prove a backend's identity and model
 before users rely on it, send it one real request from inside the API
