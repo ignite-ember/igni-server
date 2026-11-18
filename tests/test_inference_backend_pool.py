@@ -286,6 +286,7 @@ class TestACloudBackendsLease:
             'api_key': None,
             'kind': BackendKind.VERTEX_OPENAI,
             'region': 'europe-west4',
+            'project': 'p1',
             'auth': AuthMethod.SERVICE_ACCOUNT_KEY,
             'auth_settings': {},
             'credential': credential,
