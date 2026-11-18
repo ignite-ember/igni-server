@@ -697,6 +697,23 @@ The host caches the token and fetches a new one shortly before it expires.
 The extension sends it to its service as `Authorization: Bearer`, and the
 service checks it as §4 says, with `aud` = its own URL.
 
+**A token the service refused.** The answer is the token the host holds.
+When the service refuses it — a revoked grant, a rotated key, a wrong
+audience — the same token would be refused again, so the extension asks
+for another one:
+
+```
+GET {IGNI_SERVICE_TOKEN_URL}
+Authorization: Bearer {IGNI_SERVICE_TOKEN_SECRET}
+X-Igni-Token-Refresh: 1
+→ 200 {"access_token": "...", "expires_in": 600, "service_url": "..."}
+```
+
+The host exchanges a new token for the same service and answers with it.
+The header is the only thing that can ask: the audience is not a
+parameter, and a refresh does not change it — the secret still decides
+which service the token is for.
+
 ### 9.2 An app's or a space's token for a service
 
 In an app's or a space's VM — or the app itself, for one of its
