@@ -199,6 +199,7 @@ class ProducerFeed:
             producer=ProducerRef(kind=row.producer_kind, id=row.producer_id),  # type: ignore[arg-type]
             incarnation=row.incarnation,
             active=row.active,
+            inactive_reason=row.inactive_reason,
             removed=row.removed,
             profile_version=row.profile_version,
             packages_version=row.packages_version,

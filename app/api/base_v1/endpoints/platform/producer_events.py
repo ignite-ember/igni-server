@@ -4,6 +4,10 @@ A platform token only (`docs/service-identity.md` §15). An event handed
 out and not acknowledged within a short lease is handed out again, so a
 gateway that dies mid-delivery loses nothing; the extension receives an
 event at least once and can tell a repeat by `event_id`.
+
+A person's events go to one side: while their desktop owns them, the pull
+for their VM answers no events, and they are not listed for a wake
+(igni-core `docs/design/local-cloud-switch.md` §7).
 """
 
 from fastapi import APIRouter, Depends, Request

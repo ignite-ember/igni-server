@@ -118,9 +118,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('org_id', 'producer_kind', 'producer_id', name='pk_producer_feed_marks'),
     )
     op.add_column('producer_feed', sa.Column('seen_inactive_at', sa.TIMESTAMP(timezone=True), nullable=True))
-    op.add_column(
-        'producer_feed', sa.Column('erased', sa.Boolean(), server_default=sa.text('false'), nullable=False)
-    )
+    op.add_column('producer_feed', sa.Column('erased', sa.Boolean(), server_default=sa.text('false'), nullable=False))
     op.create_index('idx_producer_feed_org', 'producer_feed', ['org_id', 'producer_kind'])
     op.execute(_FUNCTIONS)
 

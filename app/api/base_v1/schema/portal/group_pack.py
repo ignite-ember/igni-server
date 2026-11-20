@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.api.base_v1.schema.portal.group_entries import OrgGroupPackEntry
 from app.api.base_v1.schema.portal.group_theme import GroupTheme
+from app.db.sql.models.org_group import GroupMode, LOCAL_AND_CLOUD
 
 
 class OrgGroupPack(BaseModel):
@@ -31,6 +32,12 @@ class OrgGroupPack(BaseModel):
     # way — this pack is already polled with an ETag, so branding costs
     # no extra request and an unchanged theme costs no bytes.
     theme: GroupTheme | None = None
+    # Where igni runs for the group's people: `local`, `cloud` or
+    # `local_and_cloud`. Appended after `theme`, so the order the fields
+    # were documented in holds; a client that predates it ignores it, and
+    # a pack without it means `local_and_cloud`. In the signed pack, so
+    # the desktop enforces it offline and a local user cannot forge it.
+    mode: GroupMode = LOCAL_AND_CLOUD
     #: The organisation the group belongs to. Not part of the served
     #: payload (excluded from `as_payload`, so the response and its ETag
     #: are what they were); carried so the signed form can name it.

@@ -8,7 +8,7 @@ small, deliberate facts.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.base_v1.schema.producer_events import NotHandledEvent
 
@@ -96,6 +96,27 @@ class VmProfileSavedAudit(BaseModel):
 
 class VmProfileAssignedAudit(BaseModel):
     vm_profile_id: str | None
+
+
+class Change(BaseModel):
+    """A setting's value before and after, as `{"from": …, "to": …}`."""
+
+    model_config = ConfigDict(serialize_by_alias=True, populate_by_name=True)
+
+    was: str = Field(alias='from')
+    now: str = Field(alias='to')
+
+
+class GroupModeChangedAudit(BaseModel):
+    """Where igni runs for a group's people, changed (`local`, `cloud`, `local_and_cloud`)."""
+
+    mode: Change
+
+
+class EventsOwnerSetAudit(BaseModel):
+    """Which side pulls a person's service events: their desktop (`local`) or their cloud VM (`cloud`)."""
+
+    events_owner: Change
 
 
 class VmProfileDecisionAudit(BaseModel):

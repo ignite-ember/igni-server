@@ -287,6 +287,11 @@ PERSONAL_DATA_COLUMNS: Mapping[str, ColumnClassification] = MappingProxyType(
         'person_mcp_approvals.server_name': INCLUDED,
         'person_mcp_approvals.source': INCLUDED,
         'person_mcp_approvals.approved_at': INCLUDED,
+        # Which side — their computer or their cloud VM — they chose to
+        # receive their service events, and when.
+        'person_event_owner.user_id': INCLUDED,
+        'person_event_owner.owner': INCLUDED,
+        'person_event_owner.updated_at': INCLUDED,
         # Events services asked to deliver to an extension for them: which
         # extension, what happened, and whether it reached them.
         'producer_events.producer_kind': INCLUDED,
@@ -329,6 +334,7 @@ PERSONAL_DATA_COLUMNS: Mapping[str, ColumnClassification] = MappingProxyType(
         'producer_feed.producer_kind': INCLUDED,
         'producer_feed.producer_id': INCLUDED,
         'producer_feed.active': INCLUDED,
+        'producer_feed.inactive_reason': INCLUDED,
         'producer_feed.changed_at': INCLUDED,
         'producer_feed.removed': INCLUDED,
         'producer_feed.removed_at': INCLUDED,

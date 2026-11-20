@@ -34,6 +34,10 @@ from app.db.sql.models import Base, TenantBase
 #: The kind of producer a person is, beside `APP` and `SPACE`.
 PERSON = 'person'
 
+#: Why an active member is listed inactive: their group runs igni only on
+#: their computers. Not removed — their VM and its data are kept.
+GROUP_LOCAL_ONLY = 'group_local_only'
+
 #: The numbers the feed is ordered by.
 FEED_SEQ = Sequence('producer_feed_seq', metadata=Base.metadata)
 
@@ -58,6 +62,10 @@ class ProducerFeedEntry(Base):
     #: A person: an active member, not deactivated. An app: registered,
     #: with the cloud enabled (a working VM credential).
     active: Mapped[bool] = Column(Boolean, nullable=False)
+    #: Why an otherwise active producer is listed inactive, as a stable
+    #: token (`GROUP_LOCAL_ONLY`); null when it is active, or inactive for
+    #: the ordinary reasons (deactivated, no VM credential).
+    inactive_reason: Mapped[str | None] = Column(Text, nullable=True)
     #: The profile last computed for it; kept as it was once it is gone.
     profile_version: Mapped[str] = Column(Text, nullable=False)
     packages_version: Mapped[str] = Column(Text, nullable=False)

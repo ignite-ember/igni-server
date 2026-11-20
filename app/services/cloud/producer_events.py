@@ -14,7 +14,9 @@ What is decided (igni's `docs/CLOUD.md` §6, `docs/service-identity.md` §15):
    through their group, an app through its own list), rate-limits per
    service, records the request, and stores the event until delivered.
 3. The gateway, waking the producer's VM, fetches the pending events and
-   acknowledges each once the extension has it.
+   acknowledges each once the extension has it. A person's events go to
+   one side only — their desktop or their cloud VM (`EventOwners`) — and
+   the other is served nothing.
 
 4. An undelivered event expires after `SERVICE_EVENT_MAX_WAIT_SECONDS`
    (14 days), or at the service's earlier `expires_at`; a later one is cut
@@ -47,6 +49,7 @@ from app.api.base_v1.schema.producer_events import (
 )
 from app.api.base_v1.schema.vm_commands import WakeReason
 from app.config import settings
+from app.db.sql.models.person_event_owner import CLOUD_OWNER
 from app.db.sql.models.producer_event import ProducerEvent
 from app.db.sql.producer_events import ProducerEventsDB
 from app.db.sql.service_attachments import ServiceAttachmentsDB
@@ -54,6 +57,8 @@ from app.db.sql.tenant_registry import TenantRegistryDB
 from app.security.producer import ProducerCaller, ProducerRef
 from app.security.service_caller import ServiceCaller
 from app.services.auth.jwt_service import PERSON
+from app.services.cloud.events_owner import EventOwners
+from app.services.cloud.events_owner_errors import EventsOwnedElsewhere
 from app.services.cloud.producer_event_errors import (
     ExpiryPast,
     ExtensionOff,
@@ -71,7 +76,8 @@ from app.services.portal.group_extensions import Entitlement, GroupExtensions
 class ProducerEvents:
     """Raises `EventRefused` subclasses and the store's `AttachmentsUnavailable`.
 
-    `ProducerEventRefusals` makes HTTP of them.
+    `ProducerEventRefusals` makes HTTP of them; `EventsOwnerRefusals` makes
+    HTTP of `EventsOwnedElsewhere`.
     """
 
     def __init__(
@@ -83,6 +89,7 @@ class ProducerEvents:
         group_extensions: GroupExtensions | None = None,
         extension_of: ServiceExtensionOf | None = None,
         producers: ProducerLookup | None = None,
+        owners: EventOwners | None = None,
     ) -> None:
         self._db = db or ProducerEventsDB()
         self._attachments = attachments or ServiceAttachmentsDB()
@@ -90,6 +97,7 @@ class ProducerEvents:
         self._group_extensions = group_extensions or GroupExtensions()
         self._extension_of = extension_of or ServiceExtensionOf()
         self._producers = producers or ProducerLookup()
+        self._owners = owners or EventOwners()
 
     async def entitlement(self, org_id: str, producer: ProducerRef) -> Entitlement:
         caller = ProducerCaller(kind=producer.kind, id=producer.id, org_id=org_id)
@@ -176,7 +184,14 @@ class ProducerEvents:
         return EventAccepted(event_id=stored.id, expires_at=stored.expires_at, duplicate=duplicate)
 
     async def pull(self, org_id: str, producer: ProducerRef) -> PulledEvents:
+        """The gateway's pull for a producer's VM: nothing for a person whose desktop pulls their events."""
         await self._producers.exists(org_id, producer)
+        if producer.kind == PERSON and await self._owners.of(org_id, producer.id) != CLOUD_OWNER:
+            return PulledEvents(events=[])
+        return await self._lease(org_id, producer)
+
+    async def _lease(self, org_id: str, producer: ProducerRef) -> PulledEvents:
+        """The producer's pending events, oldest first, each leased for two minutes."""
         entitlement = await self.entitlement(org_id, producer)
 
         async def still_enabled(extension_id: str) -> bool:
@@ -206,8 +221,19 @@ class ProducerEvents:
         return caller.org_id
 
     async def pull_mine(self, caller: ProducerCaller) -> PulledEvents:
-        """The person's own events, for igni on their desktop: the gateway's pull, with the same lease."""
-        return await self.pull(self._person(caller), caller.ref)
+        """The person's own events, for igni on their desktop: the gateway's pull, with the same lease.
+
+        `EventsOwnedElsewhere` while their cloud VM owns them. Acknowledging
+        and fetching attachments stay open: an item the desktop leased
+        before the switch finishes cleanly, acknowledgements being
+        idempotent by id.
+        """
+        org_id = self._person(caller)
+        owner = await self._owners.of(org_id, caller.id)
+        if owner == CLOUD_OWNER:
+            raise EventsOwnedElsewhere(owner)
+        await self._producers.exists(org_id, caller.ref)
+        return await self._lease(org_id, caller.ref)
 
     async def ack_mine(self, caller: ProducerCaller, body: AckEvents) -> int:
         """Acknowledge the person's own events; anybody else's ids are left alone."""
@@ -220,9 +246,15 @@ class ProducerEvents:
         )
 
     async def wakes(self) -> list[WakeReason]:
+        """Producers with a deliverable event, for the gateway to wake — but no person whose desktop owns theirs."""
         found = []
         for org_id in await self._tenants.active_org_ids():
-            for kind, producer_id in await self._db.waiting(org_id):
+            waiting = await self._db.waiting(org_id)
+            people = [producer_id for kind, producer_id in waiting if kind == PERSON]
+            owners = await self._owners.of_people(org_id, people) if people else {}
+            for kind, producer_id in waiting:
+                if kind == PERSON and owners.get(producer_id) != CLOUD_OWNER:
+                    continue
                 found.append(
                     WakeReason(org_id=org_id, producer=ProducerRef.stored(kind, producer_id), reasons=['event'])
                 )

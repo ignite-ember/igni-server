@@ -952,7 +952,7 @@ with the producer: a wake reads it there and never asks igni server.
 GET /v1/platform/producers?since=<cursor>&limit=500&wait=25   // limit 1–1000, default 500; wait 0–30 s
 → 200 {"producers": [{"org_id", "producer": {"kind": "person"|"app"|"space", "id"}, "incarnation",
                       "owner": {"kind": "app", "id"} | null,
-                      "active", "removed", "erase_at", "profile_version", "packages_version",
+                      "active", "inactive_reason", "removed", "erase_at", "profile_version", "packages_version",
                       "profile": {"profile_id", "profile_name", "memory_mib", "normal_memory_mib",
                                   "expected_memory_mib", "vcpus", "idle_before_pause_s",
                                   "packages": {"apt", "pip", "npm"}, "setup_script",
@@ -965,9 +965,9 @@ GET /v1/platform/producers?since=<cursor>&limit=500&wait=25   // limit 1–1000,
 - **What is listed:** every producer whose state differs from what the
   feed last reported — oldest change first, so one may appear again.
   Without `since`, every producer there is (and was). A person appears
-  when they join, are deactivated (by an admin or by SCIM), leave, or
-  get another effective profile (a group move, a profile edited, a cap
-  lowered); an app when it is registered, the cloud is enabled or
+  when they join, are deactivated (by an admin or by SCIM), leave, their
+  group's mode goes to or from `local`, or they get another effective
+  profile (a group move, a profile edited, a cap lowered); an app when it is registered, the cloud is enabled or
   disabled for it, it is deleted, or its profile changes. A deleted
   organisation's producers are listed inactive.
 - **`producer.kind`:** `person`, `app` or `space` (§17).
@@ -982,6 +982,15 @@ GET /v1/platform/producers?since=<cursor>&limit=500&wait=25   // limit 1–1000,
   person deactivated (by an admin or by SCIM), an app whose cloud was
   disabled or whose credential was revoked. Such a producer may come
   back `active`.
+- **`inactive_reason`:** why a producer that would be active is not, as
+  a stable token; `null` otherwise. `group_local_only`: the person's
+  group runs igni **only on their computers** (`org_groups.mode` is
+  `local`, igni-core `docs/design/local-cloud-switch.md` §6). Refuse a
+  wake with 1008 `group_local_only`, kick a live connection, and refuse
+  `POST /v1/sign-in` with 403 and the same reason — but keep the VM: the
+  row is not `removed`, nothing is erased, and the group moving back
+  lists the person `active` again. A deactivated member is `active:
+  false` with no reason. Treat an unknown token as plain inactive.
 - **`removed`:** the owner removed the producer for good: it is never
   usable again, and its VM is suspended at once; the gateway **erases
   its state, volume and keys at `erase_at`** (§18). Only: a space deleted by
@@ -1484,7 +1493,7 @@ its own credential — the person's session on the desktop, the VM's token
 
 | Call (platform token) | Does |
 |---|---|
-| `POST /v1/platform/orgs/{org_id}/producers/{kind}/{id}/events/pull` | `{"events": [{event_id, extension_id, client_id, kind, type, payload, thread, text, title, start_run, action, attachments: [{attachment_id, filename, content_type, size, sha256}], event_key, created_at, expires_at}]}`, every kind, oldest first, at most 100; `type` is a non-event's kind. An item not acknowledged within two minutes is handed out again — igni receives one at least once and tells a repeat by `event_id`. One whose extension was switched off for the producer meanwhile is dropped, not handed out |
+| `POST /v1/platform/orgs/{org_id}/producers/{kind}/{id}/events/pull` | `{"events": []}` for a person whose events their desktop owns (below); otherwise `{"events": [{event_id, extension_id, client_id, kind, type, payload, thread, text, title, start_run, action, attachments: [{attachment_id, filename, content_type, size, sha256}], event_key, created_at, expires_at}]}`, every kind, oldest first, at most 100; `type` is a non-event's kind. An item not acknowledged within two minutes is handed out again — igni receives one at least once and tells a repeat by `event_id`. One whose extension was switched off for the producer meanwhile is dropped, not handed out |
 | `POST /v1/platform/orgs/{org_id}/events/ack` `{"event_ids": [...], "not_handled": [{event_id, reason}]}` | `{"delivered": n}`; of `event_ids`, the events in `not_handled` — handed to the extension, taken by no handler — become `not_handled` with the reason, the rest `delivered`. Only an event can be not handled. Audited |
 | `POST /v1/platform/orgs/{org_id}/events/fail` `{"event_ids": [...], "reason"}` | `{"failed": n}` — the gateway gave up after its own retries: each pending one becomes `failed`, with the reason, and is never handed out or woken for again. Audited |
 
@@ -1494,17 +1503,49 @@ its own credential — the person's session on the desktop, the VM's token
 
 | Call (a person's session) | Does |
 |---|---|
-| `POST /v1/me/events/pull` | the person's own pending events, exactly as the platform's pull answers them (and with the same two-minute lease) |
+| `POST /v1/me/events/pull` | the person's own pending events, exactly as the platform's pull answers them (and with the same two-minute lease); `409 {"error": "events_owned_elsewhere", "owner": "cloud", "detail"}` while their cloud VM owns them |
 | `POST /v1/me/events/ack` `{"event_ids": [...], "not_handled": [...]}` | `{"delivered": n}`, as the platform's, counting only the person's own events; anybody else's ids are left alone. Audited |
 
   An app's token is a 403 (an app's events reach it through the
-  gateway). The lease is one per event: whichever of the gateway and
-  the desktop pulls first has the event for two minutes, and an event
-  acknowledged by either is delivered — igni on the desktop and igni in
-  the VM keep separate records of what they took, so an event normally
-  reaches one of them, but one taken and not acknowledged within the
-  lease may reach the other too. While it is pending the producer is
-  still listed in `/v1/platform/wakes`.
+  gateway).
+
+- **One side owns a person's events** (igni-core
+  `docs/design/local-cloud-switch.md` §7). igni on the desktop and igni
+  in the VM keep separate records of what they took, and only one of
+  them may have the extension, so igni server serves exactly one:
+
+  | The group's mode (`org_groups.mode`) | The owner |
+  |---|---|
+  | `local` | `local` — the desktop |
+  | `cloud` | `cloud` — the gateway, for the VM |
+  | `local_and_cloud` | the person's last choice, `local` until they first switch |
+
+  The desktop's pull while the owner is `cloud` is the 409 above, which
+  igni reads as "idle and ask again in a minute"; acknowledging and
+  fetching attachments stay open, so what it leased before finishes
+  cleanly. The gateway's pull for the person while the owner is `local`
+  answers no events, and `/v1/platform/wakes` does not list them for
+  their events. A change of owner leaves leases alone: an event the old
+  side leased and did not acknowledge comes back after its two minutes,
+  to the new owner — still at least once. The desktop's switch sets the
+  owner before it re-points its windows:
+
+| Call (a person's own session; an app, a space or a VM's token is a 403) | Does |
+|---|---|
+| `GET /v1/me/cloud` | `{"cloud": "available"\|"unavailable", "reason", "gateway_url", "mode", "events_owner": "local"\|"cloud", "group": {id, name}, "producer": "person:<id>"}` — see below. `ETag` and `Cache-Control: private, max-age=60`; the tag held is a 304 |
+| `PUT /v1/me/cloud/events-owner` `{"owner": "local"\|"cloud"}` | the same answer, with the new owner; `409 {"error": "mode_forbids", "detail"}` when the group runs igni in the other place only. Audited, with `{"events_owner": {"from", "to"}}` |
+
+  `GET /v1/me/cloud` is what the desktop builds its Local / Cloud switch
+  from (igni-sdk's `contracts/cloud-discovery.schema.json`). `reason`
+  says why `cloud` is `unavailable` — the first that holds of
+  `fleet_not_configured` (no `FLEET_GATEWAY_URL`), `not_licensed` (the
+  installed licence lets Fleet start no VM), `inactive` (not an active
+  member) and `group_local_only` — and is `null` when it is available;
+  an open set. `gateway_url` is `igni_gateway`'s value, `null` without
+  Fleet. `mode` is the group's, as its pack carries it, so the desktop
+  need not wait for the next pack poll. It says *whether*; the VM's live
+  state — asleep, waking, running, signed in — is the gateway's own
+  `GET /v1/me`, to the same session.
 
 **How long an event waits, and what its service learns.**
 
@@ -1607,6 +1648,12 @@ vm_credential=<the current credential>
   person is an active member, not deactivated and has not signed out
   since it was issued; the app is still registered. If not, the family
   is revoked.
+- **A person whose group runs igni only on their computers**
+  (`org_groups.mode` is `local`) is refused the exchange with
+  `{"error": "invalid_grant", "error_description", "reason":
+  "group_local_only"}`, so a VM somehow still awake cannot renew. The
+  family is **not** revoked: the group moving back lets the VM renew
+  again. Apps and spaces are in no group and are never refused for it.
 
 **A person's**, when they sign in through the gateway. The gateway hands
 the person's own session to their cloud igni, which exchanges it:
@@ -1620,7 +1667,10 @@ organisation=<org_id>                            // when the session is not pinn
 ```
 
 Only a person's session is accepted — a platform, service or app token
-is `invalid_grant`. Signing in again issues a new family and revokes the
+is `invalid_grant`. A person whose group runs igni only on their
+computers is `invalid_grant` with `"reason": "group_local_only"`, and no
+credential is issued (igni-core `docs/design/local-cloud-switch.md`
+§6.3). Signing in again issues a new family and revokes the
 old (`replaced`). It is revoked when they **sign out** (sign out
 everywhere, or an admin signs them out), are **removed** from the
 organisation or **deactivated** (by an admin or by SCIM), and by the

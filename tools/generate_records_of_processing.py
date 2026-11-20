@@ -254,6 +254,7 @@ ACTIVITIES: tuple[Activity, ...] = (
             'org_retention',
             'vm_credentials',
             'person_mcp_approvals',
+            'person_event_owner',
             'platform_vm_caps',
             'org_vm_quotas',
             'app_spaces',

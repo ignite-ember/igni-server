@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.api.base_v1.schema.portal.groups import (
     CopyGroupRequest,
     CreateGroupRequest,
+    GroupUpdated,
     OrgGroupDetail,
     OrgGroupList,
     OrgGroupResponse,
@@ -93,15 +94,26 @@ class GroupsService:
         tallies = await self._groups.tallies(org_id, group_ids=[group.id])
         return OrgGroupDetail.of(group, tallies[group.id])
 
-    async def update_group(self, *, org_id: str, group_id: str, body: UpdateGroupRequest) -> OrgGroupResponse:
-        """Change what *body* supplies, and nothing else."""
-        await self._access.writable(org_id=org_id, group_id=group_id)
+    async def update_group(self, *, org_id: str, group_id: str, body: UpdateGroupRequest) -> GroupUpdated:
+        """Change what *body* supplies, and nothing else; say where igni ran for the group before.
+
+        The Default group is read-only except for its mode: where igni
+        runs is the organisation's call about its people, like the VM
+        profile it can also give that group, and not part of what igni
+        ships. An edit carrying anything else is refused as before.
+        """
+        patch = body.to_patch()
+        if patch.only_mode:
+            before = await self._access.in_org(org_id=org_id, group_id=group_id)
+        else:
+            before = await self._access.writable(org_id=org_id, group_id=group_id)
+        mode_was = before.mode
         if body.name:
             await self._access.refuse_taken_name(org_id=org_id, name=body.name, except_id=group_id)
         await self._served.refuse_unroutable_pin(body.default_model)
 
-        group = await self._groups.update_group(org_id, group_id=group_id, patch=body.to_patch())
-        return OrgGroupResponse.of(group)
+        group = await self._groups.update_group(org_id, group_id=group_id, patch=patch)
+        return GroupUpdated(group=OrgGroupResponse.of(group), mode_was=mode_was)
 
     async def delete_group(self, *, org_id: str, group_id: str, by_user_id: str) -> None:
         """Delete a group. Its people go back to the Default group, which must exist before the transaction."""

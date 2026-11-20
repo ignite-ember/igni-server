@@ -141,3 +141,17 @@ async def require_producer(caller: ProducerCaller = Depends(current_producer)) -
     if caller.org_id is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You are not in an organisation yet')
     return caller
+
+
+async def require_desktop_person(
+    caller: ProducerCaller = Depends(require_producer), token: str | None = Depends(_bearer)
+) -> ProducerCaller:
+    """A person in an organisation, with the session they signed in for — the desktop app's.
+
+    Not an app or a space, and not the token a person's cloud VM buys with
+    its credential (a session carrying `inc`): what is asked here is about
+    the person's own computer, so a VM has no business answering it.
+    """
+    if caller.kind != PERSON or JWTService().decode_token(token or '').is_a_vms:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only a person's own session asks this")
+    return caller

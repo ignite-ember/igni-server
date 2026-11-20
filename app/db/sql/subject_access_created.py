@@ -17,6 +17,7 @@ from app.db.sql.schemas.subject_access_created import (
     CreatedAppRow,
     CreatedGroupRow,
     EventAttachmentRow,
+    EventsOwnerRow,
     GroupEntryRow,
     GroupExtensionRow,
     InferenceNodeRow,
@@ -162,6 +163,13 @@ class CreatedThingsDB(SubjectReads):
                 'SELECT server_name, source, approved_at FROM person_mcp_approvals WHERE user_id = :u',
                 SubjectBinds(user_id=user_id),
             ),
+            # Which side they chose to receive their service events.
+            events_owner=await self._org_rows(
+                org_id,
+                EventsOwnerRow,
+                'SELECT owner, updated_at FROM person_event_owner WHERE user_id = :u',
+                SubjectBinds(user_id=user_id),
+            ),
             # What they were told about, and when they read it. Only
             # the ones addressed to them: a row where they are the
             # actor belongs to whoever was told.
@@ -206,8 +214,8 @@ class CreatedThingsDB(SubjectReads):
             # What the gateway was last told about their VM in this organisation.
             producer_feed=await self._rows(
                 ProducerFeedRow,
-                'SELECT producer_kind, producer_id, active, removed, removed_at, erase_at, changed_at, '
-                'seen_removed_at, erased, legal_hold, erasure_done_at, discarded_by_user_id, discarded_at '
+                'SELECT producer_kind, producer_id, active, inactive_reason, removed, removed_at, erase_at, '
+                'changed_at, seen_removed_at, erased, legal_hold, erasure_done_at, discarded_by_user_id, discarded_at '
                 'FROM producer_feed '
                 "WHERE org_id = :o AND producer_kind = 'person' AND producer_id = :u",
                 SubjectBinds(org_id=org_id, user_id=user_id),

@@ -6,7 +6,8 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from app.db.sql.models.app_space import SPACE
-from app.db.sql.models.producer_feed import PERSON
+from app.db.sql.models.org_group import LOCAL
+from app.db.sql.models.producer_feed import GROUP_LOCAL_ONLY, PERSON
 from app.db.sql.models.registered_client import APP
 from app.db.sql.producer_feed import ProducerFeedDB
 from app.db.sql.producer_feed_tenant import ProducerFeedTenantDB
@@ -42,6 +43,11 @@ class PeopleStates(KindStates):
     A person deactivated is not removed; their VM is only suspended. A person
     in no group yet gets the Default group's profile, as the VM profile
     endpoint does (it puts them there).
+
+    A member whose group runs igni only on their computers is inactive too,
+    with the reason said (`group_local_only`): the gateway wakes no VM for
+    them and kicks one that is live. Not removed — their VM's data is kept,
+    so moving the group back loses nothing.
     """
 
     kind = PERSON
@@ -70,17 +76,20 @@ class PeopleStates(KindStates):
         grown = await self._volumes.of(org_id, PERSON, list(members))
         # A legal hold stops their VM's erasure after inactivity too (§12.3).
         held_now = await self._holds.held_in(org_id, sorted(members)) if members else set()
-        states = [
-            profiles.state(
-                self._key(org_id, user_id),
-                profile_id=profiles.of_group(groups.get(user_id)),
-                active=member.active,
-                incarnation=member.incarnation,
-                grown=grown.get(user_id),
-                legal_hold=user_id in held_now,
+        states = []
+        for user_id, member in members.items():
+            local_only = profiles.mode_of(groups.get(user_id)) == LOCAL
+            states.append(
+                profiles.state(
+                    self._key(org_id, user_id),
+                    profile_id=profiles.of_group(groups.get(user_id)),
+                    active=member.active and not local_only,
+                    inactive_reason=GROUP_LOCAL_ONLY if member.active and local_only else None,
+                    incarnation=member.incarnation,
+                    grown=grown.get(user_id),
+                    legal_hold=user_id in held_now,
+                )
             )
-            for user_id, member in members.items()
-        ]
         removed = {user_id for user_id in ids if user_id not in members}
         # The organisation keeps a removed member's VM for its retention;
         # an account deleted, or the organisation, goes at once.

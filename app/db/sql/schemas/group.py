@@ -16,7 +16,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, model_validator
 from sqlalchemy.exc import IntegrityError
 
-from app.db.sql.models.org_group import OrgGroup
+from app.db.sql.models.org_group import GroupMode, LOCAL_AND_CLOUD, OrgGroup
 
 
 class GroupSummary(BaseModel):
@@ -31,10 +31,12 @@ class GroupSummary(BaseModel):
     id: str
     org_id: str
     name: str
+    #: Where igni runs for the group's people.
+    mode: GroupMode = LOCAL_AND_CLOUD
 
     @classmethod
     def of(cls, group: OrgGroup) -> GroupSummary:
-        return cls(id=str(group.id), org_id=str(group.org_id), name=str(group.name))
+        return cls(id=str(group.id), org_id=str(group.org_id), name=str(group.name), mode=group.mode or LOCAL_AND_CLOUD)
 
 
 class GroupMembership(BaseModel):
@@ -70,6 +72,7 @@ class GroupSettings(BaseModel):
     default_model: str | None = None
     #: Serialised `GroupTheme`; None is "no branding".
     theme: str | None = None
+    mode: GroupMode = LOCAL_AND_CLOUD
 
     def new_group(
         self, *, org_id: str, by_user_id: str | None, is_default: bool, vm_profile_id: str | None, at: datetime
@@ -82,6 +85,7 @@ class GroupSettings(BaseModel):
             description=self.description,
             default_model=self.default_model,
             theme=self.theme,
+            mode=self.mode,
             vm_profile_id=vm_profile_id,
             is_default=is_default,
             created_by_user_id=by_user_id,
@@ -94,9 +98,9 @@ class GroupPatch(BaseModel):
     """A partial edit to a group. Absent means unchanged.
 
     `default_model` and `theme` may be set to an explicit None, which
-    clears them; `name` and `description` may not, so a None that leaked
-    in from an unsupplied request field cannot wipe them. Built one field
-    at a time by assignment, which counts as supplying it.
+    clears them; `name`, `description` and `mode` may not, so a None that
+    leaked in from an unsupplied request field cannot wipe them. Built one
+    field at a time by assignment, which counts as supplying it.
     """
 
     model_config = ConfigDict(validate_assignment=True)
@@ -105,10 +109,11 @@ class GroupPatch(BaseModel):
     description: str | None = None
     default_model: str | None = None
     theme: str | None = None
+    mode: GroupMode | None = None
 
     @model_validator(mode='after')
     def _name_and_description_are_never_cleared(self) -> Self:
-        for field in ('name', 'description'):
+        for field in ('name', 'description', 'mode'):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f'{field} can be changed but not cleared')
         return self
@@ -128,7 +133,14 @@ class GroupPatch(BaseModel):
             row.default_model = self.default_model
         if 'theme' in self.model_fields_set:
             row.theme = self.theme
+        if self.mode is not None:
+            row.mode = self.mode
         row.updated_at = at
+
+    @property
+    def only_mode(self) -> bool:
+        """It changes where igni runs and nothing else — the one edit the Default group takes."""
+        return self.model_fields_set == {'mode'}
 
 
 class EntryCreate(BaseModel):

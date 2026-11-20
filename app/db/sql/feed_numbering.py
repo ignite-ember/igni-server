@@ -111,6 +111,7 @@ class FeedNumbering(FeedTransaction):
                 self._update(row, change.state)
             else:
                 row.active = False
+                row.inactive_reason = None
                 if change.removed:
                     scheduled.append(self._remove(row, census, now))
             row.changed_at = now
@@ -141,12 +142,14 @@ class FeedNumbering(FeedTransaction):
         """The profile itself is compared by its version, which changes exactly when it does."""
         return row.vm_profile is None or (
             row.active,
+            row.inactive_reason,
             row.profile_version,
             row.packages_version,
             row.volume_gib,
             row.legal_hold,
         ) != (
             state.active,
+            state.inactive_reason,
             state.profile_version,
             state.packages_version,
             state.volume_gib,
@@ -156,6 +159,7 @@ class FeedNumbering(FeedTransaction):
     @staticmethod
     def _update(row: ProducerFeedEntry, state: ProducerState) -> None:
         row.active = state.active
+        row.inactive_reason = state.inactive_reason
         row.profile_version = state.profile_version
         row.packages_version = state.packages_version
         row.vm_profile = state.profile.model_dump(mode='json')
@@ -184,6 +188,7 @@ class FeedNumbering(FeedTransaction):
                     'producer_kind': kind,
                     'producer_id': state.key.producer_id,
                     'active': state.active,
+                    'inactive_reason': state.inactive_reason,
                     'profile_version': state.profile_version,
                     'packages_version': state.packages_version,
                     'vm_profile': state.profile.model_dump(mode='json'),

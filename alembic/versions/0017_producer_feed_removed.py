@@ -25,9 +25,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        'producer_feed', sa.Column('removed', sa.Boolean(), server_default=sa.text('false'), nullable=False)
-    )
+    op.add_column('producer_feed', sa.Column('removed', sa.Boolean(), server_default=sa.text('false'), nullable=False))
     op.alter_column('producer_feed', 'seen_inactive_at', new_column_name='seen_removed_at')
 
 

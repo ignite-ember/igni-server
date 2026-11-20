@@ -85,6 +85,15 @@ class TokenClaims(BaseModel):
     #: (`docs/service-identity.md` §22). Such a session may do what the
     #: person may, except mint further credentials.
     api_key_id: str | None = None
+    #: The membership a VM's token is for (`inc`, §11.3). Set only on the
+    #: short-lived session a person's VM buys with its credential, so it
+    #: tells that token from the person's own.
+    incarnation: str | None = None
+
+    @property
+    def is_a_vms(self) -> bool:
+        """The token a person's cloud VM holds, not one the person signed in for."""
+        return self.incarnation is not None
 
     @classmethod
     def of(cls, claims: VerifiedClaims) -> TokenClaims:
@@ -95,4 +104,5 @@ class TokenClaims(BaseModel):
             issued_at=claims.iat,
             group=claims.group or None,
             api_key_id=claims.api_key or None,
+            incarnation=claims.inc or None,
         )

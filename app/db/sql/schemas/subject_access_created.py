@@ -190,6 +190,13 @@ class McpApprovalRow(SubjectRow):
     approved_at: datetime
 
 
+class EventsOwnerRow(SubjectRow):
+    """`person_event_owner`: which side they chose to receive their service events."""
+
+    owner: str
+    updated_at: datetime
+
+
 class ReceivedNotificationRow(SubjectRow):
     """`notifications` addressed to them."""
 
@@ -250,6 +257,8 @@ class ProducerFeedRow(SubjectRow):
     producer_kind: str
     producer_id: str
     active: bool
+    #: Why they are listed inactive although a member: `group_local_only`.
+    inactive_reason: str | None
     removed: bool
     removed_at: datetime | None
     erase_at: datetime | None
@@ -296,6 +305,7 @@ class ThingsTheyCreated(BaseModel):
     api_keys: list[ApiKeyRow]
     producer_volumes: list[ProducerVolumeRow]
     mcp_approvals: list[McpApprovalRow]
+    events_owner: list[EventsOwnerRow]
     notifications: list[ReceivedNotificationRow]
     producer_exports: list[ProducerExportRow]
     revocations: list[RevocationRow]

@@ -22,6 +22,9 @@ class ProducerState(BaseModel):
 
     key: ProducerKey
     active: bool
+    #: Why it is inactive although it would be active: `group_local_only`
+    #: for a member whose group runs igni only on their computers.
+    inactive_reason: str | None = None
     profile_version: str
     packages_version: str
     #: What its VM gets: equal exactly when `profile_version` is.

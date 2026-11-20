@@ -5,17 +5,26 @@ The same delivery the gateway does for a cloud VM (`docs/service-identity.md`
 acknowledge what igni took. An event not acknowledged is handed out
 again; igni tells a repeat by `event_id`.
 
+One side owns a person's events (igni-core `docs/design/local-cloud-switch.md`
+§7): while it is their cloud VM, a pull here is a 409
+`{"error": "events_owned_elsewhere", "owner": "cloud"}`, which igni on the
+desktop reads as "idle and ask again later". Acknowledging and fetching
+attachments stay open for what was leased before.
+
 An item's attachments are fetched here by whichever igni delivers it —
 the desktop with the person's session, a VM with its own token (§16) —
 so a person's or an app's token is taken, for that producer's own items.
 """
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import JSONResponse
 
 from app.api.base_v1.schema.audit_detail import EventsNotHandledAudit
 from app.api.base_v1.schema.producer_events import AckedEvents, AckEvents, PulledEvents
 from app.middlewares.request_audit import RequestAudit
 from app.security.producer import ProducerCaller, require_producer
+from app.services.cloud.events_owner_errors import EventsOwnerRefused
+from app.services.cloud.events_owner_refusals import EventsOwnerRefusals
 from app.services.cloud.producer_event_refusals import ProducerEventRefusals
 from app.services.cloud.producer_events import ProducerEvents
 from app.services.cloud.service_attachments import ServiceAttachments
@@ -23,10 +32,17 @@ from app.services.cloud.service_attachments import ServiceAttachments
 router = APIRouter(prefix='/me/events')
 
 
-@router.post('/pull', response_model=PulledEvents)
-async def pull(caller: ProducerCaller = Depends(require_producer)) -> PulledEvents:
-    with ProducerEventRefusals():
-        return await ProducerEvents().pull_mine(caller)
+@router.post(
+    '/pull',
+    response_model=PulledEvents,
+    responses={409: {'description': '`{"error": "events_owned_elsewhere", "owner": "cloud"}`'}},
+)
+async def pull(caller: ProducerCaller = Depends(require_producer)) -> PulledEvents | JSONResponse:
+    try:
+        with ProducerEventRefusals():
+            return await ProducerEvents().pull_mine(caller)
+    except EventsOwnerRefused as exc:
+        return EventsOwnerRefusals.response(exc)
 
 
 @router.post('/ack', response_model=AckedEvents)

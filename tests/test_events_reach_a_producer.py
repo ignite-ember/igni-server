@@ -29,8 +29,10 @@ async def world(client):
     acme = await CloudOrg(client).create()
     service = await shipped(client, EXTENSION)
     legal = await acme.group('Legal')
-    ada, _ = await acme.person('ada@acme.com', legal)
+    ada, ada_session = await acme.person('ada@acme.com', legal)
     await acme.switch_group(legal, EXTENSION)
+    # These are the gateway's deliveries: Ada's events go to her cloud VM.
+    await acme.events_in_the_cloud(ada_session)
     max_id, _ = await acme.person('max@acme.com')
     return {
         'acme': acme,

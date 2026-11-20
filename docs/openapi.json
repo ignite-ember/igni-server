@@ -2056,6 +2056,115 @@
         "title": "ClientSummary",
         "type": "object"
       },
+      "CloudDiscovery": {
+        "description": "A person's cloud igni, as far as igni server knows: whether, where, and who owns their events.\n\nNot its live state — asleep, waking, running, signed in: the gateway's\nown `GET /v1/me` answers that, to a token it already accepts.",
+        "properties": {
+          "cloud": {
+            "description": "Whether this person has a cloud igni they may use from the desktop",
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Cloud",
+            "type": "string"
+          },
+          "events_owner": {
+            "description": "Who pulls this person's service events",
+            "enum": [
+              "local",
+              "cloud"
+            ],
+            "title": "Events Owner",
+            "type": "string"
+          },
+          "gateway_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fleet's gateway (the same value as `igni_gateway`); null when Fleet is not configured",
+            "title": "Gateway Url"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloudGroup"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For display; null for a person in no group"
+          },
+          "mode": {
+            "description": "Where igni runs for the person's group; the same value the pack carries",
+            "enum": [
+              "local",
+              "cloud",
+              "local_and_cloud"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "producer": {
+            "description": "The gateway's producer id, for logs and support",
+            "title": "Producer",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fleet_not_configured",
+                  "group_local_only",
+                  "inactive",
+                  "not_licensed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it is unavailable; null when it is available",
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "cloud",
+          "reason",
+          "gateway_url",
+          "mode",
+          "events_owner",
+          "group",
+          "producer"
+        ],
+        "title": "CloudDiscovery",
+        "type": "object"
+      },
+      "CloudGroup": {
+        "description": "The person's group, for display.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "CloudGroup",
+        "type": "object"
+      },
       "Collision": {
         "description": "Two or more extensions wanting one thing, and which of them has it.",
         "properties": {
@@ -3760,6 +3869,27 @@
           "events"
         ],
         "title": "EventStatusList",
+        "type": "object"
+      },
+      "EventsOwnerRow": {
+        "additionalProperties": false,
+        "description": "`person_event_owner`: which side they chose to receive their service events.",
+        "properties": {
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner",
+          "updated_at"
+        ],
+        "title": "EventsOwnerRow",
         "type": "object"
       },
       "ExchangeRequest": {
@@ -6873,6 +7003,16 @@
             "title": "Member Count",
             "type": "integer"
           },
+          "mode": {
+            "default": "local_and_cloud",
+            "enum": [
+              "local",
+              "cloud",
+              "local_and_cloud"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -7326,6 +7466,16 @@
             "default": false,
             "title": "Is Default",
             "type": "boolean"
+          },
+          "mode": {
+            "default": "local_and_cloud",
+            "enum": [
+              "local",
+              "cloud",
+              "local_and_cloud"
+            ],
+            "title": "Mode",
+            "type": "string"
           },
           "name": {
             "title": "Name",
@@ -8880,6 +9030,17 @@
             ],
             "title": "Erase At"
           },
+          "inactive_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inactive Reason"
+          },
           "incarnation": {
             "title": "Incarnation",
             "type": "string"
@@ -9033,6 +9194,17 @@
             ],
             "title": "Erasure Done At"
           },
+          "inactive_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inactive Reason"
+          },
           "legal_hold": {
             "title": "Legal Hold",
             "type": "boolean"
@@ -9078,6 +9250,7 @@
           "producer_kind",
           "producer_id",
           "active",
+          "inactive_reason",
           "removed",
           "removed_at",
           "erase_at",
@@ -10646,6 +10819,24 @@
         "title": "SessionsWithdrawnResponse",
         "type": "object"
       },
+      "SetEventsOwner": {
+        "description": "`PUT /v1/me/cloud/events-owner`: which side pulls this person's events from now on.",
+        "properties": {
+          "owner": {
+            "enum": [
+              "local",
+              "cloud"
+            ],
+            "title": "Owner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner"
+        ],
+        "title": "SetEventsOwner",
+        "type": "object"
+      },
       "SetGroupExtension": {
         "properties": {
           "enabled": {
@@ -10783,6 +10974,16 @@
           },
           "group_name": {
             "title": "Group Name",
+            "type": "string"
+          },
+          "mode": {
+            "default": "local_and_cloud",
+            "enum": [
+              "local",
+              "cloud",
+              "local_and_cloud"
+            ],
+            "title": "Mode",
             "type": "string"
           },
           "signed_pack": {
@@ -11589,6 +11790,13 @@
             "title": "Events",
             "type": "array"
           },
+          "events_owner": {
+            "items": {
+              "$ref": "#/components/schemas/EventsOwnerRow"
+            },
+            "title": "Events Owner",
+            "type": "array"
+          },
           "group_entries": {
             "items": {
               "$ref": "#/components/schemas/GroupEntryRow"
@@ -11718,6 +11926,7 @@
           "api_keys",
           "producer_volumes",
           "mcp_approvals",
+          "events_owner",
           "notifications",
           "producer_exports",
           "revocations",
@@ -11895,7 +12104,7 @@
         "type": "object"
       },
       "UpdateGroupRequest": {
-        "description": "Request to update a group.\n\n``default_model`` follows the usual partial-update rule — absent\nleaves it alone — with an empty string as the explicit way to clear\nit, since ``None`` already means \"not supplied\".\n\n``theme`` needs the same distinction and cannot borrow the same\ntrick, being an object rather than a string: an empty\n:class:`GroupTheme` (every field null) is the explicit \"clear it\",\nand absent still means \"leave it alone\". Both end up storing NULL —\na theme that overrides nothing *is* igni's palette — so the two\nspellings agree on the result.",
+        "description": "Request to update a group.\n\n``default_model`` follows the usual partial-update rule — absent\nleaves it alone — with an empty string as the explicit way to clear\nit, since ``None`` already means \"not supplied\".\n\n``theme`` needs the same distinction and cannot borrow the same\ntrick, being an object rather than a string: an empty\n:class:`GroupTheme` (every field null) is the explicit \"clear it\",\nand absent still means \"leave it alone\". Both end up storing NULL —\na theme that overrides nothing *is* igni's palette — so the two\nspellings agree on the result.\n\n``mode`` is never cleared: absent leaves it alone. It is the one field\nthe Default group takes, because where igni runs is the organisation's\ndecision about its people, not part of what igni ships.",
         "properties": {
           "default_model": {
             "anyOf": [
@@ -11918,6 +12127,23 @@
               }
             ],
             "title": "Description"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "local",
+                  "cloud",
+                  "local_and_cloud"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where igni runs for the group's people: `local` (only on their computers), `cloud` (only in the cloud) or `local_and_cloud` (both, switched in the desktop app). Omit to leave it.",
+            "title": "Mode"
           },
           "name": {
             "anyOf": [
@@ -15618,6 +15844,86 @@
         ]
       }
     },
+    "/v1/me/cloud": {
+      "get": {
+        "description": "Whether there is a cloud igni for this person, its gateway, their group's mode and their events' owner.",
+        "operationId": "my_cloud_v1_me_cloud_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "Unchanged since the ETag sent"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "My Cloud",
+        "tags": [
+          "Cloud"
+        ]
+      }
+    },
+    "/v1/me/cloud/events-owner": {
+      "put": {
+        "description": "Which side pulls this person's events from now on: `local` or `cloud`. Audited.\n\nThe desktop sets it before it re-points its windows, so the side it\nswitches to is the one served. Leases are left alone: what the other\nside leased and did not acknowledge comes back after the lease.",
+        "operationId": "set_events_owner_v1_me_cloud_events_owner_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetEventsOwner"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "`{\"error\": \"mode_forbids\"}`: the group runs igni in the other place only"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Set Events Owner",
+        "tags": [
+          "Cloud"
+        ]
+      }
+    },
     "/v1/me/events/ack": {
       "post": {
         "description": "Delivered — and the events no handler took, `not_handled` with their reasons. Audited.",
@@ -15678,6 +15984,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "description": "`{\"error\": \"events_owned_elsewhere\", \"owner\": \"cloud\"}`"
           }
         },
         "security": [
@@ -19207,7 +19516,7 @@
         ]
       },
       "patch": {
-        "description": "Update a group's name or description. Admin-only.",
+        "description": "Update a group's settings: name, description, model, theme, or where igni runs. Admin-only.\n\nThe Default group takes only `mode`. A change of mode is audited with\nwhat it was and what it is now.",
         "operationId": "update_group_v1_portal_groups__group_id__patch",
         "parameters": [
           {

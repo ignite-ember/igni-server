@@ -19,7 +19,7 @@
 
 igni runs in the customer's own infrastructure and no data reaches the vendor, so the customer is the controller and there is no processor relationship to describe. What a controller cannot write without the vendor is the inventory: what the software stores, why, and for how long. That is what follows.
 
-It covers **226 classified personal-data columns across 40 tables**, plus one table whose personal data lives in a JSON payload, grouped into 8 processing activities.
+It covers **230 classified personal-data columns across 41 tables**, plus one table whose personal data lives in a JSON payload, grouped into 8 processing activities.
 
 ## Documents are processed by a paired service
 
@@ -88,7 +88,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 | Table | Held | Returned on a subject-access request | Withheld | Not personal |
 |---|---|---|---|---|
 | `organizations` | 5 | `created_at`, `display_name`, `id`, `owner_user_id`, `slug` | — | 1 |
-| `org_groups` | 3 | `created_at`, `created_by_user_id`, `name` | — | 8 |
+| `org_groups` | 3 | `created_at`, `created_by_user_id`, `name` | — | 9 |
 | `org_group_members` | 4 | `added_at`, `added_by_user_id`, `group_id`, `user_id` | — | 1 |
 | `org_group_entries` | 3 | `created_at`, `created_by_user_id`, `entry_name` | — | 11 |
 | `org_group_extensions` | 4 | `enabled_at`, `enabled_by_user_id`, `extension_id`, `group_id` | — | 1 |
@@ -179,7 +179,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 | `vm_jobs` | 7 | `cancelled_at`, `cancelled_by_id`, `command`, `created_at`, `requested_as`, `requested_by_id`, `requested_by_kind` | — | 4 |
 | `producer_events` | 17 | `action`, `attachment_ids`, `created_at`, `delivered_at`, `event_type`, `extension_id`, `failed_reason`, `kind`, `not_handled_reason`, `payload`, `producer_id`, `producer_kind`, `start_run`, `state`, `text`, `thread`, `title` | — | 7 |
 | `service_attachments` | 8 | `content_type`, `created_at`, `event_id`, `expires_at`, `filename`, `sha256`, `size` | `content` | 2 |
-| `producer_feed` | 13 | `active`, `changed_at`, `discarded_at`, `discarded_by_user_id`, `erase_at`, `erased`, `erasure_done_at`, `legal_hold`, `producer_id`, `producer_kind`, `removed`, `removed_at`, `seen_removed_at` | — | 10 |
+| `producer_feed` | 14 | `active`, `changed_at`, `discarded_at`, `discarded_by_user_id`, `erase_at`, `erased`, `erasure_done_at`, `inactive_reason`, `legal_hold`, `producer_id`, `producer_kind`, `removed`, `removed_at`, `seen_removed_at` | — | 10 |
 | `producer_feed_marks` | 1 | — | `producer_id` | 3 |
 | `producer_volumes` | 7 | `gib`, `grown_as`, `grown_at`, `grown_by_id`, `grown_by_kind`, `producer_id`, `producer_kind` | — | 1 |
 | `legal_holds` | 4 | `placed_at`, `placed_by_user_id`, `reason`, `user_id` | — | 1 |
@@ -190,6 +190,7 @@ Not restated here. `COMPLIANCE_TRACKER.md` is the register, one row per control 
 | `org_retention` | 1 | — | `updated_by_user_id` | 3 |
 | `vm_credentials` | 11 | `created_at`, `created_by_id`, `created_by_kind`, `last_used_at`, `producer_id`, `producer_kind`, `revoked_at`, `revoked_by_id`, `revoked_reason` | `previous_hashes`, `secret_hash` | 8 |
 | `person_mcp_approvals` | 4 | `approved_at`, `server_name`, `source`, `user_id` | — | 1 |
+| `person_event_owner` | 3 | `owner`, `updated_at`, `user_id` | — | 1 |
 | `platform_vm_caps` | 1 | — | `updated_by_user_id` | 7 |
 | `org_vm_quotas` | 1 | — | `updated_by_user_id` | 3 |
 | `app_spaces` | 1 | — | `external_id` | 3 |

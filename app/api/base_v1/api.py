@@ -14,6 +14,7 @@ from .endpoints.client import (
 from .endpoints.cloud import (
     app_vm_profile as cloud_app_vm_profile,
     mcp_approvals as cloud_mcp_approvals,
+    my_cloud as cloud_my_cloud,
     my_events as cloud_my_events,
     spaces as cloud_spaces,
     vm_commands as cloud_vm_commands,
@@ -158,6 +159,9 @@ router.include_router(cloud_vm_commands.router, tags=['VM commands'])
 router.include_router(cloud_mcp_approvals.router, tags=['MCP approvals'])
 # A person's own events, fetched by igni on their desktop (§15).
 router.include_router(cloud_my_events.router, tags=['Events'])
+# Whether a person has a cloud igni to use from the desktop, and who pulls
+# their events (igni-core docs/design/local-cloud-switch.md §2.1, §7).
+router.include_router(cloud_my_cloud.router, tags=['Cloud'])
 # An app's spaces: a producer per end user of the app (§17).
 router.include_router(cloud_spaces.router, tags=['Spaces'])
 # An app asking for its VM's profile, and reading what it has (§12.3).

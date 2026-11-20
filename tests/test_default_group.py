@@ -254,8 +254,11 @@ class TestItCannotBeChanged:
         the change keeps the old line unless a migration replaces it (t0032)."""
         import asyncio
 
+        from sqlalchemy import text
+
         from alembic import command
 
+        from app.db.sql.tenancy import TenantSessions
         from app.db.sql.tenant_migrator import TenantMigrator
         from app.db.sql.tenant_registry import TenantRegistryDB
 
@@ -264,8 +267,13 @@ class TestItCannotBeChanged:
         config = TenantMigrator().alembic_config(await TenantRegistryDB().database_of(org_id))
 
         async def description() -> str:
-            groups = (await client.get('/portal/groups', headers=headers)).json()['groups']
-            return next(g['description'] for g in groups if g['id'] == default_id)
+            # Read from the table, not the API: below t0033 the rows have
+            # no `mode`, which the API's model of a group now reads.
+            async with TenantSessions().session_scope(org_id) as session:
+                found = await session.execute(
+                    text('SELECT description FROM org_groups WHERE id = :g'), {'g': default_id}
+                )
+                return str(found.scalar_one())
 
         await asyncio.to_thread(command.downgrade, config, 't0031')
         assert 'Edit or delete any of it here' in await description()
