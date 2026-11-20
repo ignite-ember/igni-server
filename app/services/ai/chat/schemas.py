@@ -6,7 +6,7 @@ import json
 import time
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator, ValidationError
 
 from app.api.base_v1.schema.chat import (
     ChatCompletionChoice,
@@ -91,6 +91,21 @@ class UpstreamChoice(BaseModel):
     index: int | None = None
     message: RepliedMessage
     finish_reason: str | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def _out_of_tokens_before_a_word(cls, data: Any) -> Any:
+        """A choice cut off by its token limit before it wrote anything answered nothing: an empty message.
+
+        Vertex AI's OpenAI-compatible endpoint sends a Gemini answer that ran
+        out of tokens while thinking as `{"finish_reason": "length"}` with no
+        `message` key at all. That is the provider's answer, counted and
+        billed. Any other choice without a message is still not a completion,
+        and is unreadable.
+        """
+        if isinstance(data, dict) and data.get('message') is None and data.get('finish_reason') == 'length':
+            return {**data, 'message': {'role': 'assistant'}}
+        return data
 
 
 class UpstreamCompletion(BaseModel):
