@@ -7,6 +7,9 @@ the dicts had — the bytes sent, the defaults filled, the usage counted.
 
 from __future__ import annotations
 
+from pydantic import ValidationError
+import pytest
+
 from app.api.base_v1.schema.chat import ChatCompletionRequest, CompletionUsage
 from app.services.ai.chat.schemas import (
     StreamChunk,
@@ -148,6 +151,42 @@ class TestANonStreamedAnswer:
             ],
             'usage': None,
         }
+
+    def test_a_choice_with_no_message_is_an_empty_answer(self):
+        """Vertex AI's Gemini, out of tokens while it thought, sends a choice with no `message` at all.
+
+        Its exact shape, from a real call (max_tokens 16, gemini-3.5-flash):
+        a 200 refused as unreadable became a 502 for an answer the provider
+        gave and billed.
+        """
+        completion = UpstreamCompletion.model_validate(
+            {
+                'choices': [{'finish_reason': 'length', 'index': 0, 'logprobs': None}],
+                'model': 'google/gemini-3.5-flash',
+                'object': 'chat.completion',
+                'usage': {'prompt_tokens': 7, 'completion_tokens': 14, 'total_tokens': 21},
+            }
+        )
+
+        response = completion.to_response()
+
+        assert response.choices[0].message.model_dump(exclude_none=True) == {'role': 'assistant', 'content': ''}
+        assert response.choices[0].finish_reason == 'length'
+        assert response.usage == CompletionUsage(prompt_tokens=7, completion_tokens=14, total_tokens=21)
+
+    def test_a_null_message_cut_off_by_the_limit_is_an_empty_answer(self):
+        completion = UpstreamCompletion.model_validate({'choices': [{'message': None, 'finish_reason': 'length'}]})
+
+        assert completion.to_response().choices[0].message.model_dump(exclude_none=True) == {
+            'role': 'assistant',
+            'content': '',
+        }
+
+    @pytest.mark.parametrize('finish_reason', ['stop', None])
+    def test_a_choice_with_no_message_that_was_not_cut_off_is_still_not_a_completion(self, finish_reason):
+        """Only the token limit explains an empty choice; any other is a broken answer, and unreadable."""
+        with pytest.raises(ValidationError):
+            UpstreamCompletion.model_validate({'choices': [{'index': 0, 'finish_reason': finish_reason}]})
 
     def test_a_reported_usage_is_kept(self):
         completion = UpstreamCompletion.model_validate({'usage': {'prompt_tokens': 2, 'total_tokens': 2}})
