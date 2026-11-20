@@ -182,9 +182,49 @@ class TestANonStreamedAnswer:
             'content': '',
         }
 
-    @pytest.mark.parametrize('finish_reason', ['stop', None])
+    def test_a_choice_the_provider_filtered_is_an_empty_answer(self):
+        """Vertex AI's Gemini, withholding its text (recitation), sends a choice with no `message` at all.
+
+        Its exact shape, from a real call (R529: gemini-3.5-flash asked to
+        count to sixty, max_tokens 6000): refused as unreadable, it became a
+        502 after the same filtered answer was asked for, and billed, three
+        times.
+        """
+        completion = UpstreamCompletion.model_validate(
+            {
+                'choices': [{'finish_reason': 'content_filter', 'index': 0, 'logprobs': None}],
+                'model': 'google/gemini-3.5-flash',
+                'object': 'chat.completion',
+                'usage': {'prompt_tokens': 16, 'completion_tokens': 212, 'total_tokens': 655},
+            }
+        )
+
+        response = completion.to_response()
+
+        assert response.choices[0].message.model_dump(exclude_none=True) == {'role': 'assistant', 'content': ''}
+        assert response.choices[0].finish_reason == 'content_filter'
+        assert response.usage == CompletionUsage(prompt_tokens=16, completion_tokens=212, total_tokens=655)
+
+    def test_a_null_message_the_provider_filtered_is_an_empty_answer(self):
+        completion = UpstreamCompletion.model_validate(
+            {'choices': [{'message': None, 'finish_reason': 'content_filter'}]}
+        )
+
+        assert completion.to_response().choices[0].message.model_dump(exclude_none=True) == {
+            'role': 'assistant',
+            'content': '',
+        }
+
+    def test_a_filtered_choice_that_did_write_keeps_what_it_wrote(self):
+        completion = UpstreamCompletion.model_validate(
+            {'choices': [{'message': {'role': 'assistant', 'content': 'one'}, 'finish_reason': 'content_filter'}]}
+        )
+
+        assert completion.to_response().choices[0].message.content == 'one'
+
+    @pytest.mark.parametrize('finish_reason', ['stop', 'tool_calls', 'filtered', None])
     def test_a_choice_with_no_message_that_was_not_cut_off_is_still_not_a_completion(self, finish_reason):
-        """Only the token limit explains an empty choice; any other is a broken answer, and unreadable."""
+        """Only the provider's own ending explains an empty choice; any other is a broken answer, and unreadable."""
         with pytest.raises(ValidationError):
             UpstreamCompletion.model_validate({'choices': [{'index': 0, 'finish_reason': finish_reason}]})
 
