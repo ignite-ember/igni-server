@@ -117,6 +117,46 @@ test.describe('groups', () => {
   })
 })
 
+test.describe('where igni runs for a group', () => {
+  test('a changed mode survives a reload, and the warning guards the move to computers only', async ({ page }) => {
+    // A group of its own, so the seeded ones are left as they were.
+    const created = await page.request.post('/v1/portal/groups', { data: { name: unique('mode') } })
+    expect(created.ok(), await created.text()).toBe(true)
+    const groupId: string = (await created.json()).id
+    try {
+      await page.goto(`/groups/${groupId}`)
+      const card = page.locator('.settings-card', { hasText: 'Where igni runs for this group' })
+
+      // New groups keep today's behaviour.
+      await card.getByRole('button', { name: 'This computer and the cloud' }).click()
+      await clickAndAwait(
+        page,
+        page.getByRole('menuitemradio', { name: /^Cloud only/ }),
+        'PATCH',
+        /\/v1\/portal\/groups\/[^/]+$/,
+      )
+      await page.reload()
+      await expect(card.getByRole('button', { name: 'Cloud only' })).toBeVisible({ timeout: 10_000 })
+
+      // To computers only, through the warning; read back from the server.
+      await card.getByRole('button', { name: 'Cloud only' }).click()
+      await page.getByRole('menuitemradio', { name: /^This computer only/ }).click()
+      await clickAndAwait(
+        page,
+        page.getByRole('alertdialog').getByRole('button', { name: 'Switch off the cloud' }),
+        'PATCH',
+        /\/v1\/portal\/groups\/[^/]+$/,
+      )
+      await page.reload()
+      await expect(card.getByRole('button', { name: 'This computer only' })).toBeVisible({ timeout: 10_000 })
+      const stored = await (await page.request.get(`/v1/portal/groups/${groupId}`)).json()
+      expect(stored.mode).toBe('local')
+    } finally {
+      await page.request.delete(`/v1/portal/groups/${groupId}`)
+    }
+  })
+})
+
 test.describe('settings', () => {
   test('a changed display name persists', async ({ page }) => {
     await page.goto('/settings')

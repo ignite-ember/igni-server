@@ -1,0 +1,26 @@
+{
+  "GET /v1/portal/me": {
+    "status": 200,
+    "body": "{\n \"user_id\": \"demo-user-001\",\n \"email\": \"alex.chen@example.invalid\",\n \"full_name\": \"Alex Chen\",\n \"role\": \"admin\",\n \"created_at\": \"2026-07-27T13:19:13.282408Z\",\n \"pending_email\": null,\n \"auth_provider\": \"email\",\n \"org_id\": \"demo-org-001\",\n \"org_slug\": \"demo\",\n \"org_display_name\": \"Demo Org\",\n \"organizations\": [\n  {\n   \"id\": \"demo-org-001\",\n   \"slug\": \"demo\",\n   \"display_name\": \"Demo Org\",\n   \"role\": \"admin\"\n  }\n ]\n}"
+  },
+  "GET /v1/portal/groups/d3713926-fc5f-451e-ad0b-3d926bd16d96": {
+    "status": 200,
+    "body": "{\n \"id\": \"d3713926-fc5f-451e-ad0b-3d926bd16d96\",\n \"org_id\": \"demo-org-001\",\n \"name\": \"contractors\",\n \"description\": \"Contractors and agency staff. Narrower tool access, smaller default model.\",\n \"default_model\": \"igni-1.0-27b\",\n \"theme\": null,\n \"is_default\": false,\n \"mode\": \"cloud\",\n \"created_by_user_id\": \"demo-user-001\",\n \"created_at\": \"2026-07-27T13:41:42.040373Z\",\n \"updated_at\": \"2026-08-30T10:13:04.312949Z\",\n \"member_count\": 1,\n \"entry_count\": 2\n}"
+  },
+  "GET /v1/portal/groups/d3713926-fc5f-451e-ad0b-3d926bd16d96/entries": {
+    "status": 200,
+    "body": "{\n \"entries\": [\n  {\n   \"id\": \"e-1\",\n   \"group_id\": \"d3713926-fc5f-451e-ad0b-3d926bd16d96\",\n   \"kind\": \"agents\",\n   \"entry_name\": \"code-reviewer\",\n   \"content\": \"\",\n   \"content_type\": \"text/markdown\",\n   \"enabled\": true,\n   \"created_by_user_id\": \"demo-user-001\",\n   \"created_at\": \"2026-07-27T13:41:42.040373Z\",\n   \"updated_at\": \"2026-07-27T13:41:42.040373Z\",\n   \"source_url\": null,\n   \"source_ref\": null,\n   \"source_subdir\": null,\n   \"model\": null\n  },\n  {\n   \"id\": \"e-2\",\n   \"group_id\": \"d3713926-fc5f-451e-ad0b-3d926bd16d96\",\n   \"kind\": \"skills\",\n   \"entry_name\": \"release-notes\",\n   \"content\": \"\",\n   \"content_type\": \"text/markdown\",\n   \"enabled\": true,\n   \"created_by_user_id\": \"demo-user-001\",\n   \"created_at\": \"2026-07-27T13:41:42.040373Z\",\n   \"updated_at\": \"2026-07-27T13:41:42.040373Z\",\n   \"source_url\": null,\n   \"source_ref\": null,\n   \"source_subdir\": null,\n   \"model\": null\n  }\n ],\n \"total\": 2\n}"
+  },
+  "GET /v1/portal/inference/models": {
+    "status": 200,
+    "body": "{\n \"models\": [\n  \"igni-1.0-27b\",\n  \"igni-1.0-27b-lora-legal\"\n ],\n \"chat_completions\": [\n  \"igni-1.0-27b\",\n  \"igni-1.0-27b-lora-legal\"\n ]\n}"
+  },
+  "GET /v1/portal/licence/notice": {
+    "status": 200,
+    "body": "{\"warnings\": []}"
+  },
+  "GET /v1/portal/deployment/notices": {
+    "status": 200,
+    "body": "{\"notices\": []}"
+  }
+}

@@ -7,6 +7,7 @@ import client from '../../api/client'
 import { KIND_BY_ID, KIND_ORDER } from '../../lib/entryKinds'
 import type { OrgGroupDetail, OrgGroupEntryList } from '../../types'
 import { StatCard } from '../StatCard'
+import { GroupMode } from './GroupMode'
 import { GroupModel } from './GroupModel'
 import type { ShowFeedback } from './feedback'
 
@@ -58,7 +59,7 @@ export function SettingsTab({
         <Banner
           variant="info"
           title="This is what igni ships"
-          description="Read-only. Create a group from it to make your own version."
+          description="Read-only, except where igni runs. Create a group from it to make your own version."
         />
       )}
 
@@ -114,6 +115,16 @@ export function SettingsTab({
         />
       </Stack>
 
+      <Stack className="settings-card" padding="normal" gap="condensed">
+        <Text className="settings-section-heading">Where igni runs for this group</Text>
+        <Text size="small" className="settings-section-caption">
+          On people&apos;s computers, in their own igni in the cloud, or either as each person chooses in the
+          desktop app. The desktop app follows this, and the server enforces it.
+        </Text>
+        {/* An admin may change this on the Default group too: it is where
+            igni runs, not what igni ships (see GroupMode). */}
+        <GroupMode groupId={group.id} current={group.mode} isAdmin={isAdmin} onFeedback={onFeedback} />
+      </Stack>
     </Stack>
   )
 }

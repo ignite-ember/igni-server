@@ -666,10 +666,20 @@ export interface OrgGroup {
    * people usually mean when they copy a group.
    */
   is_default: boolean
+  /**
+   * Where igni runs for this group's people: on their computers, in
+   * their cloud VM, or either, as each person chooses in the desktop
+   * app. Optional because a server older than the field leaves it out,
+   * and that means `local_and_cloud` — what every group did before.
+   */
+  mode?: GroupMode
   created_by_user_id: string
   created_at: string
   updated_at: string
 }
+
+/** Where igni runs for a group's people (`org_groups.mode`). */
+export type GroupMode = 'local' | 'cloud' | 'local_and_cloud'
 
 export interface OrgGroupDetail extends OrgGroup {
   member_count: number

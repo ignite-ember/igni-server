@@ -44,6 +44,7 @@ const GROUP = {
   org_id: 'demo-org-001',
   name: 'Engineering',
   description: 'Engineering team',
+  mode: 'local_and_cloud',
   created_by_user_id: 'demo-user-001',
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',

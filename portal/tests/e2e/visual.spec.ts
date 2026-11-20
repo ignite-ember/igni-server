@@ -163,3 +163,76 @@ for (const mode of ['light', 'dark'] as const) {
     }
   })
 }
+
+/**
+ * The card that says where igni runs for a group (design §6.1), and the
+ * warning it shows before disconnecting people from the cloud.
+ *
+ * Not one of `VISUAL_ROUTES`: the page's path names a group id, which
+ * a recording off a live deployment cannot know in advance, so its
+ * fixture (`fixtures/api/group-mode.json`) is written to the shapes the
+ * server sends rather than recorded, and the recorder leaves it alone.
+ * The card and the dialog are pictured, not the page: the rest of the
+ * page is the other cards', and a full-page baseline would turn every
+ * change to them into a change to this one.
+ */
+const GROUP_MODE = {
+  path: '/groups/d3713926-fc5f-451e-ad0b-3d926bd16d96',
+  name: 'group-mode',
+  signedIn: true,
+} as const
+
+for (const mode of ['light', 'dark'] as const) {
+  test.describe(`visual — group mode — ${mode}`, () => {
+    test.use({ colorScheme: mode, viewport: { width: 1440, height: 900 } })
+
+    for (const shot of ['card', 'warning'] as const) {
+      const snapshot = `group-mode-${shot}-${mode}`
+
+      test(`where igni runs: the ${shot} @ ${mode}`, { tag: '@needs-baseline' }, async ({ page }) => {
+        const baseline = baselineFor(snapshot)
+        const generating = test.info().config.updateSnapshots !== 'none'
+        test.skip(
+          !generating && !existsSync(join(SNAPSHOTS, baseline)),
+          `no baseline for this platform: ${baseline} — see docs/VISUAL_BASELINES.md`,
+        )
+
+        await page.clock.install({ time: NOW })
+        const unmatched: string[] = []
+        await replay(page, GROUP_MODE, unmatched)
+        await page.addInitScript(() => {
+          localStorage.setItem('igni_token', 'tok-e2e-visual')
+        })
+
+        await page.goto(GROUP_MODE.path)
+        await page.waitForLoadState('networkidle')
+        await page.waitForTimeout(700)
+        expect(unmatched, unmatched.join('\n')).toEqual([])
+
+        const card = page.locator('.settings-card', { hasText: 'Where igni runs for this group' })
+        await expect(card).toBeVisible()
+        if (shot === 'card') {
+          await expect(card).toHaveScreenshot(`${snapshot}.png`, {
+            maxDiffPixels: 100,
+            animations: 'disabled',
+            caret: 'hide',
+          })
+          return
+        }
+        await card.getByRole('button', { name: 'Cloud only' }).click()
+        await page.getByRole('menuitemradio', { name: /^This computer only/ }).click()
+        const dialog = page.getByRole('alertdialog')
+        await expect(dialog).toBeVisible()
+        // The page, not the dialog: the backdrop that fades in is its ancestor.
+        await page.locator('body').evaluate((el) =>
+          Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => undefined))),
+        )
+        await expect(dialog).toHaveScreenshot(`${snapshot}.png`, {
+          maxDiffPixels: 100,
+          animations: 'disabled',
+          caret: 'hide',
+        })
+      })
+    }
+  })
+}
