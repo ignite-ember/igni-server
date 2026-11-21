@@ -93,10 +93,27 @@ half is ever in a repository.
   against `RELEASE_KEYS` before writing it. A release from before the key
   was added accepts no licence outside development.
 * **The test key** (`igni-test-1`) has its private half in each repository's
-  test fixtures, so anybody can sign with it. It is trusted only in
-  development: `APP_ENV=dev` for igni server and CodeIndex,
-  `ENVIRONMENT=dev` for Artifacts (never its default, `development`), and
-  `[licence] trust_test_key = true` for the Fleet gateway.
+  test fixtures, so anybody can sign with it. **No release trusts it, under
+  any setting.** It is not in any shipped package, image or binary:
+  * The Python services (igni server, CodeIndex, Artifacts) keep its public
+    half in `tests/fixtures/licence/dev-keys.json`, which no image copies.
+    A source checkout run with `APP_ENV=dev` (`ENVIRONMENT=dev` for
+    Artifacts) trusts that file, for local development; an image never
+    does. Its build writes a `RELEASE` marker beside `keys.py`, and with
+    the marker there no development key is read, whatever the environment
+    says or a mount puts where a checkout keeps one.
+  * The Fleet gateway has the key, and `[licence] trust_test_key`, only in a
+    build with the `test-licence-key` cargo feature, which only its tests
+    enable. A release binary has neither, and refuses a config that names
+    `trust_test_key` as an unknown key.
+  * Every image and binary is checked before it is published:
+    `tools/licence/check_release_image.sh` here (and
+    `igni__code-index/tools/check_release_image.sh`,
+    `igni__artifacts/tools/check_release_image.sh`) runs the image with every
+    development setting and the key file mounted, and fails unless a
+    test-key licence is refused as `unknown_key`;
+    `igni__cloudvm/scripts/release/build.sh` fails a release whose binaries
+    name the test key or whose build enabled the feature.
 * **Rotating.** Add the new key under a new id and release. Issue new
   licences with it. Remove the old key only when no licence signed with it
   is still in its term or read-only period.
@@ -299,7 +316,8 @@ signed licence that does not verify against `RELEASE_KEYS`.
   refused in read-only (`igni__cloudvm/crates/node-agent`).
 * **Clients.** The CLI and desktop clients do not show the `igni-licence`
   header yet. The portal does.
-* **The development flag.** The test key is trusted with a setting the
-  operator controls. Turning it on in production to avoid paying is a
-  breach of the agreement that the contract and audit right catch, not
-  something the code can prevent.
+* **A modified release.** No setting makes a release trust the test key,
+  but whoever runs the image controls the machine: one who edits the code
+  inside it (as root, or by mounting over its files) can make it trust any
+  key. That is a breach of the agreement that the contract and audit right
+  catch, not something the code can prevent.

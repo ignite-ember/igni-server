@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date, datetime, time, timezone
+import json
 import os
 import pathlib
 import re
@@ -66,14 +67,25 @@ from app.services.licence import (
     LicenceVerifier,
     Module,
     RELEASE_KEYS,
-    TEST_KEY_ID,
     TrustedKeys,
 )
-from app.services.licence.keys import TEST_KEYS
+
+#: The test key's id. Its public half is the checkout's `tests/fixtures/licence/dev-keys.json`: the
+#: shipped package does not name it (app/services/licence/keys.py).
+TEST_KEY_ID = 'igni-test-1'
 
 
 class IssueRefused(Exception):
     """The licence asked for would not work for the customer, or the key cannot be used."""
+
+
+def load_test_keys() -> dict[str, str]:
+    """The test key, from the source checkout this runs in."""
+    path = TrustedKeys.dev_keys_file()
+    if path is None:
+        raise IssueRefused('the test key is in a source checkout only (tests/fixtures/licence/dev-keys.json)')
+    keys: dict[str, str] = json.loads(path.read_text(encoding='utf-8'))
+    return keys
 
 
 class ModuleSpec:
@@ -256,7 +268,7 @@ class LicenceIssuer:
 
     def inspect(self, args: argparse.Namespace) -> int:
         raw = pathlib.Path(args.file).read_bytes()
-        keys = dict(RELEASE_KEYS) | (TEST_KEYS if args.test_key else {})
+        keys = dict(RELEASE_KEYS) | (load_test_keys() if args.test_key else {})
         try:
             payload = LicenceVerifier(TrustedKeys.parse(keys)).verify(raw)
         except LicenceError as exc:

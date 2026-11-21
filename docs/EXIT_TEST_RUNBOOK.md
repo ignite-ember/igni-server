@@ -123,9 +123,12 @@ Installing one is the same act as renewing: the file is replaced, and each
 module reads it again within a minute. The production licence is not
 touched.
 
-This needs a release built with Ignite Ember's release key. Until Ignite
-Ember has generated it (section 6, G1), a development copy (`APP_ENV=dev`)
-can rehearse the steps with licences signed by the published test key.
+This needs licences signed with Ignite Ember's release key (`ie-2026`,
+issued with `tools/licence/issue_licence.py issue --kms-key`). A released
+image never accepts one signed with the published test key, whatever its
+settings; only a source checkout run with `APP_ENV=dev` does, for
+rehearsing the steps on a developer's machine
+([licence-file.md](licence-file.md#keys)).
 
 **Steps**
 
@@ -617,10 +620,9 @@ only shows the licence, installs an upload and records the daily audit
 event; a module never asks it. The format, the states and the per-module
 rules are in [licence-file.md](licence-file.md). What remains:
 
-* Ignite Ember has not generated its release signing key, so the release
-  key list is empty. Until it is, only a development copy accepts a licence
-  (signed with the published test key), and scenario A can be rehearsed only
-  there.
+* Scenario A needs licences signed with the release key (`ie-2026`, in
+  Cloud KMS). A released image accepts nothing else under any setting; the
+  published test key works only in a source checkout's development mode.
 * The licence uses the deployment's own clock. Setting it back delays a
   lapse; the contract and the audit right are the control.
 * Factory and Autopilot are in the licence and shown on the portal, and

@@ -6,7 +6,7 @@ of imports from outside the package.
 """
 
 from .format import Bands, Entitlement, LicenceEnvelope, LicenceKind, LicencePayload, Module
-from .keys import RELEASE_KEYS, TEST_KEY_ID, TrustedKeys
+from .keys import RELEASE_KEYS, TrustedKeys
 from .signer import LicenceSigner
 from .source import Clock, DEFAULT_LICENCE_PATH, LicenceFile, SystemClock
 from .status import GRACE, LicenceReading, LicenceState, LicenceStatus, ModuleStatus, Operation, Reason
@@ -45,6 +45,5 @@ __all__ = [
     'RELEASE_KEYS',
     'Reason',
     'SystemClock',
-    'TEST_KEY_ID',
     'TrustedKeys',
 ]

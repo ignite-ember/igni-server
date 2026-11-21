@@ -19,11 +19,9 @@ from app.services.licence import (
     LicenceVerifier,
     Module,
     RELEASE_KEYS,
-    TEST_KEY_ID,
     TrustedKeys,
 )
-from app.services.licence.keys import TEST_KEYS
-from tests.licence_kit import EXPIRES, FIXTURES, verifier
+from tests.licence_kit import EXPIRES, FIXTURES, TEST_KEY_ID, TEST_KEYS, verifier
 from tools.licence.issue_licence import main
 
 KEY = str(FIXTURES / 'test-signing-key.pem')
@@ -156,3 +154,12 @@ def test_the_kms_key_signs_only_under_a_release_key_id(tmp_path: Path, fake_gclo
     assert _issue_with_kms(out, TEST_KEY_ID) == 2
     assert not out.exists()
     assert not Path(f'{fake_gcloud}.log').exists()  # refused before anything was signed
+
+
+def test_inspect_accepts_the_test_key_only_when_asked(capsys) -> None:
+    golden = str(FIXTURES / 'golden.licence.json')
+
+    assert main(['inspect', golden]) == 1
+    assert 'NOT ACCEPTED (unknown_key)' in capsys.readouterr().out
+    assert main(['inspect', golden, '--test-key']) == 0
+    assert '"licence_id": "IE-TEST-0001"' in capsys.readouterr().out

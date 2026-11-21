@@ -1,13 +1,15 @@
 """Licences for tests: the test key pair, a fake clock, and a licence on disk.
 
-The test key (`tests/fixtures/licence/test-signing-key.pem`) is the one
-`app.services.licence.keys.TEST_KEYS` names. Anybody can sign with it,
-which is why it is trusted only with `APP_ENV=dev`.
+The test key (`tests/fixtures/licence/test-signing-key.pem`, its public
+half in `dev-keys.json` beside it) is the suite's own. Anybody can sign
+with it, so the shipped package does not name it and no image trusts it
+(`app/services/licence/keys.py`); verifiers here are handed it directly.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -21,12 +23,13 @@ from app.services.licence import (
     LicenceSigner,
     LicenceVerifier,
     Module,
-    TEST_KEY_ID,
     TrustedKeys,
 )
-from app.services.licence.keys import TEST_KEYS
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'licence'
+#: The test key's id and public half: the suite's, never the shipped package's.
+TEST_KEY_ID = 'igni-test-1'
+TEST_KEYS: dict[str, str] = json.loads((FIXTURES / 'dev-keys.json').read_text(encoding='utf-8'))
 #: When every test licence's modules expire unless a test says otherwise.
 EXPIRES = datetime(2027, 10, 29, tzinfo=timezone.utc)
 

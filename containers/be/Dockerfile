@@ -102,6 +102,12 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Copy app sources
 COPY ./app /app/app
+# A release trusts only Ignite Ember's release keys. With this marker,
+# app/services/licence/keys.py reads no development key, whatever the
+# environment says or a mount puts where a source checkout keeps one.
+# Written as root, before the image drops to its own user, so the
+# service cannot remove it.
+RUN touch app/services/licence/RELEASE
 
 # Alembic migrations
 COPY alembic.ini .
