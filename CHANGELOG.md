@@ -62,6 +62,29 @@ desktop until the person first switches to the cloud (see **Changed**).
   and fetching attachments are unchanged. A person who uses Fleet only
   from a program sets the owner to `cloud` once.
 
+### Fixed
+
+- **A usage row's output counts the model's thinking, as every provider
+  bills it.** Vertex AI's Gemini, on its OpenAI-compatible endpoint,
+  reports thinking outside `completion_tokens` (while `total_tokens`
+  counts it), so `chat_usage.output_tokens` and the portal's output
+  figure under-counted what Google bills as output — tenfold and more
+  on a short answer. The thinking the provider reports and the total
+  shows outside the completion is now added to the output; OpenAI,
+  Azure OpenAI, vLLM and Anthropic already count it there and are
+  unchanged. Rows written before this keep their old count. The
+  response itself still carries the provider's own `completion_tokens`.
+- **The non-streamed answer keeps `usage.completion_tokens_details`,**
+  as the streamed one always did; it was dropped on the way back.
+
+### Added
+
+- **`chat_usage.reasoning_tokens`** (tenant migration `t0034`): how
+  much of the output was thinking, where the provider reports it, null
+  otherwise. The portal's usage response carries it per day
+  (`reasoning_tokens`) and in total (`total_reasoning_tokens`), null
+  when no request in the window reported it.
+
 ## [0.7.1] - 2026-11-16
 
 The first release after 0.7.0, and the one the end-to-end campaign's

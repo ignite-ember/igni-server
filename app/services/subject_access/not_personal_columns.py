@@ -123,6 +123,8 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         # How much of the prompt the cache read and wrote: counts, of a turn.
         'chat_usage.cache_read_tokens',
         'chat_usage.cache_write_tokens',
+        # How much of the output was thinking: a count, of a turn.
+        'chat_usage.reasoning_tokens',
     }
     | {
         # Credentials belonging to a *system* — a GPU node's proxy key.

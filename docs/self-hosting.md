@@ -133,6 +133,19 @@ Which regions a given profile needs is Bedrock's answer to give, not this
 document's: `aws bedrock list-inference-profiles --region <region>` lists
 the model ARNs under every profile.
 
+**What a usage row counts.** `chat_usage.output_tokens` is what the
+provider bills as output: everything the model generated, its thinking
+included. OpenAI, Azure OpenAI, vLLM and Claude count thinking inside
+the output already. Vertex AI's Gemini, on the OpenAI-compatible
+endpoint, reports it outside `completion_tokens` and inside
+`total_tokens`, so the server adds it back: a one-word Gemini answer
+that thought for 117 tokens reports `completion_tokens` 1 and is
+recorded as 118. `chat_usage.reasoning_tokens` says how much of the
+output was thinking, where the provider reports it
+(`completion_tokens_details.reasoning_tokens`), and is null where it
+does not — Claude reports no separate figure. The answer a client gets
+carries the provider's own `usage`, unchanged.
+
 A cloud backend makes that cloud a processor of prompts: see R-A in
 [SUPPLIERS.md](SUPPLIERS.md). To prove a backend's identity and model
 before users rely on it, send it one real request from inside the API

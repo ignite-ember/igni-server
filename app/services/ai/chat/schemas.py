@@ -147,6 +147,42 @@ class UpstreamCompletion(BaseModel):
         )
 
 
+class BilledUsage(BaseModel):
+    """A request's tokens as the provider bills them: the row `chat_usage` records.
+
+    Output is everything the model generated, its thinking included,
+    whichever way the provider reports it. OpenAI and vLLM count thinking
+    inside `completion_tokens` and break it out in
+    `completion_tokens_details.reasoning_tokens`. Vertex AI's Gemini
+    reports the same breakdown but leaves thinking out of
+    `completion_tokens` while `total_tokens` counts it — and Google bills
+    it as output. So the part of the reported thinking that the total
+    shows outside the prompt and the completion is added to the output;
+    a provider whose total is prompt plus completion has none, and adds
+    nothing. Thinking is added only when the provider reports thinking:
+    a total that is larger for any other reason is left alone.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    #: The provider's thinking count, already within `output_tokens`; None when it reports none.
+    reasoning_tokens: int | None = None
+
+    @classmethod
+    def of(cls, usage: CompletionUsage) -> BilledUsage:
+        details = usage.completion_tokens_details
+        reasoning = details.reasoning_tokens if details is not None else None
+        outside_completion = usage.total_tokens - usage.prompt_tokens - usage.completion_tokens
+        uncounted_thinking = min(max(outside_completion, 0), reasoning or 0)
+        return cls(
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens + uncounted_thinking,
+            total_tokens=usage.total_tokens,
+            reasoning_tokens=reasoning,
+        )
+
+
 class StreamDelta(BaseModel):
     """What one chunk adds to a choice. Only the text is read."""
 

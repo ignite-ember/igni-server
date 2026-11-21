@@ -9,7 +9,7 @@ from app.db.sql.chat_usage import ChatUsageDB
 from app.services.ai.backend import BackendLease
 from app.services.ai.backend_pool import InferenceBackendPool
 from app.services.ai.chat.errors import NoOtherNode
-from app.services.ai.chat.schemas import ChatCaller, UpstreamChatRequest
+from app.services.ai.chat.schemas import BilledUsage, ChatCaller, UpstreamChatRequest
 from app.services.ai.fair_queue import FairQueue
 
 logger = logging.getLogger(__name__)
@@ -88,16 +88,18 @@ class ChatRequestContext:
         self.switch_to(lease)
 
     async def log_usage(self, usage: CompletionUsage, *, duration: float, stream: bool) -> None:
-        """Persist usage. Never releases: this is reached only when there is usage to write."""
+        """Persist usage as the provider bills it. Never releases: reached only when there is usage to write."""
+        billed = BilledUsage.of(usage)
         try:
             await self._usage_db.log(
                 user_id=self.user_id,
                 org_id=self.org_id,
                 app_id=self.app_id,
                 model=self.model,
-                input_tokens=usage.prompt_tokens,
-                output_tokens=usage.completion_tokens,
-                total_tokens=usage.total_tokens,
+                input_tokens=billed.input_tokens,
+                output_tokens=billed.output_tokens,
+                total_tokens=billed.total_tokens,
+                reasoning_tokens=billed.reasoning_tokens,
                 duration=round(duration, 3),
                 stream=stream,
                 backend_id=self._lease.backend_id,
