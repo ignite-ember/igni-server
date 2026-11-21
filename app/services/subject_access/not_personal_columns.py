@@ -125,6 +125,8 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'chat_usage.cache_write_tokens',
         # How much of the output was thinking: a count, of a turn.
         'chat_usage.reasoning_tokens',
+        # What a corrected row held before t0035: a count, of a turn.
+        'chat_usage.output_tokens_reported',
     }
     | {
         # Credentials belonging to a *system* — a GPU node's proxy key.

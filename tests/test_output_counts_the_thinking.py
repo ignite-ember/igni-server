@@ -293,3 +293,80 @@ class TestTheMigration:
         async with org_db(org) as session:
             kept = (await session.execute(text('SELECT output_tokens, reasoning_tokens FROM chat_usage'))).one()
         assert tuple(kept) == (1, None)
+
+
+class TestTheVertexRowsWrittenBefore:
+    """t0035 puts Gemini's thinking back into the rows written before t0034, keeps what they held, and undoes it."""
+
+    #: (id, kind, input, output, total), as rows written before t0034 hold them.
+    _ROWS = [
+        ('gemini', 'vertex_openai', 7, 1, 125),
+        ('gpt', 'openai', 10, 50, 70),
+        ('gemini-no-thinking', 'vertex_openai', 144, 15, 159),
+        ('gemini-odd', 'vertex_openai', 10, 20, 25),
+    ]
+    _CORRECTED = {
+        'gemini': (118, 117, 1),
+        'gpt': (50, None, None),
+        'gemini-no-thinking': (15, None, None),
+        'gemini-odd': (20, None, None),
+    }
+    _ORIGINAL = {
+        'gemini': (1, None),
+        'gpt': (50, None),
+        'gemini-no-thinking': (15, None),
+        'gemini-odd': (20, None),
+    }
+
+    @pytest.fixture
+    async def at_t0034(self, person, org_db):
+        """An organisation's database at t0034, holding rows as they were written before it."""
+        _token, org = person
+        async with org_db(org) as session:
+            await session.execute(text('SELECT 1'))
+        config = TenantMigrator().alembic_config(await TenantRegistryDB().database_of(org))
+        await asyncio.to_thread(command.downgrade, config, 't0034')
+        async with org_db(org) as session:
+            for row_id, kind, used_in, used_out, total in self._ROWS:
+                await session.execute(
+                    text(
+                        'INSERT INTO chat_usage (id, user_id, org_id, model, kind, input_tokens, output_tokens, '
+                        'total_tokens, stream) VALUES (:id, :u, :o, :m, :k, :i, :out, :t, 0)'
+                    ),
+                    {'id': row_id, 'u': 'ada', 'o': org, 'm': 'm', 'k': kind}
+                    | {'i': used_in, 'out': used_out, 't': total},
+                )
+        return org, config
+
+    async def _corrected(self, org_db, org: str) -> dict[str, tuple]:
+        async with org_db(org) as session:
+            found = await session.execute(
+                text('SELECT id, output_tokens, reasoning_tokens, output_tokens_reported FROM chat_usage')
+            )
+            return {str(row_id): tuple(rest) for row_id, *rest in found.all()}
+
+    async def test_corrects_only_vertex_rows_whose_total_shows_the_thinking(self, at_t0034, org_db):
+        org, config = at_t0034
+
+        await asyncio.to_thread(command.upgrade, config, 'head')
+
+        assert await self._corrected(org_db, org) == self._CORRECTED
+
+    async def test_running_it_again_changes_nothing(self, at_t0034, org_db):
+        org, config = at_t0034
+        await asyncio.to_thread(command.upgrade, config, 'head')
+
+        await asyncio.to_thread(command.stamp, config, 't0034')
+        await asyncio.to_thread(command.upgrade, config, 'head')
+
+        assert await self._corrected(org_db, org) == self._CORRECTED
+
+    async def test_the_downgrade_restores_what_the_rows_held(self, at_t0034, org_db):
+        org, config = at_t0034
+        await asyncio.to_thread(command.upgrade, config, 'head')
+
+        await asyncio.to_thread(command.downgrade, config, 't0034')
+
+        async with org_db(org) as session:
+            found = await session.execute(text('SELECT id, output_tokens, reasoning_tokens FROM chat_usage'))
+            assert {str(row_id): tuple(rest) for row_id, *rest in found.all()} == self._ORIGINAL

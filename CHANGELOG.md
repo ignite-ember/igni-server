@@ -72,8 +72,15 @@ desktop until the person first switches to the cloud (see **Changed**).
   on a short answer. The thinking the provider reports and the total
   shows outside the completion is now added to the output; OpenAI,
   Azure OpenAI, vLLM and Anthropic already count it there and are
-  unchanged. Rows written before this keep their old count. The
-  response itself still carries the provider's own `completion_tokens`.
+  unchanged. The response itself still carries the provider's own
+  `completion_tokens`.
+- **Usage rows Gemini on Vertex served before the fix are corrected**
+  (tenant migration `t0035`). A `vertex_openai` row whose total is above
+  input plus output gets that difference as `reasoning_tokens` and in
+  `output_tokens`; the value it held is kept in the new
+  `chat_usage.output_tokens_reported`, and the downgrade puts it back.
+  No other row is touched, and running it again changes nothing. The
+  portal's output figures for past days rise accordingly.
 - **The non-streamed answer keeps `usage.completion_tokens_details`,**
   as the streamed one always did; it was dropped on the way back.
 

@@ -146,6 +146,14 @@ output was thinking, where the provider reports it
 does not — Claude reports no separate figure. The answer a client gets
 carries the provider's own `usage`, unchanged.
 
+Rows Gemini on Vertex served before this was fixed were corrected by
+tenant migration `t0035`: each `vertex_openai` row whose total was above
+input plus output had the difference added to `output_tokens` and set as
+`reasoning_tokens`. The output it recorded before is kept in
+`output_tokens_reported` (null on every other row), and downgrading
+below `t0035` restores it. The migration logs how many rows it
+corrected in each organisation's database.
+
 A cloud backend makes that cloud a processor of prompts: see R-A in
 [SUPPLIERS.md](SUPPLIERS.md). To prove a backend's identity and model
 before users rely on it, send it one real request from inside the API

@@ -33,6 +33,10 @@ class ChatUsage(TenantBase):
     # it (OpenAI's and Vertex AI's OpenAI-compatible APIs, vLLM with a
     # reasoning parser). Null otherwise, and before t0034.
     reasoning_tokens: Mapped[int | None] = Column(Integer, nullable=True)
+    # What a ``vertex_openai`` row written before t0034 recorded as output,
+    # before t0035 added its thinking back. Null on every other row; the
+    # application never writes it.
+    output_tokens_reported: Mapped[int | None] = Column(Integer, nullable=True)
     total_tokens: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))
     duration: Mapped[float | None] = Column(Float, nullable=True)
     stream: Mapped[int] = Column(Integer, nullable=False, default=0, server_default=text('0'))  # 0=non-stream, 1=stream
