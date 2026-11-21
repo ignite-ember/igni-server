@@ -29,7 +29,7 @@ from app.services.licence.source import RECHECK
 from tests.cloud_world import CloudOrg, shared_plane
 from tests.conftest import auth_header
 from tests.json_schema import JsonSchema
-from tests.licence_kit import EXPIRES, FakeClock, licence_file, payload, signed
+from tests.licence_kit import EXPIRES, FakeClock, licence_file, payload, signed, verifier
 
 pytestmark = pytest.mark.anyio
 
@@ -53,7 +53,7 @@ def licence(app, licence_path: Path, clock: FakeClock) -> Iterator[DeploymentLic
     """The deployment's licence on the test's key and clock — Fleet in it — served to every request."""
     licence_path.parent.mkdir(parents=True)
     licence_path.write_bytes(signed(payload({Module.FLEET: Entitlement(users=100, expires=EXPIRES)})))
-    instance = DeploymentLicence(licence_file(licence_path, clock))
+    instance = DeploymentLicence(licence_file(licence_path, clock), verifier=verifier())
     app.dependency_overrides[deployment_licence] = lambda: instance
     yield instance
     app.dependency_overrides.pop(deployment_licence, None)

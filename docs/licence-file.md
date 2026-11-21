@@ -145,9 +145,11 @@ in use:
   licence that verifies is quoted, and with none there is nothing there
   at all.
 * **igni server's log**, once an hour from every replica:
-  `licence: IE-2026-0042, licensed to Example Bank N.V.`, or
-  `licence: no licence installed`. The customer is an organisation, so the
-  line carries no personal data.
+  `licence: IE-2026-0042, licensed to Example Bank N.V.`;
+  `licence: no licence installed` when there is no file; or, when the file
+  is there but does not verify,
+  `licence: the licence file at /etc/igni/licence/licence.json is not valid (unknown_key); no module is licensed`.
+  The customer is an organisation, so the line carries no personal data.
 * **Each module's log**, when it loads the licence.
 
 **Renewing without a module.** A module the customer does not renew stays
