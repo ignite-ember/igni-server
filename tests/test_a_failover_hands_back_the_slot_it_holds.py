@@ -274,6 +274,7 @@ class TestTheContextWhenItsPartsFail:
                 'input_tokens': 1,
                 'output_tokens': 2,
                 'total_tokens': 3,
+                'reasoning_tokens': None,
                 'duration': 1.235,
                 'stream': True,
                 'backend_id': 'node-1',

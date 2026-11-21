@@ -2305,12 +2305,41 @@
         "title": "CompanyAddressRequest",
         "type": "object"
       },
+      "CompletionTokensDetails": {
+        "additionalProperties": true,
+        "description": "How the provider breaks the completion down. Passed back whole, fields this server does not read included.",
+        "properties": {
+          "reasoning_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Tokens"
+          }
+        },
+        "title": "CompletionTokensDetails",
+        "type": "object"
+      },
       "CompletionUsage": {
         "properties": {
           "completion_tokens": {
             "default": 0,
             "title": "Completion Tokens",
             "type": "integer"
+          },
+          "completion_tokens_details": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompletionTokensDetails"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "prompt_tokens": {
             "default": 0,
@@ -12197,6 +12226,17 @@
             "title": "Output Tokens",
             "type": "integer"
           },
+          "reasoning_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning Tokens"
+          },
           "request_count": {
             "title": "Request Count",
             "type": "integer"
@@ -12232,6 +12272,17 @@
           "total_output_tokens": {
             "title": "Total Output Tokens",
             "type": "integer"
+          },
+          "total_reasoning_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Reasoning Tokens"
           },
           "total_requests": {
             "title": "Total Requests",

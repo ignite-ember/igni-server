@@ -17,6 +17,11 @@ from app.db.sql.tenancy import TenantData
 logger = logging.getLogger(__name__)
 
 
+def _count_or_none(value: int | None) -> int | None:
+    """A sum over a nullable column: None when no row had a value, which is not zero."""
+    return None if value is None else int(value)
+
+
 class ChatUsageDB(TenantData):
     """Read/write operations for chat_usage table."""
 
@@ -36,6 +41,7 @@ class ChatUsageDB(TenantData):
         kind: str | None = None,
         cache_read_tokens: int | None = None,
         cache_write_tokens: int | None = None,
+        reasoning_tokens: int | None = None,
     ) -> None:
         """Insert a single usage row. Fire-and-forget safe."""
         if org_id is None:
@@ -55,6 +61,7 @@ class ChatUsageDB(TenantData):
                 kind=kind,
                 cache_read_tokens=cache_read_tokens,
                 cache_write_tokens=cache_write_tokens,
+                reasoning_tokens=reasoning_tokens,
             )
             session.add(row)
 
@@ -74,6 +81,7 @@ class ChatUsageDB(TenantData):
                 func.sum(ChatUsage.input_tokens).label('input_tokens'),
                 func.sum(ChatUsage.output_tokens).label('output_tokens'),
                 func.sum(ChatUsage.total_tokens).label('total_tokens'),
+                func.sum(ChatUsage.reasoning_tokens).label('reasoning_tokens'),
                 func.count().label('request_count'),
             ).where(ChatUsage.org_id == org_id, ChatUsage.created_at >= since)
 
@@ -90,6 +98,7 @@ class ChatUsageDB(TenantData):
                     input_tokens=int(r.input_tokens),
                     output_tokens=int(r.output_tokens),
                     total_tokens=int(r.total_tokens),
+                    reasoning_tokens=_count_or_none(r.reasoning_tokens),
                     request_count=int(r.request_count),
                 )
                 for r in rows
@@ -110,6 +119,8 @@ class ChatUsageDB(TenantData):
                 func.coalesce(func.sum(ChatUsage.input_tokens), 0).label('input_tokens'),
                 func.coalesce(func.sum(ChatUsage.output_tokens), 0).label('output_tokens'),
                 func.coalesce(func.sum(ChatUsage.total_tokens), 0).label('total_tokens'),
+                # Not coalesced: no row in the window reporting thinking is not zero thinking.
+                func.sum(ChatUsage.reasoning_tokens).label('reasoning_tokens'),
                 func.count().label('request_count'),
             ).where(ChatUsage.org_id == org_id, ChatUsage.created_at >= since)
 
@@ -122,6 +133,7 @@ class ChatUsageDB(TenantData):
                 input_tokens=int(r.input_tokens),
                 output_tokens=int(r.output_tokens),
                 total_tokens=int(r.total_tokens),
+                reasoning_tokens=_count_or_none(r.reasoning_tokens),
                 request_count=int(r.request_count),
             )
 

@@ -30,6 +30,8 @@ class DailyUsage(BaseModel):
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    #: The part of `output_tokens` that was thinking; None when no row that day reported it.
+    reasoning_tokens: int | None = None
     request_count: int
 
 
@@ -38,12 +40,14 @@ class UsageTotals(BaseModel):
 
     Every field is a count with a `coalesce(..., 0)` behind it, so an
     org with no usage reports zeros rather than nulls — which is why
-    none of these is optional.
+    none of these is optional — but `reasoning_tokens`, which is None
+    when no row in the window reported thinking: not reported is not zero.
     """
 
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    reasoning_tokens: int | None = None
     request_count: int = 0
 
 

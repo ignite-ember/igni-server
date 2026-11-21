@@ -47,5 +47,6 @@ class UsageService:
             total_tokens=totals.total_tokens,
             total_input_tokens=totals.input_tokens,
             total_output_tokens=totals.output_tokens,
+            total_reasoning_tokens=totals.reasoning_tokens,
             total_requests=totals.request_count,
         )
