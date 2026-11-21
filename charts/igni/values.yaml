@@ -260,17 +260,22 @@ licence:
 # (0600) here, NOT in the read-only licence dir. The modules and the Fleet gateway
 # read the mark from igni server; this is the one place it lives.
 #
-# The file is the single source of truth, so with more than one api replica
-# (`api.replicaCount`, default 2) this volume MUST be ReadWriteMany; writes are
-# serialised across replicas by a Postgres advisory lock. If your cluster has no
-# ReadWriteMany StorageClass, set `api.replicaCount: 1` and use ReadWriteOnce.
-# Bring your own claim with `existingClaim`, or let the chart create one.
+# The file is the single source of truth. The default install is a single api
+# replica (`api.replicaCount`, default 1) with a ReadWriteOnce claim, which works
+# on any cluster — including kind's local-path provisioner, which offers only
+# ReadWriteOnce. To run more than one api replica, set `api.replicaCount` above 1,
+# set `accessMode: ReadWriteMany` here, and point `storageClass` at a class that
+# supports ReadWriteMany; writes are then serialised across replicas by a Postgres
+# advisory lock. Bring your own claim with `existingClaim`, or let the chart create
+# one.
 state:
   mountPath: /var/lib/igni
   persistence:
     enabled: true
     existingClaim: ""
-    accessMode: ReadWriteMany
+    # ReadWriteOnce by default (single replica; works everywhere). Set to
+    # ReadWriteMany only for a multi-replica api, with an RWX storageClass.
+    accessMode: ReadWriteOnce
     size: 64Mi
     storageClass: ""
 
@@ -335,7 +340,11 @@ email:
 # ── Workloads ────────────────────────────────────────────────────────
 
 api:
-  replicaCount: 2
+  # One by default: the licence-integrity state volume is ReadWriteOnce by
+  # default (see `state.persistence.accessMode`), which suits a single replica
+  # and works on every cluster. To run more than one, raise this and switch the
+  # state volume to ReadWriteMany on an RWX storage class.
+  replicaCount: 1
   # Requests are what the scheduler honours, and what a cluster asks for
   # before it schedules the pod. Limits are set on memory only: a CPU
   # limit throttles an asyncio process into latency that looks like a

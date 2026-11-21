@@ -28,14 +28,19 @@ person first switches to the cloud (see **Changed**) — which is why this
 is a minor, not a patch, release.
 
 **Operational prerequisites.** The central clock keeps its sealed
-integrity file under `IGNI_STATE_DIR` (default `/var/lib/igni/state`),
-which must be a writable persisted volume that survives a restart; with
-more than one replica it must be shared (the chart provisions an RWX
-`ReadWriteMany` PVC — set `state.storageClass` to an RWX-capable class).
-The sealed integrity-report export (`POST
-/v1/portal/licence/integrity-report`) works only once
-`INTEGRITY_REPORT_PUBLIC_KEY` is set to Ignite Ember's integrity-report
-public key; until then it returns `503` by design.
+integrity file under `IGNI_STATE_DIR` (default `/var/lib/igni`), which must
+be a writable persisted volume that survives a restart. The default install
+is a single API replica on a `ReadWriteOnce` volume, which works on every
+cluster — including kind's local-path provisioner, which offers only
+`ReadWriteOnce` (the chart defaults `api.replicaCount: 1` and
+`state.persistence.accessMode: ReadWriteOnce`). To run more than one API
+replica, raise `api.replicaCount`, set `state.persistence.accessMode:
+ReadWriteMany` and point `state.persistence.storageClass` at an
+RWX-capable class; the file stays the single source of truth and writes are
+serialised across replicas by a Postgres advisory lock. The sealed
+integrity-report export (`POST /v1/portal/licence/integrity-report`) works
+only once `INTEGRITY_REPORT_PUBLIC_KEY` is set to Ignite Ember's
+integrity-report public key; until then it returns `503` by design.
 
 ### Added
 

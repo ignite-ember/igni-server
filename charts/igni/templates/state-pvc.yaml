@@ -1,14 +1,16 @@
 {{- /*
 The licence-integrity volume (docs/licence-file.md, "The clock"). igni server
 keeps the deployment's single high-water mark in one small encrypted file here.
-It must be writable and persisted, and — because the file is the single source
-of truth — shared across replicas: with more than one api replica the access
-mode must be ReadWriteMany, and writes are serialised by a Postgres advisory
-lock. Where ReadWriteMany is not available, set api.replicaCount to 1.
+It must be writable and persisted. The default is a single api replica with a
+ReadWriteOnce claim, which works on every cluster (including kind's local-path
+provisioner, which offers only ReadWriteOnce). The file is the single source of
+truth, so to run more than one api replica raise api.replicaCount, set
+state.persistence.accessMode to ReadWriteMany on an RWX storage class, and writes
+are serialised across replicas by a Postgres advisory lock.
 
-Skipped when an existingClaim is given (bring your own ReadWriteMany PVC) or when
-state persistence is disabled (then the mark is per-pod and ephemeral, which only
-suits a single-replica evaluation).
+Skipped when an existingClaim is given (bring your own PVC) or when state
+persistence is disabled (then the mark is per-pod and ephemeral, which only suits
+a single-replica evaluation).
 */}}
 {{- if and .Values.state.persistence.enabled (not .Values.state.persistence.existingClaim) }}
 apiVersion: v1
