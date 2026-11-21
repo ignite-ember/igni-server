@@ -15,7 +15,8 @@ it (docs/licence-file.md).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import ValidationError
 
 from app.api.base_v1.schema.portal.user import PortalAccount
 from app.security.portal_auth import get_current_account
@@ -49,19 +50,39 @@ async def licence_overview(
     return licence.overview()
 
 
-@router.put('/licence', response_model=LicenceOverview)
+#: The body is read by hand, so the schema is declared here for the API's description.
+_ENVELOPE_BODY = {
+    'requestBody': {
+        'required': True,
+        'content': {'application/json': {'schema': LicenceEnvelope.model_json_schema()}},
+    }
+}
+
+
+def _refused(exc: LicenceRejected) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={'reason': exc.reason.value, 'message': str(exc)},
+    )
+
+
+@router.put('/licence', response_model=LicenceOverview, openapi_extra=_ENVELOPE_BODY)
 async def install_licence(
-    envelope: LicenceEnvelope,
+    request: Request,
     _account: PortalAccount = Depends(require_super_admin),
     licence: DeploymentLicence = Depends(deployment_licence),
 ) -> LicenceOverview:
+    # Not a `LicenceEnvelope` parameter: FastAPI would answer a body missing a field with its own
+    # list of validation errors, where every other refusal is `{reason, message}` with `malformed`
+    # (docs/licence-file.md, "From the portal").
+    try:
+        envelope = LicenceEnvelope.model_validate_json(await request.body())
+    except ValidationError as exc:
+        raise _refused(licence.reject_malformed()) from exc
     try:
         return licence.install(envelope)
     except LicenceRejected as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={'reason': exc.reason.value, 'message': str(exc)},
-        ) from exc
+        raise _refused(exc) from exc
     except LicencePathReadOnly as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

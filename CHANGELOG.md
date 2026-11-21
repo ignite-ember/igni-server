@@ -48,6 +48,11 @@ desktop until the person first switches to the cloud (see **Changed**).
   once. Their VM can neither sign in nor renew its credential
   (`invalid_grant`, `"reason": "group_local_only"`); the family is not
   revoked.
+- **`chat_usage.reasoning_tokens`** (tenant migration `t0034`): how
+  much of the output was thinking, where the provider reports it, null
+  otherwise. The portal's usage response carries it per day
+  (`reasoning_tokens`) and in total (`total_reasoning_tokens`), null
+  when no request in the window reported it.
 
 ### Changed
 
@@ -83,14 +88,13 @@ desktop until the person first switches to the cloud (see **Changed**).
   portal's output figures for past days rise accordingly.
 - **The non-streamed answer keeps `usage.completion_tokens_details`,**
   as the streamed one always did; it was dropped on the way back.
-
-### Added
-
-- **`chat_usage.reasoning_tokens`** (tenant migration `t0034`): how
-  much of the output was thinking, where the provider reports it, null
-  otherwise. The portal's usage response carries it per day
-  (`reasoning_tokens`) and in total (`total_reasoning_tokens`), null
-  when no request in the window reported it.
+- **The security pack says what has shipped.** `docs/SECURITY_PACK.md`
+  still said the release keys did not exist and that no release or bundle
+  had been made; 0.7.0 was signed and its bundle kept on 2026-11-12. It
+  now says so, lists Fleet 0.1.0's throwaway profile-layer key as a gap,
+  and, with `docs/OFFLINE_UPDATES.md`, says that the module repositories'
+  `release` environments sign their own images too, not only the private
+  release repository's.
 
 ## [0.7.1] - 2026-11-16
 

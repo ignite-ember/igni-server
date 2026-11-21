@@ -5416,41 +5416,6 @@
         "title": "LegalHoldRow",
         "type": "object"
       },
-      "LicenceEnvelope": {
-        "additionalProperties": false,
-        "description": "The file as it is installed: the payload and Ignite Ember's signature over it.",
-        "properties": {
-          "igni_licence": {
-            "const": 1,
-            "title": "Igni Licence",
-            "type": "integer"
-          },
-          "key_id": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Key Id",
-            "type": "string"
-          },
-          "payload": {
-            "minLength": 1,
-            "title": "Payload",
-            "type": "string"
-          },
-          "signature": {
-            "minLength": 1,
-            "title": "Signature",
-            "type": "string"
-          }
-        },
-        "required": [
-          "igni_licence",
-          "key_id",
-          "payload",
-          "signature"
-        ],
-        "title": "LicenceEnvelope",
-        "type": "object"
-      },
       "LicenceKind": {
         "description": "Commercial licences lapse gently; evaluation licences stop.\n\nPilot and partner (NFR) licences are commercial for this purpose:\nproduction use is allowed, so a lapse must not break anything.",
         "enum": [
@@ -20673,7 +20638,39 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LicenceEnvelope"
+                "additionalProperties": false,
+                "description": "The file as it is installed: the payload and Ignite Ember's signature over it.",
+                "properties": {
+                  "igni_licence": {
+                    "const": 1,
+                    "title": "Igni Licence",
+                    "type": "integer"
+                  },
+                  "key_id": {
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "title": "Key Id",
+                    "type": "string"
+                  },
+                  "payload": {
+                    "minLength": 1,
+                    "title": "Payload",
+                    "type": "string"
+                  },
+                  "signature": {
+                    "minLength": 1,
+                    "title": "Signature",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "igni_licence",
+                  "key_id",
+                  "payload",
+                  "signature"
+                ],
+                "title": "LicenceEnvelope",
+                "type": "object"
               }
             }
           },
@@ -20689,16 +20686,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "security": [

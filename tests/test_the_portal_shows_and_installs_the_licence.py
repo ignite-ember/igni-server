@@ -27,7 +27,7 @@ from app.services.deployment_licence import (
 )
 from app.services.licence import Base64Url, Entitlement, Module
 from tests.conftest import audit_rows, auth_header, create_user, make_token
-from tests.licence_kit import EXPIRES, FakeClock, licence_file, payload, signed
+from tests.licence_kit import EXPIRES, FakeClock, licence_file, payload, signed, verifier
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def licence_path(tmp_path: Path) -> Path:
 @pytest.fixture
 def licence(app, licence_path: Path, clock: FakeClock) -> Iterator[DeploymentLicence]:
     """The deployment's licence on the test's key and clock, served to every request."""
-    instance = DeploymentLicence(licence_file(licence_path, clock))
+    instance = DeploymentLicence(licence_file(licence_path, clock), verifier=verifier())
     app.dependency_overrides[deployment_licence] = lambda: instance
     yield instance
     app.dependency_overrides.pop(deployment_licence, None)
@@ -222,3 +222,83 @@ async def test_a_run_with_no_licence_says_so(licence_path, licence, caplog) -> N
 
     lines = [record.getMessage() for record in caplog.records if record.name == daily_audit.__name__]
     assert lines == ['licence: no licence installed']
+
+
+async def test_a_refused_upload_does_not_say_the_installed_file_was_refused(
+    client, db, licence_path, licence, caplog
+) -> None:
+    # The installed licence is good; only the upload is not. The log said the installed path was "not accepted".
+    admin = await _person(db, super_admin=True)
+    licence_path.parent.mkdir(parents=True)
+    licence_path.write_bytes(signed(payload()))
+    installed = licence_path.read_bytes()
+    envelope = json.loads(signed(payload()))
+    body = json.loads(Base64Url.decode(envelope['payload']))
+    body['modules']['codeindex']['users'] = 1000
+    envelope['payload'] = Base64Url.encode(json.dumps(body).encode())
+
+    with caplog.at_level(logging.INFO):
+        response = await client.put('/portal/licence', json=envelope, headers=admin)
+
+    assert response.status_code == 422
+    assert licence_path.read_bytes() == installed
+    lines = [record.getMessage() for record in caplog.records if record.getMessage().startswith('licence:')]
+    assert not [line for line in lines if 'not accepted' in line], lines
+    assert (
+        'licence: an uploaded licence was refused (invalid_signature): the signature does not match the licence; '
+        f'the installed licence at {licence_path} is unchanged'
+    ) in lines
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(json.dumps({'igni_licence': 1}), id='missing key_id, payload and signature'),
+        pytest.param(json.dumps(['not', 'an', 'object']), id='not an object'),
+        pytest.param('this is not JSON', id='not JSON'),
+    ],
+)
+async def test_an_upload_not_shaped_like_a_licence_is_refused_as_malformed(
+    client, db, licence_path, licence, content
+) -> None:
+    # Every other refusal is {reason, message}; this one was FastAPI's own list of validation errors.
+    admin = await _person(db, super_admin=True)
+
+    response = await client.put(
+        '/portal/licence', content=content, headers={**admin, 'Content-Type': 'application/json'}
+    )
+
+    assert response.status_code == 422
+    assert response.json()['detail'] == {
+        'reason': 'malformed',
+        'message': 'This file is not a licence igni accepts (malformed).',
+    }
+    assert not licence_path.exists()
+
+
+async def test_the_api_still_describes_the_licence_upload_body(app) -> None:
+    schema = app.openapi()
+    operation = next(
+        item['put'] for path, item in schema['paths'].items() if path.endswith('/portal/licence') and 'put' in item
+    )
+    body = operation['requestBody']['content']['application/json']['schema']
+    if '$ref' in body:
+        body = schema['components']['schemas'][body['$ref'].rsplit('/', 1)[-1]]
+    assert sorted(body['required']) == ['igni_licence', 'key_id', 'payload', 'signature']
+
+
+async def test_a_run_with_a_file_that_does_not_verify_says_so(licence_path, licence, caplog) -> None:
+    # In production a test-key or altered file was logged hourly as "no licence installed".
+    envelope = json.loads(signed(payload()))
+    envelope['key_id'] = 'not-a-key-this-release-trusts'
+    licence_path.parent.mkdir(parents=True)
+    licence_path.write_text(json.dumps(envelope))
+
+    with caplog.at_level(logging.INFO, logger=daily_audit.__name__):
+        await LicenceDailyAudit(licence=licence).run_once()
+
+    lines = [record.getMessage() for record in caplog.records if record.name == daily_audit.__name__]
+    assert lines[0] == (
+        f'licence: the licence file at {licence_path} is not valid (unknown_key); no module is licensed'
+    )
+    assert 'licence: no licence installed' not in lines
