@@ -90,10 +90,15 @@ spec:
             {{- with .Values.extraEnvFrom }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
-          {{- with .Values.extraEnv }}
           env:
+            {{- if .Values.state.persistence.enabled }}
+            {{- /* The licence-integrity file lives here, not in the read-only licence dir (docs/licence-file.md). */}}
+            - name: IGNI_STATE_DIR
+              value: {{ .Values.state.mountPath | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -121,6 +126,12 @@ spec:
             */}}
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.state.persistence.enabled }}
+            {{- /* The licence-integrity file (docs/licence-file.md, "The clock"): writable and persisted,
+                   on a shared ReadWriteMany volume when there is more than one replica. */}}
+            - name: state
+              mountPath: {{ .Values.state.mountPath }}
+            {{- end }}
             {{- if .Values.licence.existingSecret }}
             {{- /* Read-only: the portal upload says to replace the Secret instead (docs/licence-file.md). */}}
             - name: licence
@@ -134,6 +145,11 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 4Gi
+        {{- if .Values.state.persistence.enabled }}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ .Values.state.persistence.existingClaim | default (printf "%s-state" (include "igni.fullname" .)) }}
+        {{- end }}
         {{- if .Values.licence.existingSecret }}
         - name: licence
           secret:

@@ -5,8 +5,9 @@ package are copied byte for byte into each paid module; keep them free
 of imports from outside the package.
 """
 
+from .clock import CLOCK_AGREEMENT, CLOCK_TOLERANCE, ClockStore, HighWaterMark, LicenceClock
 from .format import Bands, Entitlement, LicenceEnvelope, LicenceKind, LicencePayload, Module
-from .keys import RELEASE_KEYS, TEST_KEY_ID, TrustedKeys
+from .keys import RELEASE_KEYS, TrustedKeys
 from .signer import LicenceSigner
 from .source import Clock, DEFAULT_LICENCE_PATH, LicenceFile, SystemClock
 from .status import GRACE, LicenceReading, LicenceState, LicenceStatus, ModuleStatus, Operation, Reason
@@ -23,9 +24,14 @@ __all__ = [
     'Bands',
     'Base64Url',
     'Clock',
+    'CLOCK_AGREEMENT',
+    'CLOCK_TOLERANCE',
+    'ClockStore',
     'DEFAULT_LICENCE_PATH',
     'Entitlement',
     'GRACE',
+    'HighWaterMark',
+    'LicenceClock',
     'LicenceEnvelope',
     'LicenceError',
     'LicenceFile',
@@ -45,6 +51,5 @@ __all__ = [
     'RELEASE_KEYS',
     'Reason',
     'SystemClock',
-    'TEST_KEY_ID',
     'TrustedKeys',
 ]

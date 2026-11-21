@@ -213,6 +213,11 @@ jobs:
           TAGS=(-t "${IMAGE}:${{ steps.meta.outputs.tag }}" -t "${IMAGE}:latest"
                 -t "${IMAGE}:${VERSION}")
           docker build "${TAGS[@]}" -f containers/be/Dockerfile .
+          # Never pushed unless it trusts only Ignite Ember's release keys,
+          # whatever its settings say (app/services/licence/keys.py). A ref
+          # from before the check is refused here: its image would trust the
+          # test key with APP_ENV=dev.
+          tools/licence/check_release_image.sh "${IMAGE}:${{ steps.meta.outputs.tag }}"
           docker push "${IMAGE}" --all-tags
 
       # ── Signature ────────────────────────────────────────────────────

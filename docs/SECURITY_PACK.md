@@ -127,7 +127,9 @@ Known gaps, stated so the customer does not find them first.
   read-only for 30 days and then stops ([licence-file.md](licence-file.md)).
   Ignite Ember's licence key (`ie-2026`, in Cloud KMS, created 2026-11-07)
   is in the code, so a release built from it onwards accepts licences it
-  signs; earlier releases accept none. The check uses the deployment's
+  signs; earlier releases accept none. No release accepts one signed with
+  the published test key, whatever its settings; its private half is in
+  the repositories for the tests. The check uses the deployment's
   own clock, and a Fleet node's own timed wakes are not yet refused in
   read-only.
 - **The EULA does not yet match the commercial terms** on what is proprietary

@@ -281,11 +281,13 @@ means backups are yours to arrange:
 | Token-signing keys | PostgreSQL (`signing_keys`), the private half Fernet-encrypted under `SECRET_ENCRYPTION_KEY`; the public half is served at `/.well-known/jwks.json` | Survivable: delete the rows and restart, and the server generates a new key. Every session ends and everybody signs in again. Rotate on purpose with `python tools/rotate_signing_key.py --stage`, which publishes the new key ten minutes before it signs so nothing is interrupted. |
 | Registered services and the extensions they ship | PostgreSQL, the shared database (`registered_clients`, `service_extensions`). Each bundle is stored whole — up to 400 MiB — so the shared database's backup grows by every approved service's bundle | Survivable, with a super admin's help: each service registers and uploads its extension again on its next start, and waits as pending until it is approved again. Until then it can get no token and its extension is not offered to anybody. |
 | Secrets the deployment stores | PostgreSQL, Fernet-encrypted under `SECRET_ENCRYPTION_KEY` | The rows are useless without the key. Rotation is supported: put the old key in `SECRET_ENCRYPTION_KEYS_PREVIOUS`, run `python tools/rotate_secret_key.py --apply`, then clear it. **Losing** the key without a rotation leaves those secrets unreadable, and each has to be set again. Back up the key separately from the database — a backup containing both defeats the encryption. |
+| Licence-integrity high-water mark | The **`igni_state`** volume, mounted at the path `IGNI_STATE_DIR` names (default /var/lib/igni): one small, encrypted, mode-0600 file holding the latest time the deployment has seen | Survivable: it is reseeded from the licence audit trail on the next start, and a missing file on a deployment with history is treated as tamper rather than a clean slate. It must be a writable volume that survives a restart. The default is a single API replica on a ReadWriteOnce volume (the Helm chart defaults `api.replicaCount` to 1 and the claim to ReadWriteOnce); to run more than one replica, set the access mode to ReadWriteMany on an RWX storage class. |
 
 Nothing else in the stack keeps state. The prod compose file declares
-`pgdata` and `redisdata`, and both are inert unless you run the `bundled`
-profile — under which they hold the two rows above and are the thing to
-back up.
+`pgdata` and `redisdata`, inert unless you run the `bundled` profile —
+under which they hold the database and Redis rows above — and `igni_state`,
+which the API always mounts for the licence-integrity row and is the third
+thing to back up.
 
 This sentence read "exactly one volume and it is Flower's" until DEC-13,
 and it had already been wrong for longer than that: the bundled profile

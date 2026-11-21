@@ -28,6 +28,8 @@ from app.services.deployment_licence import (
     LicenceOverview,
     LicencePathReadOnly,
     LicenceRejected,
+    ReportUnavailable,
+    SealedReport,
 )
 from app.services.licence import LicenceEnvelope
 
@@ -91,4 +93,24 @@ async def install_licence(
                 'message': f'The licence is valid, but {exc} cannot be written from here. '
                 'Install it where the licence is mounted (the licence Secret in Kubernetes) instead.',
             },
+        ) from exc
+
+
+@router.post('/licence/integrity-report', response_model=SealedReport)
+async def export_integrity_report(
+    _account: PortalAccount = Depends(require_super_admin),
+    licence: DeploymentLicence = Depends(deployment_licence),
+) -> SealedReport:
+    """Export a vendor-sealed licence-integrity report for a super admin to hand to Ignite Ember.
+
+    The blob can only be opened with Ignite Ember's KMS key
+    (`tools/licence/open_report.py`); the customer need not read it. Audited
+    like every portal action (docs/licence-file.md, "The sealed report").
+    """
+    try:
+        return licence.sealed_report()
+    except ReportUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={'reason': 'no_report_key', 'message': str(exc)},
         ) from exc

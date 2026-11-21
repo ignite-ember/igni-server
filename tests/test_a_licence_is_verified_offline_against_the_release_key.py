@@ -24,10 +24,9 @@ from app.services.licence import (
     LicenceVerifier,
     Module,
     RELEASE_KEYS,
-    TEST_KEY_ID,
     TrustedKeys,
 )
-from tests.licence_kit import EXPIRES, FIXTURES, payload, signed, verifier
+from tests.licence_kit import EXPIRES, FIXTURES, payload, signed, TEST_KEY_ID, verifier
 
 GOLDEN_PAYLOAD = (
     '{"format":1,"licence_id":"IE-TEST-0001","kind":"commercial","customer":"Example Bank N.V.",'

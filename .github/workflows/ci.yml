@@ -134,6 +134,14 @@ jobs:
       - name: Build the backend image
         run: docker build -f containers/be/Dockerfile -t igni-api:ci .
 
+      # A release trusts only Ignite Ember's release keys, whatever its
+      # settings say: the marker is in the image, nothing in it names the
+      # test key, and APP_ENV=dev with the test key's file mounted where a
+      # source checkout keeps it still refuses a licence signed with it.
+      # release.yml runs the same check before it pushes.
+      - name: The backend image trusts only the release key
+        run: tools/licence/check_release_image.sh igni-api:ci
+
       - name: Build the portal image
         run: docker build -f portal/Dockerfile -t igni-portal:ci portal/
 

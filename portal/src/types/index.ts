@@ -314,12 +314,15 @@ export interface LicenceWarning {
 /**
  * What everybody signed in is told (`GET /portal/licence/notice`): the
  * banner, and whose licence this is. `customer` and `licence_id` are
- * null with no verified licence; older servers leave them out.
+ * null with no verified licence; older servers leave them out. `clock`
+ * is set while the system clock is behind a time the deployment has
+ * already seen, at which the licence is then evaluated.
  */
 export interface LicenceNotice {
   warnings: LicenceWarning[]
   customer?: string | null
   licence_id?: string | null
+  clock?: string | null
 }
 
 /** One module's standing under the installed licence (`ModuleStatus`). */
@@ -348,6 +351,8 @@ export interface LicenceOverview {
   customer: string | null
   kind: LicenceKind | null
   issued: string | null
+  /** Set while the system clock is behind a time the deployment has already seen. */
+  clock?: string | null
   modules: LicenceModuleStatus[]
 }
 

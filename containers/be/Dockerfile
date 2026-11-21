@@ -102,6 +102,12 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Copy app sources
 COPY ./app /app/app
+# A release trusts only Ignite Ember's release keys. With this marker,
+# app/services/licence/keys.py reads no development key, whatever the
+# environment says or a mount puts where a source checkout keeps one.
+# Written as root, before the image drops to its own user, so the
+# service cannot remove it.
+RUN touch app/services/licence/RELEASE
 
 # Alembic migrations
 COPY alembic.ini .
@@ -138,14 +144,17 @@ COPY tools/smoke_provider.py ./tools/smoke_provider.py
 RUN groupadd --system --gid 10001 igni \
  && useradd --system --uid 10001 --gid igni --home-dir /app --shell /usr/sbin/nologin igni
 
-# Nothing in the image needs a chown any more. DEC-13 removed Flower,
-# whose state directory was the only path a named volume mounted over —
-# and a named volume inherits the ownership of the directory it covers,
-# which is why that one needed it.
+# The licence-integrity state directory is a named volume's mount target,
+# and a named volume inherits the ownership of the directory it covers — so
+# this one is created and chowned to the runtime user, or uid 10001 cannot
+# write the high-water mark it must keep (IGNI_STATE_DIR, default
+# /var/lib/igni; tests/test_the_images_run_as_a_non_root_user.py).
 #
-# `app/` writes nothing to disk at runtime; the temporary files Python and
-# its libraries create go to /tmp, which is world-writable, so nothing else
-# needs an ownership change either.
+# `app/` writes nothing else to disk at runtime; the temporary files Python
+# and its libraries create go to /tmp, which is world-writable, so nothing
+# else needs an ownership change.
+RUN mkdir -p /var/lib/igni && chown 10001:igni /var/lib/igni
+
 USER 10001
 
 # ── Provenance labels ────────────────────────────────────────────────

@@ -9,6 +9,21 @@ from pydantic import BaseModel
 from app.services.licence import LicenceKind, LicenceState, Module, ModuleStatus, Reason
 
 
+class IntegrityNotice(BaseModel):
+    """A neutral, admin-only note that the deployment's licence-integrity data has been tampered with.
+
+    Deliberately says nothing an operator could use to cover their tracks:
+    that something is wrong, and to contact the vendor, nothing more. The
+    detail is in the audit trail and the sealed report, not here.
+    """
+
+    tampered: bool
+    #: The sentence a super admin sees. None while nothing is wrong.
+    message: str | None = None
+    #: How many tamper events the integrity file has kept. For the super admin's own record.
+    events: int = 0
+
+
 class LicenceOverview(BaseModel):
     """Everything a super admin sees: the installed file and each module's standing."""
 
@@ -22,6 +37,11 @@ class LicenceOverview(BaseModel):
     kind: LicenceKind | None = None
     issued: datetime | None = None
     modules: list[ModuleStatus]
+    #: Admin-only. Set while the clock is behind a time this deployment has already seen; the licence is
+    #: then evaluated as of no earlier than that time minus a day.
+    clock: str | None = None
+    #: Admin-only. Set when the integrity file has been tampered with.
+    integrity: IntegrityNotice | None = None
 
 
 class LicenceWarning(BaseModel):
@@ -39,7 +59,10 @@ class LicenceNotice(BaseModel):
     `licence_id` name the licensee of a verified licence, and are None
     when there is none — no file, or one that is not good. The portal
     shows them quietly on every page, so a deployment copied or shared
-    beyond its contract says whose it is.
+    beyond its contract says whose it is. The clock warning and the
+    integrity notice are admin-only and live on `LicenceOverview`, not
+    here: everybody sees that a licence is expiring; only a super admin is
+    told the clock is wrong or the integrity file was touched.
     """
 
     warnings: list[LicenceWarning]

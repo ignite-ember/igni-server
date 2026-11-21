@@ -6,16 +6,20 @@ them (`licence.existingSecret` in the chart); in compose, one file
 bind-mounted into each. Renewing is replacing that file. Mounted
 Secrets are updated in place, so nothing needs restarting: the file is
 looked at again at most every `RECHECK` and re-verified when it changed.
+
+The licence is evaluated at `evaluated_at`: now, unless the clock is
+behind a time the deployment has already seen (`clock.HighWaterMark`),
+and never before the licence was issued.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 import threading
-from typing import Protocol
 
+from .clock import Clock, HighWaterMark, SystemClock
 from .format import Module
 from .status import LicenceReading, LicenceStatus, ModuleStatus, Reason
 from .verifier import LicenceError, LicenceVerifier
@@ -30,22 +34,21 @@ RECHECK = timedelta(seconds=60)
 MAX_BYTES = 64 * 1024
 
 
-class Clock(Protocol):
-    def now(self) -> datetime: ...
-
-
-class SystemClock:
-    def now(self) -> datetime:
-        return datetime.now(timezone.utc)
-
-
 class LicenceFile:
     """The licence at one path: verified, cached, and read again when it changes."""
 
-    def __init__(self, path: Path, *, verifier: LicenceVerifier, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        verifier: LicenceVerifier,
+        clock: Clock | None = None,
+        high_water: HighWaterMark | None = None,
+    ) -> None:
         self._path = path
         self._verifier = verifier
         self._clock = clock or SystemClock()
+        self._high_water = high_water or HighWaterMark()
         self._lock = threading.Lock()
         self._seen: tuple[int, int] | None = None
         self._checked_at: datetime | None = None
@@ -59,6 +62,10 @@ class LicenceFile:
     def clock(self) -> Clock:
         return self._clock
 
+    @property
+    def high_water(self) -> HighWaterMark:
+        return self._high_water
+
     def reading(self) -> LicenceReading:
         """The verified payload, or why there is none. Cheap: a `stat` at most once a `RECHECK`."""
         now = self._clock.now()
@@ -69,7 +76,26 @@ class LicenceFile:
             return self._reading
 
     def status(self, module: Module) -> ModuleStatus:
-        return LicenceStatus.of(self.reading(), module, now=self._clock.now())
+        reading = self.reading()
+        return LicenceStatus.of(reading, module, now=self.evaluated_at(reading))
+
+    def evaluated_at(self, reading: LicenceReading | None = None) -> datetime:
+        """The time the licence is evaluated at: now, but never more than the tolerance before a time already
+        seen, and never before the licence was issued (a licence issued at T proves it is at least T)."""
+        if reading is None:
+            reading = self.reading()
+        at = self._high_water.evaluate_at(self._clock.now())
+        if reading.payload is not None:
+            at = max(at, reading.payload.issued)
+        return at
+
+    def clock_warning(self) -> str | None:
+        """The sentence for the admin while the clock is behind a time already seen. None while it is not, and
+        without a licence, whose evaluation time then changes nothing."""
+        seen = self._high_water.behind(self._clock.now())
+        if seen is None or self.reading().payload is None:
+            return None
+        return HighWaterMark.warning(seen)
 
     def forget(self) -> None:
         """Read the file again at the next question, whatever its timestamp says (after an install)."""

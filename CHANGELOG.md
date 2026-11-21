@@ -15,13 +15,52 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
-The server side of the desktop app's Local / Cloud switch and of a
-group's mode (igni-core `docs/design/local-cloud-switch.md`). It changes
-an interface: a person's service events now go to one side, and to the
-desktop until the person first switches to the cloud (see **Changed**).
+## [0.8.0] - 2026-11-21
+
+A security release. A released image now trusts only the release key,
+whatever its settings, and the deployment keeps a tamper-evident central
+licence clock so a wound-back system clock no longer revives a lapsed
+licence (see **Security**). It also carries the server side of the
+desktop app's Local / Cloud switch and of a group's mode (igni-core
+`docs/design/local-cloud-switch.md`); that changes an interface — a
+person's service events now go to one side, and to the desktop until the
+person first switches to the cloud (see **Changed**) — which is why this
+is a minor, not a patch, release.
+
+**Operational prerequisites.** The central clock keeps its sealed
+integrity file under `IGNI_STATE_DIR` (default `/var/lib/igni`), which must
+be a writable persisted volume that survives a restart. The default install
+is a single API replica on a `ReadWriteOnce` volume, which works on every
+cluster — including kind's local-path provisioner, which offers only
+`ReadWriteOnce` (the chart defaults `api.replicaCount: 1` and
+`state.persistence.accessMode: ReadWriteOnce`). To run more than one API
+replica, raise `api.replicaCount`, set `state.persistence.accessMode:
+ReadWriteMany` and point `state.persistence.storageClass` at an
+RWX-capable class; the file stays the single source of truth and writes are
+serialised across replicas by a Postgres advisory lock. The sealed
+integrity-report export (`POST /v1/portal/licence/integrity-report`) works
+only once `INTEGRITY_REPORT_PUBLIC_KEY` is set to Ignite Ember's
+integrity-report public key; until then it returns `503` by design.
 
 ### Added
 
+- **A central, tamper-evident licence clock.** The deployment holds a
+  single high-water mark — the latest time it has seen — in an encrypted,
+  mode-0600 integrity file under `IGNI_STATE_DIR`
+  (`app/services/deployment_licence/integrity_state.py`), seeded from the
+  `licence:daily` audit trail. Service clients and the gateway read it
+  over `GET /v1/platform/licence/clock` rather than each keeping their
+  own, so a clock wound back on any one of them is caught everywhere. A
+  file that is missing, edited or replayed on a deployment with history is
+  treated as tamper: the mark is taken from the audit trail, a tamper
+  event is recorded, and a super admin sees a neutral `integrity` notice
+  on `GET /v1/portal/licence` (admins only — not the everybody banner).
+- **A sealed licence-integrity report for Ignite Ember.** `POST
+  /v1/portal/licence/integrity-report` (super admin, audited) exports the
+  high-water mark, the tamper-event history, the licence id and per-module
+  usage — no personal data — hybrid-encrypted so only Ignite Ember can
+  open it (`tools/licence/open_report.py`). It returns `503` until
+  `INTEGRITY_REPORT_PUBLIC_KEY` is configured.
 - **A group says where igni runs for its people.** `org_groups.mode` is
   `local` (only on their computers), `cloud` (only in the cloud) or
   `local_and_cloud` (both, switched in the desktop app) — the last for
@@ -69,6 +108,23 @@ desktop until the person first switches to the cloud (see **Changed**).
 
 ### Security
 
+- **A released image trusts only the release key, whatever its settings.**
+  A release build writes a `RELEASE` marker beside `app/services/licence/keys.py`,
+  and with the marker present no development key is read — whatever `APP_ENV`
+  says or a mount puts where a source checkout keeps its test keys. The test
+  key (`igni-test-1`), whose private half is in the test fixtures, is therefore
+  refused as `unknown_key` by every shipped image. `tools/licence/check_release_image.sh`
+  runs the image with every development setting and the key file mounted and
+  fails the release unless a test-key licence is refused and the real
+  release-key licence is accepted; `release.yml` runs it before publishing.
+- **Winding the system clock back no longer revives a lapsed licence.** A
+  licence is evaluated as of no earlier than the central high-water mark, held
+  in the tamper-evident integrity file described under **Added**; a clock set
+  back past `expires` on igni server, a module or the gateway does not make an
+  expired licence valid again. More than 24 hours behind the mark raises an
+  admin-only warning in the log and on `GET /v1/portal/licence`. The former
+  `licence_clock` database table and its migration are removed in favour of the
+  file.
 - **The bundle carries Fleet 0.1.1.** `containers/release/artefacts.tsv`
   pins `igni-fleet` 0.1.1 in place of 0.1.0. Fleet 0.1.0's guest base
   trusts a throwaway profile-layer key, so no real profile layer verifies

@@ -30,6 +30,7 @@ from .endpoints.identity import (
     token as identity_token,
 )
 from .endpoints.platform import (
+    licence_clock as platform_licence_clock,
     producer_events as platform_producer_events,
     producer_exports as platform_producer_exports,
     producers as platform_producers,
@@ -150,6 +151,7 @@ platform_router.include_router(platform_producers.router, tags=['Platform - Prod
 platform_router.include_router(platform_producer_exports.router, tags=['Platform - Retention'])
 platform_router.include_router(platform_vm_credentials.router, tags=['Platform - VM credentials'])
 platform_router.include_router(platform_vm_resets.router, tags=['Platform - VM resets'])
+platform_router.include_router(platform_licence_clock.router, tags=['Platform - Licence'])
 router.include_router(platform_router)
 
 # Commands in producers' VMs, asked for by producers, org admins and the
