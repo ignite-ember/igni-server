@@ -254,6 +254,26 @@ socialSignIn:
 licence:
   existingSecret: ""
 
+# The licence-integrity volume (docs/licence-file.md, "The clock"). igni server
+# keeps the deployment's single high-water mark — the latest time it has seen, so
+# a clock set back does not revive a lapsed licence — in one small encrypted file
+# (0600) here, NOT in the read-only licence dir. The modules and the Fleet gateway
+# read the mark from igni server; this is the one place it lives.
+#
+# The file is the single source of truth, so with more than one api replica
+# (`api.replicaCount`, default 2) this volume MUST be ReadWriteMany; writes are
+# serialised across replicas by a Postgres advisory lock. If your cluster has no
+# ReadWriteMany StorageClass, set `api.replicaCount: 1` and use ReadWriteOnce.
+# Bring your own claim with `existingClaim`, or let the chart create one.
+state:
+  mountPath: /var/lib/igni
+  persistence:
+    enabled: true
+    existingClaim: ""
+    accessMode: ReadWriteMany
+    size: 64Mi
+    storageClass: ""
+
 # Model gateway. Empty falls back to the in-cluster default name below.
 mcpGatewayUrl: ""
 

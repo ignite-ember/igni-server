@@ -19,6 +19,14 @@ The free base (the server, the portal and the clients, Apache-2.0) needs no
 licence and ignores a missing one. Models built by the factory carry no
 licence and no expiry.
 
+**Disclosure (customer-facing).** The software maintains tamper-evident
+licence-integrity data on the server and can produce a sealed integrity
+report at the vendor's request. The data is a single timestamp (the latest
+time the deployment has seen, so a clock set back does not revive a lapsed
+licence) with a short technical history; it holds no personal data, never
+leaves the server on its own, and is only ever disclosed as a sealed report
+a super admin exports deliberately ("The clock", "The sealed report").
+
 **Each paid module enforces the licence itself.** igni server is
 Apache-2.0, and a check in it would be two lines to delete. So every module
 reads the file, verifies the signature with the key built into it, and
@@ -266,27 +274,77 @@ carry no licence.
 ## The clock
 
 The licence is offline, so the time is the deployment's own. Winding the
-clock back past `expires` does not make a licence valid again: each
-component (igni server, each Python module, the Fleet gateway) keeps the
-latest time it has seen in its own database and evaluates the licence at
+clock back past `expires` does not make a licence valid again. The
+deployment keeps a single *high-water mark* — the latest time it has
+seen — and every component evaluates the licence at
 
-    max(now, latest time seen − 24 hours, the licence's issued)
+    max(now, mark − 24 hours, the licence's issued)
 
-With a correct clock the latest time seen is never ahead of it, and
-nothing changes. An NTP correction of less than a day changes nothing
-either.
+With a correct clock the mark is never ahead of it, and nothing changes.
+An NTP correction of less than a day changes nothing either.
+
+**One central mark.** igni server holds the deployment's one mark. The
+paid modules and the Fleet gateway no longer keep their own: they read it
+from igni server over their existing link (`GET /v1/platform/licence/clock`,
+a platform call) and cache the last value, so they keep working while igni
+server is briefly unreachable. One mark means a clock wound back on any
+one host cannot revive a lapsed licence anywhere.
+
+**Kept in an encrypted file, not a table.** igni server keeps the mark and
+a short tamper-event history in one small binary file (mode 0600, a
+non-descriptive name) on a writable, persisted volume — `IGNI_STATE_DIR`,
+*not* the read-only licence dir. The file is AES-256-GCM; the key is
+derived in code from a per-deployment install secret written into the
+file's header plus a constant compiled into the release. This is
+**obfuscation plus integrity, not secrecy**: the application must read the
+file to enforce the licence, so anyone holding both the file and the
+binary can derive the key. What it buys is that the bytes carry no
+readable marker, a single edited byte fails the authentication tag, and a
+removed, replaced or replayed-older file is detected. The honest backstop
+against deliberate, coordinated tampering stays the contract and the audit
+right (see "The band"). Implementation:
+`app/services/deployment_licence/integrity_state.py`.
 
 | | |
 |---|---|
-| Where it is kept | igni server: `licence_clock` on the shared plane. CodeIndex and Artifacts: `licence_clock` in their shared plane. Fleet: `gw_kv` key `licence_clock` |
-| When it moves on | At start and every 10 minutes, to the earlier of the component's clock and its database's, but only while the two agree within 48 hours. A clock set wrongly into the future that the database does not share moves nothing, and correcting it puts everything back |
-| The first start | Seeded from what the component recorded before it kept a mark, when the database's clock could have reached it: igni server's newest `licence:daily` audit event, the newest `licence_seats` row in a module, the newest `gw_audit` row in Fleet |
+| When it moves on | On igni server, at start and every 10 minutes, to the earlier of its clock and the database's, but only while the two agree within 48 hours. A clock set wrongly into the future that the database does not share moves nothing, and correcting it puts everything back. The modules and the gateway never advance it; they read the central value |
+| The first start | Seeded from igni server's newest `licence:daily` audit event, when the database's clock could have reached it |
+| Tamper | A file that is missing, unreadable, edited, or older than the audit trail (a replayed copy) on a deployment that clearly has history is treated as tamper, never as a clean start: the mark is taken from the audit trail, a tamper event is recorded in the file, and a super admin sees a neutral `integrity` notice on `GET /v1/portal/licence`. The detail is in the file's event history and the sealed report, never in the notice |
 | A renewal | Applies at once: a renewed licence's later `expires` is valid whatever time it is evaluated at |
-| When the clock is behind | More than 24 hours behind the latest time seen: a warning in the component's log, `clock` on `GET /v1/portal/licence/notice` (the portal banner) and on each module's `GET /v1/licence`, and in Fleet the metric `licence_clock_behind_seconds`. The sentence: "The system clock is earlier than a time this deployment has already seen (*time*). The licence is evaluated at that time; fix the clock." |
+| When the clock is behind (admin only) | More than 24 hours behind the mark: a warning in igni server's log, and `clock` on `GET /v1/portal/licence` (the super-admin overview — not the everybody banner). The sentence: "The system clock is behind a time this deployment has already seen. The licence is evaluated as of no earlier than *time*; fix the clock." |
+| Multi-replica | The file is the single source of truth, so with more than one API replica it sits on a shared ReadWriteMany volume and writes are serialised by a Postgres advisory lock (one writer at a time). Where ReadWriteMany is not available, pin `api.replicaCount: 1` |
 
-The shared logic is `app/services/licence/clock.py` (copied into each
+The shared mark logic is `app/services/licence/clock.py` (copied into each
 module like the rest of the licence core) and `crates/licence/src/clock.rs`
-in the Fleet gateway.
+in the Fleet gateway; the encrypted file and the central API are igni
+server's.
+
+## The sealed report
+
+A super admin can export a **sealed licence-integrity report** for Ignite
+Ember (`POST /v1/portal/licence/integrity-report`, audited like every
+portal change). It carries the mark, the file's write history and any
+tamper events, the licence id and the per-module usage — no personal data.
+
+It is sealed so only Ignite Ember can open it (hybrid encryption): a fresh
+random AES-256-GCM key encrypts the report, and that key is wrapped with
+RSA-OAEP(SHA-256) to Ignite Ember's integrity-report public key. The
+matching private half lives only in Cloud KMS (project
+`ignite-ember-signing`, key ring `igni-release`, an `asymmetric-decryption`
+key — *not* the Ed25519 licence signing key), so opening the report needs
+`cloudkms.cryptoKeyDecrypter` on that key. The customer hands over the blob
+without reading it; Ignite Ember opens it with `tools/licence/open_report.py`.
+The one-time key ceremony is in igni__business-ops `ops/key-ceremony.md`.
+
+**Records (internal).** The integrity file is an on-disk store, not a
+database table, and holds no personal data: a per-deployment install id
+(random bytes), the high-water timestamp, and a bounded technical history
+of mark advances and tamper events. It is therefore outside the
+table-based Article 30 register (`docs/RECORDS_OF_PROCESSING.md`, generated
+from the schema) by design, not by omission — the former `licence_clock`
+table is removed. A sealed integrity report is produced only when a super
+admin exports one, carries no personal data, and is disclosed only to the
+vendor; the customer-facing disclosure is in "What it does, and where".
 
 ## The band
 

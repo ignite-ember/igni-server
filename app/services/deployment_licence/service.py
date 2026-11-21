@@ -27,7 +27,14 @@ from fastapi import Request
 from starlette.applications import Starlette
 
 from app.config import settings
-from app.services.deployment_licence.schemas import LicenceNotice, LicenceOverview, LicenceWarning
+from app.services.deployment_licence.integrity_state import EncryptedIntegrityStore, IntegrityState
+from app.services.deployment_licence.schemas import IntegrityNotice, LicenceNotice, LicenceOverview, LicenceWarning
+from app.services.deployment_licence.sealed_report import (
+    build_report,
+    INTEGRITY_REPORT_PUBLIC_KEY,
+    seal,
+    SealedReport,
+)
 from app.services.licence import (
     HighWaterMark,
     LicenceEnvelope,
@@ -39,6 +46,13 @@ from app.services.licence import (
     ModuleStatus,
     Reason,
     TrustedKeys,
+)
+
+#: The neutral sentence a super admin sees when the integrity file has been tampered with. It says what,
+#: not how, so it cannot help whoever did it; the detail is in the audit trail and the sealed report.
+_TAMPER_NOTICE = (
+    "This server's licence-integrity data has been altered or replaced. "
+    'The licence is being evaluated from the audit trail. Contact Ignite Ember.'
 )
 
 logger = logging.getLogger(__name__)
@@ -63,16 +77,24 @@ class LicencePathReadOnly(Exception):
 class DeploymentLicence:
     """The licence file igni server shares with the paid modules."""
 
-    def __init__(self, source: LicenceFile, *, verifier: LicenceVerifier) -> None:
+    def __init__(
+        self,
+        source: LicenceFile,
+        *,
+        verifier: LicenceVerifier,
+        store: EncryptedIntegrityStore | None = None,
+    ) -> None:
         """`verifier` must be the one `source` verifies with: an upload is checked as the installed file is."""
         self._source = source
         self._verifier = verifier
+        self._store = store or EncryptedIntegrityStore(Path(settings.igni_state_dir))
 
     @classmethod
     def from_settings(cls) -> DeploymentLicence:
         """The licence at the configured path, verified against this environment's keys."""
         verifier = LicenceVerifier(TrustedKeys.for_environment(settings.app_env))
-        return cls(LicenceFile(Path(settings.igni_licence_file), verifier=verifier, high_water=HighWaterMark()))
+        source = LicenceFile(Path(settings.igni_licence_file), verifier=verifier, high_water=HighWaterMark())
+        return cls(source, verifier=verifier, store=EncryptedIntegrityStore(Path(settings.igni_state_dir)))
 
     @classmethod
     def of_app(cls, app: Starlette) -> DeploymentLicence:
@@ -85,6 +107,18 @@ class DeploymentLicence:
     @property
     def high_water(self) -> HighWaterMark:
         return self._source.high_water
+
+    @property
+    def store(self) -> EncryptedIntegrityStore:
+        return self._store
+
+    def _integrity_notice(self) -> IntegrityNotice | None:
+        """A neutral admin-only note when the integrity file has been tampered with; None while it is sound."""
+        state = self._store.integrity()
+        tampered = state.tampered or bool(state.recent_tamper())
+        if not tampered:
+            return None
+        return IntegrityNotice(tampered=True, message=_TAMPER_NOTICE, events=len(state.recent_tamper()))
 
     def statuses(self) -> list[ModuleStatus]:
         return [self._source.status(module) for module in Module]
@@ -104,10 +138,30 @@ class DeploymentLicence:
             issued=reading.payload.issued if reading.payload else None,
             modules=self.statuses(),
             clock=self._source.clock_warning(),
+            integrity=self._integrity_notice(),
         )
 
+    def sealed_report(self) -> SealedReport:
+        """Gather and vendor-seal the deployment's licence-integrity report, for a super admin to hand over."""
+        reading = self._source.reading()
+        state: IntegrityState = self._store.integrity()
+        report = build_report(
+            licence_id=reading.payload.licence_id if reading.payload else None,
+            customer=reading.payload.customer if reading.payload else None,
+            mark=self._source.high_water.seen,
+            clock_warning=self._source.clock_warning(),
+            state=state,
+            modules=self.statuses(),
+        )
+        pem = settings.integrity_report_public_key_pem or INTEGRITY_REPORT_PUBLIC_KEY
+        return seal(report, public_key_pem=pem, key_hint=settings.integrity_report_kms_key or None)
+
     def notice(self) -> LicenceNotice:
-        """What the portal shows everybody: one line per module that needs attention, and the licensee."""
+        """What the portal shows everybody: one line per module that needs attention, and the licensee.
+
+        The clock warning and the tamper notice are admin-only; they are on
+        the super admin's `overview`, not here.
+        """
         warnings = [
             LicenceWarning(module=status.module, state=status.state, message=status.message)
             for status in self.statuses()
@@ -119,7 +173,6 @@ class DeploymentLicence:
             warnings=warnings,
             customer=payload.customer if payload else None,
             licence_id=payload.licence_id if payload else None,
-            clock=self._source.clock_warning(),
         )
 
     def install(self, envelope: LicenceEnvelope) -> LicenceOverview:

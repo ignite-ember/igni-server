@@ -86,12 +86,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     licence_daily_audit = LicenceDailyAudit(licence=DeploymentLicence.of_app(app))
     licence_daily_audit.start()
 
-    # The licence's clock: the latest time this deployment has seen, so
-    # a clock wound back does not wind the licence back, and the banner
-    # agrees with the modules that keep the same mark. Read once here,
-    # before the first request; a database that cannot answer yet leaves
-    # the licence on the clock alone until the loop's next round.
-    licence_clock = LicenceClockKeeper(DeploymentLicence.of_app(app).high_water)
+    # The licence's clock: the deployment's single high-water mark, kept in
+    # the encrypted integrity file, so a clock wound back does not wind the
+    # licence back and the banner agrees with the modules that read the same
+    # mark from here. Read once, before the first request; a database that
+    # cannot answer yet leaves the licence on the clock alone until the
+    # loop's next round.
+    _deployment_licence = DeploymentLicence.of_app(app)
+    licence_clock = LicenceClockKeeper(_deployment_licence.high_water, store=_deployment_licence.store)
     await licence_clock.sync_if_due()
     licence_clock.start()
 

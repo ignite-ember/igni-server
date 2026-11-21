@@ -1420,6 +1420,25 @@
         "title": "CLITokenResponse",
         "type": "object"
       },
+      "CentralMark": {
+        "description": "The deployment's high-water mark. `seen` is None before the first time is recorded.",
+        "properties": {
+          "seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen"
+          }
+        },
+        "title": "CentralMark",
+        "type": "object"
+      },
       "ChatAction": {
         "description": "What an `action` item does to its thread's chat.",
         "properties": {
@@ -5130,6 +5149,36 @@
         "title": "InferenceStatusView",
         "type": "object"
       },
+      "IntegrityNotice": {
+        "description": "A neutral, admin-only note that the deployment's licence-integrity data has been tampered with.\n\nDeliberately says nothing an operator could use to cover their tracks:\nthat something is wrong, and to contact the vendor, nothing more. The\ndetail is in the audit trail and the sealed report, not here.",
+        "properties": {
+          "events": {
+            "default": 0,
+            "title": "Events",
+            "type": "integer"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "tampered": {
+            "title": "Tampered",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tampered"
+        ],
+        "title": "IntegrityNotice",
+        "type": "object"
+      },
       "InviteMemberRequest": {
         "description": "Request to invite a new team member",
         "properties": {
@@ -5426,19 +5475,8 @@
         "type": "string"
       },
       "LicenceNotice": {
-        "description": "What everybody signed in sees: the banner, and whose licence this is.\n\n`warnings` is empty when nothing needs doing. `customer` and\n`licence_id` name the licensee of a verified licence, and are None\nwhen there is none — no file, or one that is not good. The portal\nshows them quietly on every page, so a deployment copied or shared\nbeyond its contract says whose it is. `clock` is set while the\nsystem clock is behind a time this deployment has already seen.",
+        "description": "What everybody signed in sees: the banner, and whose licence this is.\n\n`warnings` is empty when nothing needs doing. `customer` and\n`licence_id` name the licensee of a verified licence, and are None\nwhen there is none — no file, or one that is not good. The portal\nshows them quietly on every page, so a deployment copied or shared\nbeyond its contract says whose it is. The clock warning and the\nintegrity notice are admin-only and live on `LicenceOverview`, not\nhere: everybody sees that a licence is expiring; only a super admin is\ntold the clock is wrong or the integrity file was touched.",
         "properties": {
-          "clock": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Clock"
-          },
           "customer": {
             "anyOf": [
               {
@@ -5503,6 +5541,16 @@
           "installed": {
             "title": "Installed",
             "type": "boolean"
+          },
+          "integrity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntegrityNotice"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "issued": {
             "anyOf": [
@@ -10421,6 +10469,51 @@
           }
         },
         "title": "ScimUser",
+        "type": "object"
+      },
+      "SealedReport": {
+        "description": "What the export returns: an opaque, vendor-sealed blob a customer can hand over safely.",
+        "properties": {
+          "alg": {
+            "default": "RSA-OAEP-256+AES-256-GCM",
+            "title": "Alg",
+            "type": "string"
+          },
+          "ciphertext": {
+            "title": "Ciphertext",
+            "type": "string"
+          },
+          "format": {
+            "default": "igni-integrity-report/1",
+            "title": "Format",
+            "type": "string"
+          },
+          "key_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Hint"
+          },
+          "nonce": {
+            "title": "Nonce",
+            "type": "string"
+          },
+          "wrapped_key": {
+            "title": "Wrapped Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "wrapped_key",
+          "nonce",
+          "ciphertext"
+        ],
+        "title": "SealedReport",
         "type": "object"
       },
       "SendResetPasswordCodeRequest": {
@@ -16795,6 +16888,32 @@
         ]
       }
     },
+    "/v1/platform/licence/clock": {
+      "get": {
+        "operationId": "central_mark_v1_platform_licence_clock_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CentralMark"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Central Mark",
+        "tags": [
+          "Platform - Licence"
+        ]
+      }
+    },
     "/v1/platform/orgs/{org_id}/events/ack": {
       "post": {
         "description": "Delivered — and the events no handler took, `not_handled` with their reasons. Audited.",
@@ -20716,6 +20835,33 @@
           }
         ],
         "summary": "Install Licence",
+        "tags": [
+          "Portal - Licence"
+        ]
+      }
+    },
+    "/v1/portal/licence/integrity-report": {
+      "post": {
+        "description": "Export a vendor-sealed licence-integrity report for a super admin to hand to Ignite Ember.\n\nThe blob can only be opened with Ignite Ember's KMS key\n(`tools/licence/open_report.py`); the customer need not read it. Audited\nlike every portal action (docs/licence-file.md, \"The sealed report\").",
+        "operationId": "export_integrity_report_v1_portal_licence_integrity_report_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SealedReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Integrity Report",
         "tags": [
           "Portal - Licence"
         ]

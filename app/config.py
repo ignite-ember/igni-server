@@ -380,6 +380,27 @@ class Settings(BaseSettings):
         default='/etc/igni/licence/licence.json',
         description="Path of the paid modules' licence file, shared with every module",
     )
+    # The deployment's licence-integrity state (docs/licence-file.md, "The
+    # clock"). A writable, persisted directory — NOT the read-only licence
+    # dir — where igni server keeps the single high-water mark in one small
+    # encrypted file (0600). With more than one API replica this must be a
+    # shared ReadWriteMany volume. The chart mounts a volume here and sets
+    # `IGNI_STATE_DIR`; in compose it is a named volume.
+    igni_state_dir: str = Field(
+        default='/var/lib/igni',
+        description='Writable, persisted directory for the licence-integrity file (shared across replicas)',
+    )
+    # Ignite Ember's integrity-report public key, PEM. When set, a super
+    # admin can export a vendor-sealed integrity report; the vendor opens it
+    # with the matching KMS key (docs/licence-file.md, "The sealed report").
+    # Empty: the compiled-in key is used, or the export reports that none is
+    # configured.
+    integrity_report_public_key_pem: str = Field(
+        default='', description='RSA public key (PEM) the sealed integrity report is encrypted to'
+    )
+    integrity_report_kms_key: str = Field(
+        default='', description='KMS resource name of the integrity-report key, shown to the vendor as a hint'
+    )
 
     # OAuth (social sign-in)
     oauth_google_client_id: str = Field(default='')

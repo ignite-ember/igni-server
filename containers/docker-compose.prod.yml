@@ -125,6 +125,10 @@ services:
     # installs an upload into it. Empty or absent: the free base only.
     volumes:
       - ${IGNI_LICENCE_DIR:-./licence}:/etc/igni/licence
+      # The licence-integrity file (docs/licence-file.md, "The clock"): the one
+      # high-water mark, kept encrypted on a persisted, writable volume — not the
+      # read-only licence dir above. The default IGNI_STATE_DIR is /var/lib/igni.
+      - igni_state:/var/lib/igni
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -286,6 +290,11 @@ volumes:
   # external, which is the other supported shape.
   pgdata:
   redisdata:
+  # The licence-integrity file (docs/licence-file.md, "The clock"). Small, but
+  # persisted: losing it on a deployment with history reads as tamper. Compose is
+  # single-replica, so one igni server owns it; the Helm chart is the multi-replica
+  # case (a shared ReadWriteMany volume).
+  igni_state:
 
 
 networks:

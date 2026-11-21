@@ -1,19 +1,22 @@
 """The time the licence is evaluated at, and why setting the clock back does not set the licence back.
 
 The licence is offline, so the time is the customer's: a deployment that
-winds its clock back past `expires` would otherwise be valid again. Each
-component therefore keeps the latest time it has seen (`HighWaterMark`)
-in its own database (`ClockStore`) and evaluates the licence at
+winds its clock back past `expires` would otherwise be valid again. The
+deployment keeps the latest time it has seen (`HighWaterMark`), and every
+component evaluates the licence at
 
     max(now, seen - CLOCK_TOLERANCE, the licence's own issued)
 
-With a correct clock the mark is never ahead of it, and nothing changes.
+The mark is held centrally: igni server keeps the one mark in its
+encrypted integrity file, and each paid module and the Fleet gateway reads
+that mark from igni server and caches it (`ClockStore`). With a correct
+clock the mark is never ahead of it, and nothing changes.
 
-The mark only moves on while this process's clock and the database's
-agree within `CLOCK_AGREEMENT` (`LicenceClock`), so one clock set wrongly
-into the future does not lapse a licence for good: correcting it puts
-everything back. Setting both back together does not help either, because
-the mark is already written down.
+The mark only moves on (on igni server, which owns it) while that
+process's clock and the database's agree within `CLOCK_AGREEMENT`
+(`LicenceClock`), so one clock set wrongly into the future does not lapse
+a licence for good: correcting it puts everything back. Setting both back
+together does not help either, because the mark is already written down.
 """
 
 from __future__ import annotations
@@ -89,23 +92,30 @@ class HighWaterMark:
 
     @staticmethod
     def warning(seen: datetime) -> str:
-        """What the admin is told while the clock is behind a time already seen."""
-        at = seen.astimezone(timezone.utc)
+        """What a super admin is told while the clock is behind a time already seen."""
+        floor = (seen - CLOCK_TOLERANCE).astimezone(timezone.utc)
         return (
-            f'The system clock is earlier than a time this deployment has already seen ({at:%Y-%m-%d %H:%M} UTC). '
-            'The licence is evaluated at that time; fix the clock.'
+            'The system clock is behind a time this deployment has already seen. '
+            f'The licence is evaluated as of no earlier than {floor:%Y-%m-%d %H:%M} UTC; fix the clock.'
         )
 
 
 class ClockStore(Protocol):
-    """Where a component writes its mark down: its own database."""
+    """Where a component reads and keeps its mark.
+
+    On igni server this is the deployment's one encrypted integrity file,
+    with the database as a second witness. In a paid module or the Fleet
+    gateway it reads the mark igni server holds and caches the last value,
+    so the module keeps working while igni server is briefly unreachable;
+    such a store does not advance the mark (only igni server does).
+    """
 
     async def database_now(self) -> datetime:
-        """The database's own clock."""
+        """A second clock to check this process's against (the database's, or igni server's)."""
         ...
 
     async def stored(self) -> datetime | None:
-        """The mark written down, or None before the first one."""
+        """The mark that is kept, or None before the first one."""
         ...
 
     async def seed(self) -> datetime | None:

@@ -1,11 +1,13 @@
 """R519: winding the clock back past a licence's expiry does not make it valid again.
 
-The licence is evaluated at `max(now, seen - 24 h, issued)`, where `seen`
-is the latest time this deployment has seen, kept on the shared plane
-(`licence_clock`) and only moved on while this process's clock and the
-database's agree within 48 hours (docs/licence-file.md, "The clock").
-With a correct clock nothing changes. Every clock here is injected: the
-app's and the database's are moved by hand, separately.
+The licence is evaluated at `max(now, mark - 24 h, issued)`, where `mark`
+is the latest time this deployment has seen. igni server holds the one
+mark for the whole deployment in its encrypted integrity file
+(`EncryptedIntegrityStore`), and it only moves on while this process's
+clock and the database's agree within 48 hours (docs/licence-file.md,
+"The clock"). With a correct clock nothing changes. Every clock here is
+injected: the app's and the database's are moved by hand, separately, and
+a "restart" is a fresh store on the same state directory.
 """
 
 from __future__ import annotations
@@ -17,12 +19,12 @@ from pathlib import Path
 
 import pytest
 
-from app.db.sql.licence_clock import LicenceClockDB
 from app.db.sql.models.audit_event import DeploymentAuditEvent
 from app.services.deployment_licence import (
     DAILY_ROUTE,
     deployment_licence,
     DeploymentLicence,
+    EncryptedIntegrityStore,
     LicenceClockKeeper,
 )
 from app.services.licence import (
@@ -43,44 +45,60 @@ from tests.licence_kit import EXPIRES, FakeClock, payload, signed, verifier
 READ_ONLY_AT = EXPIRES + timedelta(days=100)
 BEFORE_EXPIRY = EXPIRES - timedelta(days=1)
 ISSUED = EXPIRES - timedelta(days=365)
-WARNING = (
-    'The system clock is earlier than a time this deployment has already seen ({}). '
-    'The licence is evaluated at that time; fix the clock.'
-)
 
 
-class DatabaseOnItsOwnClock:
-    """The shared plane's `licence_clock`, with the database's clock a test moves by hand.
+class AlwaysLock:
+    """A stand-in advisory lock that always grants: in a test there is one writer."""
 
-    A wrapper rather than a subclass: `LicenceClockDB` is a process-wide singleton, and a test's clock
-    must not outlive the test.
+    def __init__(self, grant: bool = True) -> None:
+        self._grant = grant
+
+    async def try_acquire(self, key: int) -> bool:
+        return self._grant
+
+    async def release(self, key: int) -> None:
+        return None
+
+
+class StateOnItsOwnClock(EncryptedIntegrityStore):
+    """The encrypted integrity store, with the database's clock a test moves by hand.
+
+    `stored`/`advance` are the real file logic; only `database_now` is
+    faked, and `seed` is read from the real test database (the audit trail)
+    unless a test turns it off.
     """
 
-    def __init__(self, clock: FakeClock) -> None:
-        self._clock = clock
-        self._rows = LicenceClockDB()
+    def __init__(self, directory: Path, database_clock: FakeClock, *, seed_from_db: bool = True) -> None:
+        super().__init__(directory, locks=AlwaysLock())
+        self._database_clock = database_clock
+        self._seed_from_db = seed_from_db
 
     async def database_now(self) -> datetime:
-        return self._clock.now()
-
-    async def stored(self) -> datetime | None:
-        return await self._rows.stored()
+        return self._database_clock.now()
 
     async def seed(self) -> datetime | None:
-        return await self._rows.seed()
-
-    async def advance(self, seen: datetime) -> datetime:
-        return await self._rows.advance(seen)
+        return await super().seed() if self._seed_from_db else None
 
 
 class Deployment:
-    """One igni server process: its licence file, its mark in memory, the keeper. A restart is a new one."""
+    """One igni server process: its licence file, its mark in memory, the keeper on a state directory.
 
-    def __init__(self, path: Path, app_clock: FakeClock, database_clock: FakeClock) -> None:
+    A restart is a new `Deployment` on the same `state_dir`."""
+
+    def __init__(
+        self,
+        path: Path,
+        state_dir: Path,
+        app_clock: FakeClock,
+        database_clock: FakeClock,
+        *,
+        seed_from_db: bool = True,
+    ) -> None:
         self.mark = HighWaterMark()
         self.source = LicenceFile(path, verifier=verifier(), clock=app_clock, high_water=self.mark)
-        self.licence = DeploymentLicence(self.source)
-        self.keeper = LicenceClockKeeper(self.mark, store=DatabaseOnItsOwnClock(database_clock), clock=app_clock)
+        self.store = StateOnItsOwnClock(state_dir, database_clock, seed_from_db=seed_from_db)
+        self.licence = DeploymentLicence(self.source, verifier=verifier(), store=self.store)
+        self.keeper = LicenceClockKeeper(self.mark, store=self.store, clock=app_clock)
 
     def state(self) -> LicenceState:
         return self.source.status(Module.CODEINDEX).state
@@ -95,6 +113,11 @@ def licence_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def state_dir(tmp_path: Path) -> Path:
+    return tmp_path / 'state'
+
+
+@pytest.fixture
 def app_clock() -> FakeClock:
     return FakeClock(READ_ONLY_AT)
 
@@ -105,8 +128,8 @@ def database_clock() -> FakeClock:
 
 
 @pytest.fixture
-def deployment(licence_path: Path, app_clock: FakeClock, database_clock: FakeClock) -> Deployment:
-    return Deployment(licence_path, app_clock, database_clock)
+def deployment(licence_path: Path, state_dir: Path, app_clock: FakeClock, database_clock: FakeClock) -> Deployment:
+    return Deployment(licence_path, state_dir, app_clock, database_clock)
 
 
 def _wind_back(*clocks: FakeClock, to: datetime = BEFORE_EXPIRY) -> None:
@@ -133,17 +156,18 @@ async def test_a_licence_seen_read_only_stays_read_only_when_the_clock_is_wound_
 
 @pytest.mark.parametrize('database_wound_back_too', [True, False], ids=['both-clocks', 'app-clock-only'])
 async def test_the_mark_outlives_a_restart(
-    licence_path, deployment, app_clock, database_clock, database_wound_back_too
+    licence_path, state_dir, app_clock, database_clock, database_wound_back_too
 ) -> None:
-    await deployment.keeper.sync()
+    first = Deployment(licence_path, state_dir, app_clock, database_clock, seed_from_db=False)
+    await first.keeper.sync()
     _wind_back(app_clock, *([database_clock] if database_wound_back_too else []))
 
-    restarted = Deployment(licence_path, app_clock, database_clock)
+    restarted = Deployment(licence_path, state_dir, app_clock, database_clock, seed_from_db=False)
     await restarted.keeper.sync()
 
     assert restarted.mark.seen == READ_ONLY_AT
     assert restarted.state() is LicenceState.READ_ONLY
-    assert await LicenceClockDB().stored() == READ_ONLY_AT
+    assert await restarted.store.stored() == READ_ONLY_AT
 
 
 async def test_a_clock_within_a_day_of_the_mark_is_taken_as_it_is(deployment, app_clock, database_clock) -> None:
@@ -157,7 +181,7 @@ async def test_a_clock_within_a_day_of_the_mark_is_taken_as_it_is(deployment, ap
 
     assert deployment.source.evaluated_at() == app_clock.now()
     assert deployment.state() is LicenceState.VALID
-    assert deployment.licence.notice().clock is None
+    assert deployment.licence.overview().clock is None
 
 
 async def test_a_correct_clock_changes_nothing(deployment, app_clock, database_clock) -> None:
@@ -168,15 +192,16 @@ async def test_a_correct_clock_changes_nothing(deployment, app_clock, database_c
         assert deployment.source.evaluated_at() == moment
         plain = LicenceFile(deployment.source.path, verifier=verifier(), clock=app_clock)
         assert deployment.source.status(Module.CODEINDEX) == plain.status(Module.CODEINDEX)
-        assert deployment.licence.notice().clock is None
+        assert deployment.licence.overview().clock is None
 
 
 @pytest.mark.parametrize(
     'database_ahead', [timedelta(0), timedelta(days=3)], ids=['database-right', 'database-3-days-on']
 )
 async def test_a_wrong_future_clock_the_database_does_not_share_moves_nothing(
-    deployment, app_clock, database_clock, database_ahead
+    licence_path, state_dir, app_clock, database_clock, database_ahead
 ) -> None:
+    deployment = Deployment(licence_path, state_dir, app_clock, database_clock, seed_from_db=False)
     start = EXPIRES - timedelta(days=60)
     _wind_back(app_clock, database_clock, to=start)
     await deployment.keeper.sync()
@@ -187,12 +212,12 @@ async def test_a_wrong_future_clock_the_database_does_not_share_moves_nothing(
     database_clock.set(start + database_ahead)
     await deployment.keeper.sync()
 
-    assert await LicenceClockDB().stored() == start
+    assert await deployment.store.stored() == start
     assert deployment.mark.seen == start
 
     app_clock.set(start)  # corrected: nothing is left behind
     assert deployment.state() is LicenceState.VALID
-    assert deployment.licence.notice().clock is None
+    assert deployment.licence.overview().clock is None
 
 
 async def test_two_clocks_three_days_apart_do_not_agree() -> None:
@@ -203,19 +228,24 @@ async def test_two_clocks_three_days_apart_do_not_agree() -> None:
     assert HighWaterMark.agreed(now - timedelta(hours=49), now) is None
 
 
-async def test_the_admin_is_told_while_the_clock_is_behind(
+async def test_the_clock_warning_is_admin_only_and_reworded(
     client, db, app, deployment, app_clock, database_clock, caplog
 ) -> None:
     await deployment.keeper.sync()
     _wind_back(app_clock, database_clock)
-    expected = WARNING.format(f'{READ_ONLY_AT:%Y-%m-%d %H:%M} UTC')
+    floor = (READ_ONLY_AT - CLOCK_TOLERANCE).astimezone(timezone.utc)
+    expected = (
+        'The system clock is behind a time this deployment has already seen. '
+        f'The licence is evaluated as of no earlier than {floor:%Y-%m-%d %H:%M} UTC; fix the clock.'
+    )
 
     with caplog.at_level(logging.WARNING, logger=licence_clock.__name__):
         await deployment.keeper.sync()
 
     assert [r.getMessage() for r in caplog.records if r.name == licence_clock.__name__] == [f'licence: {expected}']
-    assert deployment.licence.notice().clock == expected
+    # The super admin sees it on the overview; the everybody notice has no clock field at all.
     assert deployment.licence.overview().clock == expected
+    assert 'clock' not in deployment.licence.notice().model_dump()
 
     app.dependency_overrides[deployment_licence] = lambda: deployment.licence
     try:
@@ -223,16 +253,16 @@ async def test_the_admin_is_told_while_the_clock_is_behind(
         notice = (await client.get('/portal/licence/notice', headers=auth_header(make_token(str(user.user_id))))).json()
     finally:
         app.dependency_overrides.pop(deployment_licence, None)
-    assert notice['clock'] == expected
+    assert 'clock' not in notice
     assert notice['warnings'][0]['state'] == 'read_only'
 
 
 async def test_nobody_is_told_about_the_clock_without_a_licence(tmp_path, app_clock, database_clock) -> None:
-    bare = Deployment(tmp_path / 'none.json', app_clock, database_clock)
+    bare = Deployment(tmp_path / 'none.json', tmp_path / 'state', app_clock, database_clock, seed_from_db=False)
     await bare.keeper.sync()
     _wind_back(app_clock, database_clock)
 
-    assert bare.licence.notice().clock is None
+    assert bare.licence.overview().clock is None
     assert bare.licence.notice().warnings == []
 
 
@@ -262,7 +292,7 @@ async def test_the_first_start_takes_the_mark_from_the_daily_licence_record(
 
     await deployment.keeper.sync()
 
-    assert await LicenceClockDB().stored() == READ_ONLY_AT
+    assert await deployment.store.stored() == READ_ONLY_AT
     assert deployment.state() is LicenceState.READ_ONLY
 
 
@@ -276,7 +306,7 @@ async def test_a_daily_record_from_beyond_the_databases_clock_is_not_believed(
 
     await deployment.keeper.sync()
 
-    assert await LicenceClockDB().stored() is None
+    assert await deployment.store.stored() is None
     assert deployment.state() is LicenceState.VALID
 
 
@@ -302,14 +332,15 @@ async def test_the_licence_is_never_evaluated_before_it_was_issued(deployment, a
     assert deployment.source.evaluated_at() == payload().issued
 
 
-async def test_the_database_clock_is_the_databases() -> None:
-    database_now = await LicenceClockDB().database_now()
+async def test_the_database_clock_is_the_databases(state_dir) -> None:
+    database_now = await EncryptedIntegrityStore(state_dir).database_now()
 
     assert abs(database_now - datetime.now(timezone.utc)) < timedelta(minutes=5)
 
 
-async def test_the_stored_mark_only_goes_up() -> None:
-    store = LicenceClockDB()
+async def test_the_stored_mark_only_goes_up(state_dir, database_clock) -> None:
+    store = StateOnItsOwnClock(state_dir, database_clock, seed_from_db=False)
+    await store.load()
 
     assert await store.advance(READ_ONLY_AT) == READ_ONLY_AT
     assert await store.advance(BEFORE_EXPIRY) == READ_ONLY_AT

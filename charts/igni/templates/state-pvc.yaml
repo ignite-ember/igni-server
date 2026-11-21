@@ -1,0 +1,29 @@
+{{- /*
+The licence-integrity volume (docs/licence-file.md, "The clock"). igni server
+keeps the deployment's single high-water mark in one small encrypted file here.
+It must be writable and persisted, and — because the file is the single source
+of truth — shared across replicas: with more than one api replica the access
+mode must be ReadWriteMany, and writes are serialised by a Postgres advisory
+lock. Where ReadWriteMany is not available, set api.replicaCount to 1.
+
+Skipped when an existingClaim is given (bring your own ReadWriteMany PVC) or when
+state persistence is disabled (then the mark is per-pod and ephemeral, which only
+suits a single-replica evaluation).
+*/}}
+{{- if and .Values.state.persistence.enabled (not .Values.state.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "igni.fullname" . }}-state
+  labels:
+    {{- include "igni.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.state.persistence.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.state.persistence.size | quote }}
+  {{- with .Values.state.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

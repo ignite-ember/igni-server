@@ -63,7 +63,6 @@ async def test_without_a_licence_there_is_no_banner_and_the_base_works(client, d
         'warnings': [],
         'customer': None,
         'licence_id': None,
-        'clock': None,
     }
     assert (await client.get('/portal/me', headers=person)).status_code == 200
 
@@ -75,7 +74,7 @@ async def test_everybody_signed_in_sees_whose_licence_it_is(client, db, licence_
 
     notice = (await client.get('/portal/licence/notice', headers=member)).json()
 
-    assert notice == {'warnings': [], 'customer': 'Example Bank N.V.', 'licence_id': 'IE-TEST-0042', 'clock': None}
+    assert notice == {'warnings': [], 'customer': 'Example Bank N.V.', 'licence_id': 'IE-TEST-0042'}
 
 
 async def test_an_altered_licence_on_disk_names_nobody(client, db, licence_path, licence) -> None:
@@ -173,7 +172,6 @@ async def test_everybody_sees_the_banner_while_a_licence_has_lapsed(client, db, 
         ],
         'customer': 'Example Bank N.V.',
         'licence_id': 'IE-TEST-0042',
-        'clock': None,
     }
 
 
