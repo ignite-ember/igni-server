@@ -48,4 +48,22 @@ describe('LicenceBanner', () => {
     expect(await screen.findByText(GRACE)).toBeInTheDocument()
     expect(screen.getByText(READ_ONLY)).toBeInTheDocument()
   })
+
+  test('says when the system clock is behind a time the deployment has already seen', async () => {
+    const CLOCK =
+      'The system clock is earlier than a time this deployment has already seen (2027-03-01 12:00 UTC). The licence is evaluated at that time; fix the clock.'
+    server.use(
+      http.get('/v1/portal/licence/notice', () =>
+        HttpResponse.json({
+          warnings: [{ module: 'artifacts', state: 'read_only', message: READ_ONLY }],
+          clock: CLOCK,
+        }),
+      ),
+    )
+
+    renderWithProviders(<LicenceBanner />)
+
+    expect(await screen.findByText(CLOCK)).toBeInTheDocument()
+    expect(screen.getByText(READ_ONLY)).toBeInTheDocument()
+  })
 })

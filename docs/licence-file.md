@@ -257,11 +257,36 @@ carry no licence.
 
 | Where | What |
 |---|---|
-| Portal | A banner on every page for everybody signed in (`GET /v1/portal/licence/notice`), one sentence per module that is expiring, lapsed, read-only or whose file does not verify. Nothing on a deployment with no paid module. A super admin sees the whole licence on the *Licence* page (`GET /v1/portal/licence`) |
+| Portal | A banner on every page for everybody signed in (`GET /v1/portal/licence/notice`), one sentence per module that is expiring, lapsed, read-only or whose file does not verify, and one while the system clock is behind a time the deployment has already seen ("The clock"). Nothing on a deployment with no paid module. A super admin sees the whole licence on the *Licence* page (`GET /v1/portal/licence`) |
 | Module responses | `igni-licence: grace; days-left=60` (or `valid; days-left=12`, `read_only`) on every response while there is something to say, for clients to show |
 | Module status | `GET /v1/licence` on each Python module: the module's status and its band |
 | Audit trail | Once a UTC day while any module needs attention, a `licence:daily` event in the deployment's own trail, with each module's state |
 | Logs and metrics | A warning once a day in each module's log. The gateway exports `igni_gateway_licence_state{state}`, `licence_people`, `licence_band` and `wakes_refused_total{why="licence"}` |
+
+## The clock
+
+The licence is offline, so the time is the deployment's own. Winding the
+clock back past `expires` does not make a licence valid again: each
+component (igni server, each Python module, the Fleet gateway) keeps the
+latest time it has seen in its own database and evaluates the licence at
+
+    max(now, latest time seen − 24 hours, the licence's issued)
+
+With a correct clock the latest time seen is never ahead of it, and
+nothing changes. An NTP correction of less than a day changes nothing
+either.
+
+| | |
+|---|---|
+| Where it is kept | igni server: `licence_clock` on the shared plane. CodeIndex and Artifacts: `licence_clock` in their shared plane. Fleet: `gw_kv` key `licence_clock` |
+| When it moves on | At start and every 10 minutes, to the earlier of the component's clock and its database's, but only while the two agree within 48 hours. A clock set wrongly into the future that the database does not share moves nothing, and correcting it puts everything back |
+| The first start | Seeded from what the component recorded before it kept a mark, when the database's clock could have reached it: igni server's newest `licence:daily` audit event, the newest `licence_seats` row in a module, the newest `gw_audit` row in Fleet |
+| A renewal | Applies at once: a renewed licence's later `expires` is valid whatever time it is evaluated at |
+| When the clock is behind | More than 24 hours behind the latest time seen: a warning in the component's log, `clock` on `GET /v1/portal/licence/notice` (the portal banner) and on each module's `GET /v1/licence`, and in Fleet the metric `licence_clock_behind_seconds`. The sentence: "The system clock is earlier than a time this deployment has already seen (*time*). The licence is evaluated at that time; fix the clock." |
+
+The shared logic is `app/services/licence/clock.py` (copied into each
+module like the rest of the licence core) and `crates/licence/src/clock.rs`
+in the Fleet gateway.
 
 ## The band
 
@@ -308,9 +333,15 @@ signed licence that does not verify against `RELEASE_KEYS`.
 
 ## Known limits
 
-* **The clock is the customer's.** A deployment that sets its clock back
-  delays the lapse. Nothing records the latest time seen. The contract and
-  the audit right are the backstop (license-enforcement.md).
+* **The clock is the customer's, within limits** (see "The clock"). A
+  deployment that resets every component's database to an old backup and
+  winds every clock back with it resets the latest time seen. That takes
+  deliberate, coordinated tampering; the contract and the audit right are
+  the backstop (license-enforcement.md). A clock set wrongly into the
+  future on the application host *and* the database host together moves
+  the mark on: after the clocks are corrected, the licence is evaluated
+  up to a day before that time until the stored mark is cleared, which is
+  a support case.
 * **A node agent's own timed wakes.** A node resumes its suspended VMs at
   igni's `wake_at` itself, without asking the gateway. These are not yet
   refused in read-only (`igni__cloudvm/crates/node-agent`).

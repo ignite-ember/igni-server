@@ -27,7 +27,7 @@ from app.security.database_checks import DatabaseChecks
 from app.security.startup_checks import SettingsChecks
 from app.services.ai.pool_manager import PoolManager
 from app.services.cloud.producer_feed import ProducerFeed
-from app.services.deployment_licence import DeploymentLicence, LicenceDailyAudit
+from app.services.deployment_licence import DeploymentLicence, LicenceClockKeeper, LicenceDailyAudit
 from app.services.identity.extension_assets import ASSET_UPLOAD_PATH, MAX_ASSET_BYTES
 from app.services.identity.extension_bundle import EXTENSION_UPLOAD_PATH, MAX_ARCHIVE_BYTES
 from app.services.identity.key_ring import ProcessSigningKeys
@@ -86,6 +86,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     licence_daily_audit = LicenceDailyAudit(licence=DeploymentLicence.of_app(app))
     licence_daily_audit.start()
 
+    # The licence's clock: the latest time this deployment has seen, so
+    # a clock wound back does not wind the licence back, and the banner
+    # agrees with the modules that keep the same mark. Read once here,
+    # before the first request; a database that cannot answer yet leaves
+    # the licence on the clock alone until the loop's next round.
+    licence_clock = LicenceClockKeeper(DeploymentLicence.of_app(app).high_water)
+    await licence_clock.sync_if_due()
+    licence_clock.start()
+
     # Clock skew (B8). Session revocation, the audit trail's ordering and
     # retention windows all compare this process's clock with the
     # database's, and all fail quietly when the two disagree.
@@ -114,6 +123,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await retention.stop()
     await organisation_deletions.stop()
     await licence_daily_audit.stop()
+    await licence_clock.stop()
     key_reload.cancel()
     feed_started.cancel()
     await clock_skew.stop()

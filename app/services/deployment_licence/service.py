@@ -8,6 +8,9 @@ what it may do (docs/licence-file.md). What igni server does:
 * shows a super admin where each module stands (`overview`);
 * tells everybody who signs in to the portal when something needs
   doing — a licence expiring, lapsed or read-only (`notice`);
+* says so while the clock is behind a time the deployment has already
+  seen, at which the licence is then evaluated (`clock_warning`; the
+  mark is kept by `LicenceClockKeeper`, as in every module);
 * installs a licence a super admin uploads, after verifying it, when the
   licence path is writable (`install`). Where it is a mounted Secret,
   the Secret is updated instead and this says so.
@@ -26,6 +29,7 @@ from starlette.applications import Starlette
 from app.config import settings
 from app.services.deployment_licence.schemas import LicenceNotice, LicenceOverview, LicenceWarning
 from app.services.licence import (
+    HighWaterMark,
     LicenceEnvelope,
     LicenceError,
     LicenceFile,
@@ -68,7 +72,7 @@ class DeploymentLicence:
     def from_settings(cls) -> DeploymentLicence:
         """The licence at the configured path, verified against this environment's keys."""
         verifier = LicenceVerifier(TrustedKeys.for_environment(settings.app_env))
-        return cls(LicenceFile(Path(settings.igni_licence_file), verifier=verifier), verifier=verifier)
+        return cls(LicenceFile(Path(settings.igni_licence_file), verifier=verifier, high_water=HighWaterMark()))
 
     @classmethod
     def of_app(cls, app: Starlette) -> DeploymentLicence:
@@ -77,6 +81,10 @@ class DeploymentLicence:
         if licence is None:
             licence = app.state.deployment_licence = cls.from_settings()
         return licence
+
+    @property
+    def high_water(self) -> HighWaterMark:
+        return self._source.high_water
 
     def statuses(self) -> list[ModuleStatus]:
         return [self._source.status(module) for module in Module]
@@ -95,6 +103,7 @@ class DeploymentLicence:
             kind=reading.payload.kind if reading.payload else None,
             issued=reading.payload.issued if reading.payload else None,
             modules=self.statuses(),
+            clock=self._source.clock_warning(),
         )
 
     def notice(self) -> LicenceNotice:
@@ -110,6 +119,7 @@ class DeploymentLicence:
             warnings=warnings,
             customer=payload.customer if payload else None,
             licence_id=payload.licence_id if payload else None,
+            clock=self._source.clock_warning(),
         )
 
     def install(self, envelope: LicenceEnvelope) -> LicenceOverview:

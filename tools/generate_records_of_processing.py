@@ -346,6 +346,12 @@ NO_PERSONAL_DATA: tuple[tuple[str, str], ...] = (
         'declares it, or with the registration it belongs to.',
     ),
     (
+        'licence_clock',
+        'The latest time the deployment has seen, for the licence: one row, '
+        'a timestamp and when it was last raised. No person is named. Kept '
+        'so that a clock wound back does not wind the licence back.',
+    ),
+    (
         'org_domains',
         'The email domains each organisation claims — `acme.com`, not '
         "anybody's address — which decide the organisation a new account "

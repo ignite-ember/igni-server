@@ -22,6 +22,8 @@ class LicenceOverview(BaseModel):
     kind: LicenceKind | None = None
     issued: datetime | None = None
     modules: list[ModuleStatus]
+    #: Set while the clock is behind a time this deployment has already seen; the licence is evaluated at that time.
+    clock: str | None = None
 
 
 class LicenceWarning(BaseModel):
@@ -39,9 +41,11 @@ class LicenceNotice(BaseModel):
     `licence_id` name the licensee of a verified licence, and are None
     when there is none — no file, or one that is not good. The portal
     shows them quietly on every page, so a deployment copied or shared
-    beyond its contract says whose it is.
+    beyond its contract says whose it is. `clock` is set while the
+    system clock is behind a time this deployment has already seen.
     """
 
     warnings: list[LicenceWarning]
     customer: str | None = None
     licence_id: str | None = None
+    clock: str | None = None

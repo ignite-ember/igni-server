@@ -5426,8 +5426,19 @@
         "type": "string"
       },
       "LicenceNotice": {
-        "description": "What everybody signed in sees: the banner, and whose licence this is.\n\n`warnings` is empty when nothing needs doing. `customer` and\n`licence_id` name the licensee of a verified licence, and are None\nwhen there is none — no file, or one that is not good. The portal\nshows them quietly on every page, so a deployment copied or shared\nbeyond its contract says whose it is.",
+        "description": "What everybody signed in sees: the banner, and whose licence this is.\n\n`warnings` is empty when nothing needs doing. `customer` and\n`licence_id` name the licensee of a verified licence, and are None\nwhen there is none — no file, or one that is not good. The portal\nshows them quietly on every page, so a deployment copied or shared\nbeyond its contract says whose it is. `clock` is set while the\nsystem clock is behind a time this deployment has already seen.",
         "properties": {
+          "clock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock"
+          },
           "customer": {
             "anyOf": [
               {
@@ -5467,6 +5478,17 @@
       "LicenceOverview": {
         "description": "Everything a super admin sees: the installed file and each module's standing.",
         "properties": {
+          "clock": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock"
+          },
           "customer": {
             "anyOf": [
               {
