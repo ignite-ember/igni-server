@@ -62,6 +62,16 @@ desktop until the person first switches to the cloud (see **Changed**).
   and fetching attachments are unchanged. A person who uses Fleet only
   from a program sets the owner to `cloud` once.
 
+### Fixed
+
+- **The security pack says what has shipped.** `docs/SECURITY_PACK.md`
+  still said the release keys did not exist and that no release or bundle
+  had been made; 0.7.0 was signed and its bundle kept on 2026-11-12. It
+  now says so, lists Fleet 0.1.0's throwaway profile-layer key as a gap,
+  and, with `docs/OFFLINE_UPDATES.md`, says that the module repositories'
+  `release` environments sign their own images too, not only the private
+  release repository's.
+
 ## [0.7.1] - 2026-11-16
 
 The first release after 0.7.0, and the one the end-to-end campaign's
