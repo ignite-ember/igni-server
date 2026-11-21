@@ -62,6 +62,14 @@ desktop until the person first switches to the cloud (see **Changed**).
   and fetching attachments are unchanged. A person who uses Fleet only
   from a program sets the owner to `cloud` once.
 
+### Security
+
+- **The bundle carries Fleet 0.1.1.** `containers/release/artefacts.tsv`
+  pins `igni-fleet` 0.1.1 in place of 0.1.0. Fleet 0.1.0's guest base
+  trusts a throwaway profile-layer key, so no real profile layer verifies
+  against it, and has dnspython 2.9.1 (CVE-2026-128089); 0.1.1's base
+  trusts the platform's key and has dnspython 2.9.2.
+
 ### Fixed
 
 - **The security pack says what has shipped.** `docs/SECURITY_PACK.md`
