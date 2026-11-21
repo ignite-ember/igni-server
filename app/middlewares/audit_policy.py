@@ -30,6 +30,9 @@ _AUDITED_PREFIXES = (
     '/v1/service-items',
     '/v1/service-attachments',
     '/v1/me/mcp-approvals',
+    # A person choosing whether their desktop or their cloud VM receives
+    # their service events.
+    '/v1/me/cloud',
     # An identity provider creating, changing, deactivating and deleting
     # people. Not under `/v1` because the standard fixes the path.
     '/scim/v2',

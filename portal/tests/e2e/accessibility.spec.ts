@@ -181,4 +181,58 @@ test.describe('accessibility', () => {
     )
     expect(summary, summary.join('\n')).toEqual([])
   })
+  test('where igni runs: the card and its warning are labelled and pass axe', async ({ page }) => {
+    // Not a route the loop above visits (its path names a group id; see
+    // the note in visual.spec.ts), and the warning is a dialog, which
+    // only exists once somebody opens it.
+    const recording = JSON.parse(
+      readFileSync(join(FIXTURES, 'group-mode.json'), 'utf8'),
+    ) as Record<string, { status: number; body: string }>
+    const unmatched: string[] = []
+    await page.route('**/v1/**', (apiRoute) => {
+      const url = new URL(apiRoute.request().url())
+      const bare = `${apiRoute.request().method()} ${url.pathname}`
+      const hit = recording[bare]
+      if (!hit) unmatched.push(bare)
+      return apiRoute.fulfill(
+        hit
+          ? { status: hit.status, contentType: 'application/json', body: hit.body }
+          : { status: 599, body: '{"detail":"no recording"}' },
+      )
+    })
+    await page.addInitScript(() => {
+      localStorage.setItem('igni_token', 'tok-e2e-axe')
+    })
+
+    await page.goto('/groups/d3713926-fc5f-451e-ad0b-3d926bd16d96')
+    await page.waitForLoadState('networkidle')
+    const card = page.locator('.settings-card', { hasText: 'Where igni runs for this group' })
+    await expect(card).toBeVisible()
+    expect(unmatched, unmatched.join('\n')).toEqual([])
+
+    const summarise = (
+      violations: { id: string; impact?: string | null; nodes: { target: unknown[] }[]; help: string }[],
+    ) =>
+      violations.map(
+        (v) => `${v.id} (${v.impact}, ${v.nodes.length}×): ${v.help} — ${v.nodes.map((n) => n.target.join(' ')).join(', ')}`,
+      )
+
+    const onPage = summarise((await new AxeBuilder({ page }).withTags(TAGS).analyze()).violations)
+    expect(onPage, onPage.join('\n')).toEqual([])
+
+    await card.getByRole('button', { name: 'Cloud only' }).click()
+    await page.getByRole('menuitemradio', { name: /^This computer only/ }).click()
+    const dialog = page.getByRole('alertdialog')
+    await expect(dialog).toBeVisible()
+    // The whole page, not only the dialog: Primer's dialog sits *inside* its
+    // backdrop, whose fade-in is an animation on an ancestor. Waiting on the
+    // dialog's subtree alone let axe measure the confirm button through a
+    // backdrop at 70% — white on green at 4.42:1 — on a slow runner.
+    await settled(page.locator('body'))
+    await expect(dialog).toHaveAccessibleName(/computers only/i)
+
+    const inDialog = summarise((await new AxeBuilder({ page }).withTags(TAGS).analyze()).violations)
+    expect(await dialog.count()).toBe(1)
+    expect(inDialog, inDialog.join('\n')).toEqual([])
+  })
 })

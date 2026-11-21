@@ -15,6 +15,53 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
+The server side of the desktop app's Local / Cloud switch and of a
+group's mode (igni-core `docs/design/local-cloud-switch.md`). It changes
+an interface: a person's service events now go to one side, and to the
+desktop until the person first switches to the cloud (see **Changed**).
+
+### Added
+
+- **A group says where igni runs for its people.** `org_groups.mode` is
+  `local` (only on their computers), `cloud` (only in the cloud) or
+  `local_and_cloud` (both, switched in the desktop app) — the last for
+  every existing group, which is what they did. It is read and set with
+  the group (`PATCH /v1/portal/groups/{id}`, admin only, on the Default
+  group too, which takes nothing else), audited with
+  `{"mode": {"from", "to"}}`, copied with a group, and carried in the
+  signed group pack as `mode`, after `theme`. The portal's group
+  settings have a card for it, "Where igni runs for this group", which
+  warns before a change that disconnects people from the cloud.
+- **`GET /v1/me/cloud`** tells the desktop whether a person has a cloud
+  igni (`cloud`, and `reason` when not: `fleet_not_configured`,
+  `not_licensed`, `inactive`, `group_local_only`), the gateway's address,
+  their group's mode and who pulls their events — igni-sdk's
+  `cloud-discovery.schema.json`. The person's own session only; `ETag`
+  and `Cache-Control: private, max-age=60`.
+- **`PUT /v1/me/cloud/events-owner`** `{"owner": "local"|"cloud"}`
+  chooses which side pulls the person's events where their group runs
+  igni in both; `409 {"error": "mode_forbids"}` otherwise. Audited.
+- **The producer feed says why a producer is inactive.** A person whose
+  group runs igni only on their computers is listed `active: false` with
+  `inactive_reason: "group_local_only"` — not removed, so their VM is
+  kept — and the group trigger fires on `mode`, so the gateway hears at
+  once. Their VM can neither sign in nor renew its credential
+  (`invalid_grant`, `"reason": "group_local_only"`); the family is not
+  revoked.
+
+### Changed
+
+- **A person's events go to one side.** The desktop's pull and the
+  gateway's pull no longer race for one lease: the owner is the
+  desktop in a `local` group, the cloud in a `cloud` group, and the
+  person's choice in a `local_and_cloud` one — the desktop until they
+  first switch. While the cloud owns them, `POST /v1/me/events/pull` is
+  `409 {"error": "events_owned_elsewhere", "owner": "cloud"}`; while the
+  desktop does, the gateway's pull for the person answers no events and
+  `/v1/platform/wakes` does not list them for those events. Acknowledging
+  and fetching attachments are unchanged. A person who uses Fleet only
+  from a program sets the owner to `cloud` once.
+
 ## [0.7.1] - 2026-11-16
 
 The first release after 0.7.0, and the one the end-to-end campaign's

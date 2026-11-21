@@ -1,12 +1,34 @@
 """OrgGroup model — an org-scoped user group."""
 
 from datetime import datetime, timezone
+from typing import Final, Literal
 import uuid
 
-from sqlalchemy import Boolean, Column, ForeignKey, func, Index, Text, text, TIMESTAMP, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Column,
+    ForeignKey,
+    func,
+    Index,
+    Text,
+    text,
+    TIMESTAMP,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped
 
 from app.db.sql.models import TenantBase
+
+#: Where igni runs for a group's people (igni-core `docs/design/local-cloud-switch.md` §6).
+#: Only on their computers: no cloud VM is woken or signed in for them.
+LOCAL: Final = 'local'
+#: Only in the cloud: the desktop app connects to their VM and runs nothing itself.
+CLOUD: Final = 'cloud'
+#: Both, and each person switches in the desktop app. What every group was before the column.
+LOCAL_AND_CLOUD: Final = 'local_and_cloud'
+
+GroupMode = Literal['local', 'cloud', 'local_and_cloud']
 
 
 class OrgGroup(TenantBase):
@@ -18,6 +40,7 @@ class OrgGroup(TenantBase):
         # the same rule with a different object makes every future
         # ``--autogenerate`` propose swapping one for the other.
         UniqueConstraint('org_id', 'name', name='uq_org_groups_org_name'),
+        CheckConstraint("mode IN ('local', 'cloud', 'local_and_cloud')", name='ck_org_groups_mode'),
     )
 
     id: Mapped[str] = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -52,6 +75,16 @@ class OrgGroup(TenantBase):
     # and matching on 'Default' would hand them a fresh one the next
     # time anything asked.
     is_default: Mapped[bool] = Column(Boolean, nullable=False, server_default=text('false'))
+    #: Where igni runs for this group's people: `LOCAL`, `CLOUD` or
+    #: `LOCAL_AND_CLOUD`. A column rather than a settings entry, because
+    #: igni server enforces it itself — the producer feed and the VM
+    #: sign-in read it — and policy JSON is not something to parse there.
+    #: It rides the signed pack, so the desktop enforces it offline too.
+    #: A row built in memory and never stored has none: read it as
+    #: `LOCAL_AND_CLOUD`, which is what the column's default stores.
+    mode: Mapped[GroupMode] = Column(
+        Text, nullable=False, server_default=text("'local_and_cloud'"), default=LOCAL_AND_CLOUD
+    )
 
     # ``SET NULL`` and nullable: this records who made the row, and the
     # row has to outlive them. With ``NO ACTION`` and ``NOT NULL``,

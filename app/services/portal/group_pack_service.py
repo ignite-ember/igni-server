@@ -9,6 +9,7 @@ from app.api.base_v1.schema.portal.group_pack import OrgGroupPack
 from app.api.base_v1.schema.portal.group_theme import GroupTheme
 from app.db.sql.group_entries import GroupEntriesDB
 from app.db.sql.groups import GroupsDB
+from app.db.sql.models.org_group import LOCAL_AND_CLOUD
 from app.services.portal.default_group import DefaultGroup
 
 
@@ -56,5 +57,6 @@ class GroupPackService:
             entries=[OrgGroupPackEntry.of(entry) for entry in entries if entry.enabled],
             default_model=group.default_model,
             theme=GroupTheme.from_column(group.theme),
+            mode=group.mode or LOCAL_AND_CLOUD,
             org_id=summary.org_id,
         )

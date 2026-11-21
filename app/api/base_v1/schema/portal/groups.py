@@ -12,7 +12,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.base_v1.schema.portal.group_theme import GroupTheme
-from app.db.sql.models.org_group import OrgGroup
+from app.db.sql.models.org_group import GroupMode, LOCAL_AND_CLOUD, OrgGroup
 from app.db.sql.models.org_group_member import OrgGroupMember
 from app.db.sql.schemas.group import GroupPatch, GroupSettings, GroupTally
 
@@ -40,6 +40,9 @@ class OrgGroupResponse(BaseModel):
     # The group seeded with what igni ships. Shown as such when picking
     # a template, since "the standard set" is the one people want.
     is_default: bool = False
+    # Where igni runs for the group's people: only on their computers,
+    # only in the cloud, or both with a switch in the desktop app.
+    mode: GroupMode = LOCAL_AND_CLOUD
     created_by_user_id: str
     created_at: datetime
     updated_at: datetime
@@ -55,10 +58,18 @@ class OrgGroupResponse(BaseModel):
             default_model=group.default_model,
             theme=GroupTheme.from_column(group.theme),
             is_default=bool(group.is_default),
+            mode=group.mode or LOCAL_AND_CLOUD,
             created_by_user_id=group.created_by_user_id,
             created_at=group.created_at,
             updated_at=group.updated_at,
         )
+
+
+class GroupUpdated(BaseModel):
+    """A group just changed, and where igni ran for its people before — for the audit row."""
+
+    group: OrgGroupResponse
+    mode_was: GroupMode
 
 
 class OrgGroupDetail(OrgGroupResponse):
@@ -138,6 +149,7 @@ class CopyGroupRequest(BaseModel):
             description=self.description if self.description is not None else kept,
             default_model=source.default_model,
             theme=source.theme,
+            mode=source.mode or LOCAL_AND_CLOUD,
         )
 
 
@@ -154,12 +166,23 @@ class UpdateGroupRequest(BaseModel):
     and absent still means "leave it alone". Both end up storing NULL —
     a theme that overrides nothing *is* igni's palette — so the two
     spellings agree on the result.
+
+    ``mode`` is never cleared: absent leaves it alone. It is the one field
+    the Default group takes, because where igni runs is the organisation's
+    decision about its people, not part of what igni ships.
     """
 
     name: str | None = Field(None, min_length=1, max_length=120)
     description: str | None = None
     default_model: str | None = None
     theme: GroupTheme | None = None
+    mode: GroupMode | None = Field(
+        None,
+        description=(
+            "Where igni runs for the group's people: `local` (only on their computers), `cloud` (only in "
+            'the cloud) or `local_and_cloud` (both, switched in the desktop app). Omit to leave it.'
+        ),
+    )
 
     def to_patch(self) -> GroupPatch:
         """The edit this request asks for: only the fields it supplies.
@@ -180,6 +203,8 @@ class UpdateGroupRequest(BaseModel):
             patch.default_model = self.default_model or None
         if self.theme is not None:
             patch.theme = self.theme.to_column()
+        if self.mode is not None:
+            patch.mode = self.mode
         return patch
 
 

@@ -3,6 +3,11 @@
 Every exchange rotates the credential; a lost reply may be retried once
 within 60 seconds; anything else rotated-away presented again revokes
 the family (`app.services.cloud.vm_credentials`, `docs/service-identity.md` §16).
+
+A person whose group runs igni only on their computers is refused both —
+`invalid_grant` with `reason: group_local_only` — so a VM somehow still
+awake cannot renew (igni-core `docs/design/local-cloud-switch.md` §6.3).
+The family is not revoked: moving the group back lets the VM renew again.
 """
 
 from __future__ import annotations
@@ -10,6 +15,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import logging
 
+from app.db.sql.cloud_standing import CloudStandingDB
+from app.db.sql.models.org_group import LOCAL
+from app.db.sql.models.producer_feed import GROUP_LOCAL_ONLY
 from app.db.sql.models.vm_credential import IDLE
 from app.db.sql.organizations import OrganizationDB
 from app.db.sql.vm_credentials import Rotation, VmCredentialsDB
@@ -42,6 +50,7 @@ class VmCredentialGrants:
         holders: VmHolders | None = None,
         people: PeopleInOrganisations | None = None,
         tokens: JWTService | None = None,
+        standing: CloudStandingDB | None = None,
     ) -> None:
         self._credentials = credentials or VmCredentials()
         self._db = db or VmCredentialsDB()
@@ -49,6 +58,7 @@ class VmCredentialGrants:
         self._holders = holders or VmHolders()
         self._people = people or PeopleInOrganisations()
         self._tokens = tokens or JWTService()
+        self._standing = standing or CloudStandingDB()
 
     async def grant(self, request: TokenRequest) -> IssuedTokens:
         if request.grant_type == VM_SIGN_IN:
@@ -73,6 +83,7 @@ class VmCredentialGrants:
         if claims.org_id and org_id != claims.org_id:
             raise OAuthError.invalid_target('this session is pinned to a different organisation')
         await self._people.check(claims.user_id, org_id, issued_at=claims.issued_at)
+        await self._cloud_allowed(org_id, claims.user_id)
         issued = await self._credentials.issue(
             org_id, ProducerRef(kind=PERSON, id=claims.user_id), by_kind=PERSON, by_id=claims.user_id, for_pickup=False
         )
@@ -91,6 +102,8 @@ class VmCredentialGrants:
             await self._db.revoke(org_id, row.id, reason=IDLE, by_id=None)
             raise OAuthError.invalid_grant('this VM credential expired after 90 days unused')
         await self._still_allowed(org_id, credential)
+        if credential.producer.kind == PERSON:
+            await self._cloud_allowed(org_id, credential.producer.id)
         successor = await self._rotate(org_id, presented)
         return await self._tokens_for(org_id, credential, vm_credential=successor.render())
 
@@ -124,6 +137,16 @@ class VmCredentialGrants:
         except OAuthError:
             await self._db.revoke(org_id, credential.credential_id, reason=holder.gone, by_id=None)
             raise
+
+    async def _cloud_allowed(self, org_id: str, user_id: str) -> None:
+        """Refuse a person whose group runs igni only on their computers; nothing is revoked."""
+        standing = (await self._standing.standing(org_id, [user_id]))[user_id]
+        if standing.mode == LOCAL:
+            # The token first, then the sentence: the gateway and igni-client
+            # read the description's first word as the stable reason.
+            raise OAuthError.invalid_grant(
+                f"{GROUP_LOCAL_ONLY}: this person's group runs igni only on their computers", reason=GROUP_LOCAL_ONLY
+            )
 
     async def _tokens_for(self, org_id: str, credential: VmCredentialRecord, *, vm_credential: str) -> IssuedTokens:
         token = await self._holders.of(credential.producer.kind).token(org_id, credential.producer.id)

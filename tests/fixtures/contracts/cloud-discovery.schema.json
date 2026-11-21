@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ignite-ember.sh/schema/cloud-discovery-1.json",
+  "title": "igni cloud discovery",
+  "description": "igni server's GET /v1/me/cloud: whether a person has a cloud igni they may use from the desktop, the gateway's address, their group's mode and who pulls their service events. The design is igni-core's docs/design/local-cloud-switch.md §2.1 and §7. This file is the single source: igni-server's OpenAPI model, igni-client's discover() and the desktop shell are each tested against it. The document validates the 200 body; $defs also hold the PUT /v1/me/cloud/events-owner body and the refusals. Only a person's session token is answered: an app, space or VM token gets 403, no token or a refused one 401. The 200 answer carries Cache-Control: private, max-age=60 and an ETag, and a matching If-None-Match gets 304 with no body. Additive only: a client ignores fields it does not know, reads an unknown `cloud` as `unavailable`, an unknown `mode` as `local` and an unknown `events_owner` as `local`, and shows an unknown `reason` as plain \"unavailable\".",
+  "$ref": "#/$defs/CloudDiscovery",
+  "$defs": {
+    "CloudDiscovery": {
+      "title": "GET /v1/me/cloud, 200",
+      "description": "What igni server says of this person's cloud igni. PUT /v1/me/cloud/events-owner answers 200 with this too.",
+      "type": "object",
+      "required": ["cloud", "reason", "gateway_url", "mode", "events_owner", "group", "producer"],
+      "additionalProperties": true,
+      "properties": {
+        "cloud": {"$ref": "#/$defs/Cloud"},
+        "reason": {"$ref": "#/$defs/Reason"},
+        "gateway_url": {
+          "description": "The gateway's public address, the same value igni server advertises as `igni_gateway` in /.well-known/openid-configuration. Null when Fleet is not configured. A client refuses a plain-HTTP gateway outside a development build (design §9, Q10).",
+          "oneOf": [
+            {"type": "string", "pattern": "^https?://[^/?#\\s]+(/[^?#\\s]*)?$"},
+            {"type": "null"}
+          ]
+        },
+        "mode": {"$ref": "#/$defs/Mode"},
+        "events_owner": {"$ref": "#/$defs/EventsOwner"},
+        "group": {
+          "description": "The person's group, for display. Null when the person is in no group.",
+          "oneOf": [{"$ref": "#/$defs/Group"}, {"type": "null"}]
+        },
+        "producer": {
+          "type": "string",
+          "description": "The gateway's producer id for this person (`person:<id>`), for logs and support.",
+          "pattern": "^person:.+$"
+        }
+      },
+      "allOf": [
+        {
+          "description": "Available: no reason, and a gateway to reach.",
+          "if": {"properties": {"cloud": {"const": "available"}}, "required": ["cloud"]},
+          "then": {"properties": {"reason": {"type": "null"}, "gateway_url": {"type": "string"}}}
+        },
+        {
+          "description": "Unavailable: always a reason.",
+          "if": {"properties": {"cloud": {"const": "unavailable"}}, "required": ["cloud"]},
+          "then": {"properties": {"reason": {"type": "string"}}}
+        },
+        {
+          "description": "The gateway's address is null exactly when Fleet is not configured.",
+          "if": {"properties": {"gateway_url": {"type": "null"}}, "required": ["gateway_url"]},
+          "then": {"properties": {"cloud": {"const": "unavailable"}, "reason": {"const": "fleet_not_configured"}}},
+          "else": {"properties": {"reason": {"not": {"const": "fleet_not_configured"}}}}
+        },
+        {
+          "description": "A group that runs igni only on the desktop has no cloud igni, and its events are pulled locally.",
+          "if": {"properties": {"mode": {"const": "local"}}, "required": ["mode"]},
+          "then": {"properties": {"cloud": {"const": "unavailable"}, "events_owner": {"const": "local"}}}
+        },
+        {
+          "description": "A group that runs igni only in the cloud has its events pulled there.",
+          "if": {"properties": {"mode": {"const": "cloud"}}, "required": ["mode"]},
+          "then": {"properties": {"events_owner": {"const": "cloud"}}}
+        },
+        {
+          "description": "group_local_only is the reason only for a group in `local` mode.",
+          "if": {"properties": {"reason": {"const": "group_local_only"}}, "required": ["reason"]},
+          "then": {"properties": {"mode": {"const": "local"}}}
+        }
+      ],
+      "examples": [
+        {
+          "cloud": "available",
+          "reason": null,
+          "gateway_url": "https://fleet.acme.example",
+          "mode": "local_and_cloud",
+          "events_owner": "local",
+          "group": {"id": "7f3e9a52-4c1d-4b8e-9f2a-0d6c3b1e5a77", "name": "Engineering"},
+          "producer": "person:2b9c41d0-8e7f-4a3b-b5c6-1d2e3f4a5b6c"
+        },
+        {
+          "cloud": "available",
+          "reason": null,
+          "gateway_url": "https://fleet.acme.example",
+          "mode": "cloud",
+          "events_owner": "cloud",
+          "group": {"id": "7f3e9a52-4c1d-4b8e-9f2a-0d6c3b1e5a77", "name": "Engineering"},
+          "producer": "person:2b9c41d0-8e7f-4a3b-b5c6-1d2e3f4a5b6c"
+        },
+        {
+          "cloud": "unavailable",
+          "reason": "group_local_only",
+          "gateway_url": "https://fleet.acme.example",
+          "mode": "local",
+          "events_owner": "local",
+          "group": {"id": "7f3e9a52-4c1d-4b8e-9f2a-0d6c3b1e5a77", "name": "Engineering"},
+          "producer": "person:2b9c41d0-8e7f-4a3b-b5c6-1d2e3f4a5b6c"
+        },
+        {
+          "cloud": "unavailable",
+          "reason": "fleet_not_configured",
+          "gateway_url": null,
+          "mode": "local_and_cloud",
+          "events_owner": "local",
+          "group": {"id": "7f3e9a52-4c1d-4b8e-9f2a-0d6c3b1e5a77", "name": "Engineering"},
+          "producer": "person:2b9c41d0-8e7f-4a3b-b5c6-1d2e3f4a5b6c"
+        },
+        {
+          "cloud": "unavailable",
+          "reason": "inactive",
+          "gateway_url": "https://fleet.acme.example",
+          "mode": "local_and_cloud",
+          "events_owner": "local",
+          "group": null,
+          "producer": "person:2b9c41d0-8e7f-4a3b-b5c6-1d2e3f4a5b6c"
+        },
+        {
+          "cloud": "unavailable",
+          "reason": "not_licensed",
+          "gateway_url": "https://fleet.acme.example",
+          "mode": "cloud",
+          "events_owner": "cloud",
+          "group": {"id": "7f3e9a52-4c1d-4b8e-9f2a-0d6c3b1e5a77", "name": "Engineering"},
+          "producer": "person:2b9c41d0-8e7f-4a3b-b5c6-1d2e3f4a5b6c"
+        }
+      ]
+    },
+    "Cloud": {
+      "description": "Whether this person has a cloud igni they may use from the desktop.",
+      "enum": ["available", "unavailable"]
+    },
+    "Reason": {
+      "description": "Why the cloud igni is unavailable; null when it is available. An open set: a client shows a value it does not know as plain \"unavailable\". fleet_not_configured: this igni server has no Fleet. group_local_only: the person's group runs igni only on the desktop. inactive: the person is not an active producer. not_licensed: the licence does not cover this person's cloud igni.",
+      "oneOf": [
+        {"type": "null"},
+        {"enum": ["fleet_not_configured", "group_local_only", "inactive", "not_licensed"]}
+      ]
+    },
+    "Mode": {
+      "description": "Where the person's group runs igni: only on the desktop (local), only in the cloud (cloud), or either, as the person switches (local_and_cloud). The same value the signed group pack carries.",
+      "enum": ["local", "cloud", "local_and_cloud"]
+    },
+    "EventsOwner": {
+      "description": "Which side pulls this person's service events (design §7): local is the desktop, cloud the gateway for the VM. local mode makes it local, cloud mode cloud; local_and_cloud the person's last choice, local until they first choose.",
+      "enum": ["local", "cloud"]
+    },
+    "Group": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": true,
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string"}
+      }
+    },
+    "EventsOwnerRequest": {
+      "title": "PUT /v1/me/cloud/events-owner, body",
+      "description": "Who pulls this person's service events from now on. Answered 200 with a CloudDiscovery, 409 with ModeForbids when the group's mode does not allow that owner; audited.",
+      "type": "object",
+      "required": ["owner"],
+      "additionalProperties": false,
+      "properties": {
+        "owner": {"$ref": "#/$defs/EventsOwner"}
+      },
+      "examples": [{"owner": "cloud"}, {"owner": "local"}]
+    },
+    "ModeForbids": {
+      "title": "PUT /v1/me/cloud/events-owner, 409",
+      "description": "The group's mode does not allow the owner asked for: cloud in local mode, local in cloud mode.",
+      "type": "object",
+      "required": ["error"],
+      "additionalProperties": true,
+      "properties": {
+        "error": {"const": "mode_forbids"}
+      },
+      "examples": [{"error": "mode_forbids"}]
+    },
+    "Refusal": {
+      "title": "401 and 403",
+      "description": "A refused caller: 401 for no token or one igni server does not accept, 403 for a token that is not a person's session (an app, a space or a VM). The body carries igni server's reason as `detail`, or an OAuth-style `error` (with `error_description`).",
+      "type": "object",
+      "anyOf": [{"required": ["detail"]}, {"required": ["error"]}],
+      "additionalProperties": true,
+      "properties": {
+        "detail": {"type": "string"},
+        "error": {"type": "string"},
+        "error_description": {"type": "string"}
+      },
+      "examples": [{"detail": "This endpoint describes a person's desktop: sign in as a person"}]
+    }
+  }
+}

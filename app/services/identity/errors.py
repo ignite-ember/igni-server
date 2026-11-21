@@ -13,6 +13,10 @@ class OAuthError(Exception):
     or revoked — is also told that state as `client_state`, the value the
     registration answer gives as `state`, so a program need not read the
     English description to tell "wait" from "give up".
+
+    A refusal with a stable cause a program acts on is told it as
+    `reason` — `group_local_only` for a VM sign-in or renewal refused
+    because the person's group runs igni only on their computers.
     """
 
     def __init__(
@@ -22,20 +26,22 @@ class OAuthError(Exception):
         *,
         status_code: int = status.HTTP_400_BAD_REQUEST,
         client_state: str | None = None,
+        reason: str | None = None,
     ) -> None:
         super().__init__(description)
         self.error = error
         self.description = description
         self.status_code = status_code
         self.client_state = client_state
+        self.reason = reason
 
     @classmethod
     def invalid_client(cls, description: str, *, client_state: str | None = None) -> OAuthError:
         return cls('invalid_client', description, status_code=status.HTTP_401_UNAUTHORIZED, client_state=client_state)
 
     @classmethod
-    def invalid_grant(cls, description: str) -> OAuthError:
-        return cls('invalid_grant', description)
+    def invalid_grant(cls, description: str, *, reason: str | None = None) -> OAuthError:
+        return cls('invalid_grant', description, reason=reason)
 
     @classmethod
     def invalid_request(cls, description: str) -> OAuthError:
@@ -56,4 +62,6 @@ class OAuthError(Exception):
         body = {'error': self.error, 'error_description': self.description}
         if self.client_state is not None:
             body['client_state'] = self.client_state
+        if self.reason is not None:
+            body['reason'] = self.reason
         return body

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from tests.cloud_world import CloudOrg, platform, shipped, token_for
+from tests.cloud_world import CloudOrg, shipped, token_for
 
 pytestmark = pytest.mark.anyio
 
@@ -119,19 +119,6 @@ async def test_an_expired_event_is_not_handed_out(client, world, monkeypatch):
     assert await _pull(client, world['ada_session']) == []
     status = (await client.get(f'/service-events/{event_id}', headers=world['service'])).json()
     assert status['state'] == 'expired'
-
-
-async def test_the_gateway_and_the_desktop_share_one_lease(client, world):
-    """A person in the cloud and on their desktop: whichever fetches first has it for two minutes."""
-    acme = world['acme']
-    gateway = await platform(client)
-    await _send(client, world, world['ada'])
-
-    [mine] = await _pull(client, world['ada_session'])
-    vm = await client.post(f'/platform/orgs/{acme.org_id}/producers/person/{world["ada"]}/events/pull', headers=gateway)
-
-    assert mine['type'] == 'index.ready'
-    assert vm.json() == {'events': []}
 
 
 async def test_an_app_token_is_refused(client, world):

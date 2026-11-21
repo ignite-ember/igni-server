@@ -79,8 +79,9 @@ class TestEvents:
         sent = {}
         for org in orgs:
             group = await org.group('Legal')
-            person, _ = await org.person(f'ada@{org.slug}.com', group)
+            person, session = await org.person(f'ada@{org.slug}.com', group)
             await org.switch_group(group, EXTENSION)
+            await org.events_in_the_cloud(session)
             token = await token_for(client, service, organisation=org.org_id)
             response = await client.post(
                 '/service-events',

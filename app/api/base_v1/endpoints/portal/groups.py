@@ -1,7 +1,8 @@
 """Portal groups: list, create, read, update, delete and copy."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
+from app.api.base_v1.schema.audit_detail import Change, GroupModeChangedAudit
 from app.api.base_v1.schema.portal.groups import (
     CopyGroupRequest,
     CreateGroupRequest,
@@ -11,6 +12,7 @@ from app.api.base_v1.schema.portal.groups import (
     UpdateGroupRequest,
 )
 from app.api.base_v1.schema.portal.user import PortalUser
+from app.middlewares.request_audit import RequestAudit
 from app.security.portal_auth import get_current_portal_user, require_admin
 from app.services.portal.group_refusals import GroupRefusals
 from app.services.portal.groups_service import GroupsService
@@ -67,13 +69,23 @@ async def get_group(
 
 @router.patch('/groups/{group_id}', response_model=OrgGroupResponse, status_code=status.HTTP_200_OK)
 async def update_group(
+    request: Request,
     group_id: str,
     body: UpdateGroupRequest,
     current_user: PortalUser = Depends(require_admin),
 ) -> OrgGroupResponse:
-    """Update a group's name or description. Admin-only."""
+    """Update a group's settings: name, description, model, theme, or where igni runs. Admin-only.
+
+    The Default group takes only `mode`. A change of mode is audited with
+    what it was and what it is now.
+    """
     with GroupRefusals():
-        return await GroupsService().update_group(org_id=current_user.org_id, group_id=group_id, body=body)
+        updated = await GroupsService().update_group(org_id=current_user.org_id, group_id=group_id, body=body)
+    if updated.mode_was != updated.group.mode:
+        RequestAudit.of(request).add_detail(
+            GroupModeChangedAudit(mode=Change(was=updated.mode_was, now=updated.group.mode))
+        )
+    return updated.group
 
 
 @router.delete('/groups/{group_id}', status_code=status.HTTP_204_NO_CONTENT)

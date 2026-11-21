@@ -78,6 +78,9 @@ class DeploymentLicence:
     def statuses(self) -> list[ModuleStatus]:
         return [self._source.status(module) for module in Module]
 
+    def status(self, module: Module) -> ModuleStatus:
+        return self._source.status(module)
+
     def overview(self) -> LicenceOverview:
         reading = self._source.reading()
         return LicenceOverview(

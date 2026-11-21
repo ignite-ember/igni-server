@@ -131,6 +131,7 @@ async def test_the_first_poll_lists_every_producer_with_its_profile(client, acme
         'producer': {'kind': 'person', 'id': ada},
         'incarnation': row['incarnation'],
         'active': True,
+        'inactive_reason': None,
         'removed': False,
         'profile_version': standard['profile_version'],
         'packages_version': standard['packages_version'],

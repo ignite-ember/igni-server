@@ -70,6 +70,7 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         'audit_events.org_id',
         'inference_nodes.org_id',
         'org_groups.org_id',
+        'person_event_owner.org_id',
     }
     | {
         # Configuration. Describes what the deployment does, not who
@@ -84,6 +85,9 @@ NOT_PERSONAL_COLUMNS: frozenset[str] = frozenset(
         # and it says nothing about the people who see it.
         'org_groups.theme',
         'org_groups.is_default',
+        # Where igni runs for the group's people: the organisation's
+        # decision about a group, not anything about one of them.
+        'org_groups.mode',
         'org_groups.updated_at',
         'org_group_entries.kind',
         'org_group_entries.content',

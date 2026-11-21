@@ -21,6 +21,12 @@ class ProducerFeedItem(BaseModel):
     #: A person: an active member, not deactivated. An app: registered,
     #: with the cloud enabled. A space: declared, its app registered.
     active: bool
+    #: Why a producer that would be active is not, as a stable token; null
+    #: otherwise. `group_local_only`: the person's group runs igni only on
+    #: their computers — refuse a wake with that reason (1008) and kick a
+    #: live connection, but keep the VM: it is not removed. Clients treat
+    #: an unknown token as plain inactive.
+    inactive_reason: str | None = None
     #: Removed by its owner — a space or an app deleted, an account
     #: deleted or erased, an organisation deleted: erase the VM's volume
     #: and keys. Inactive and not removed is only a suspended VM. Once

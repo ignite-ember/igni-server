@@ -131,6 +131,11 @@ class CloudOrg:
             assert response.status_code == 200, response.text
         return user_id, auth_header(make_token(user_id, org_id=self.org_id))
 
+    async def events_in_the_cloud(self, session: dict[str, str]) -> None:
+        """The person's events go to their cloud VM — the gateway — rather than their desktop, as by default."""
+        response = await self.client.put('/me/cloud/events-owner', json={'owner': 'cloud'}, headers=session)
+        assert response.status_code == 200, response.text
+
     async def app(self, name: str = 'Review bot') -> RegisteredService:
         """An app registered by the org admin on the portal, holding its own key pair."""
         app = RegisteredService(kind='app', name=name, base_url='', org_id=self.org_id)
