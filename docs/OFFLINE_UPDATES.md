@@ -275,8 +275,10 @@ release tags (the commit for igni-api and igni-portal, the pinned version
 for the modules). The naming is a convention; the guarantee is the key.
 `GITHUB_TOKEN` from any branch can write any tag of a package, and GHCR
 has no immutable tags, so what stops a non-release image reaching a
-customer is that only `igni__release`'s `release` environment can sign with
-the release key, its deployment branch policy allows `main` only (which
+customer is that only the `release` environments can sign with the
+release key — `igni__release`'s, and each module repository's for its own
+images (Artifacts, CodeIndex, Fleet) — each environment's deployment
+branch policy allows its default branch only (for `igni__release`, which
 runs the release from a commit on this repository's `main`), and the
 bundle job refuses any image that key did not sign. The module
 repositories sign their own images in their own CD; the bundle takes a
