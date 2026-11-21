@@ -27,6 +27,7 @@ from app.config import settings
 from app.services.deployment_licence.schemas import LicenceNotice, LicenceOverview, LicenceWarning
 from app.services.licence import (
     LicenceEnvelope,
+    LicenceError,
     LicenceFile,
     LicenceState,
     LicenceVerifier,
@@ -58,14 +59,16 @@ class LicencePathReadOnly(Exception):
 class DeploymentLicence:
     """The licence file igni server shares with the paid modules."""
 
-    def __init__(self, source: LicenceFile) -> None:
+    def __init__(self, source: LicenceFile, *, verifier: LicenceVerifier) -> None:
+        """`verifier` must be the one `source` verifies with: an upload is checked as the installed file is."""
         self._source = source
+        self._verifier = verifier
 
     @classmethod
     def from_settings(cls) -> DeploymentLicence:
         """The licence at the configured path, verified against this environment's keys."""
         verifier = LicenceVerifier(TrustedKeys.for_environment(settings.app_env))
-        return cls(LicenceFile(Path(settings.igni_licence_file), verifier=verifier))
+        return cls(LicenceFile(Path(settings.igni_licence_file), verifier=verifier), verifier=verifier)
 
     @classmethod
     def of_app(cls, app: Starlette) -> DeploymentLicence:
@@ -112,19 +115,32 @@ class DeploymentLicence:
     def install(self, envelope: LicenceEnvelope) -> LicenceOverview:
         """Verify an uploaded licence and, if it is good, put it where every component reads it."""
         raw = envelope.model_dump_json(indent=2).encode('utf-8') + b'\n'
-        reading = self._source.read_bytes(raw)
-        if reading.payload is None:
-            reason = reading.problem or Reason.MALFORMED
-            raise LicenceRejected(reason, f'This file is not a licence igni accepts ({reason.value}).')
+        # Verified here, not through the installed file's reader: that one logs a refusal against the
+        # installed path, which named the file on disk "not accepted" when only the upload was.
+        try:
+            payload = self._verifier.verify(raw)
+        except LicenceError as exc:
+            reason = Reason(exc.reason)
+            logger.warning(
+                'licence: an uploaded licence was refused (%s): %s; the installed licence at %s is unchanged',
+                reason.value,
+                exc,
+                self._source.path,
+            )
+            raise LicenceRejected(reason, f'This file is not a licence igni accepts ({reason.value}).') from exc
         self._write(raw)
         self._source.forget()
+        logger.warning('licence: installed %s for %s at %s', payload.licence_id, payload.customer, self._source.path)
+        return self.overview()
+
+    def reject_malformed(self) -> LicenceRejected:
+        """An upload that is not even shaped like a licence file: refused as `malformed`, like any other."""
         logger.warning(
-            'licence: installed %s for %s at %s',
-            reading.payload.licence_id,
-            reading.payload.customer,
+            'licence: an uploaded licence was refused (malformed): not a licence file; '
+            'the installed licence at %s is unchanged',
             self._source.path,
         )
-        return self.overview()
+        return LicenceRejected(Reason.MALFORMED, f'This file is not a licence igni accepts ({Reason.MALFORMED.value}).')
 
     @staticmethod
     def _worth_a_banner(status: ModuleStatus) -> bool:

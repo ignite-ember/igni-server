@@ -7,7 +7,8 @@ how long. It runs in every replica; a Postgres advisory lock and a look
 at today's events keep it to one record a day.
 
 Every run also writes one info line naming the licence — its ID and the
-customer, or that none is installed — whether or not anything needs
+customer, that none is installed, or that the installed file is not
+valid — whether or not anything needs
 attention, so any day's logs say whose deployment they came from. The
 customer is an organisation's name from the signed licence, not a
 person, so it is not personal data (LG-5), and `install` already logs it.
@@ -55,10 +56,10 @@ class LicenceDailyAudit:
     async def run_once(self) -> bool:
         """Record today's event if one is due and none is there yet. True when this call wrote it."""
         notice = self._licence.notice()
-        if notice.licence_id is None:
-            logger.info('licence: no licence installed')
-        else:
+        if notice.licence_id is not None:
             logger.info('licence: %s, licensed to %s', notice.licence_id, notice.customer)
+        else:
+            self._log_why_none()
         if not notice.warnings:
             return False
         if not await self._locks.try_acquire(_LOCK_KEY):
@@ -88,6 +89,22 @@ class LicenceDailyAudit:
             return True
         finally:
             await self._locks.release(_LOCK_KEY)
+
+    def _log_why_none(self) -> None:
+        """No verified licence: say whether there is no file, or a file that is not good.
+
+        "No licence installed" for a file that is there but fails its check
+        sent whoever read the log looking for a missing file.
+        """
+        overview = self._licence.overview()
+        if overview.installed and overview.problem is not None:
+            logger.info(
+                'licence: the licence file at %s is not valid (%s); no module is licensed',
+                overview.path,
+                overview.problem.value,
+            )
+        else:
+            logger.info('licence: no licence installed')
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop(), name='licence-daily-audit')
