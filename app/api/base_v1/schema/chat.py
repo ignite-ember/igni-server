@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, ValidationError, ValidatorFunctionWrapHandler
 
 from app.services.ai.providers.kinds import Wire
 
@@ -77,10 +77,31 @@ class ChatCompletionChoice(BaseModel):
     finish_reason: str | None = None
 
 
+class CompletionTokensDetails(BaseModel):
+    """How the provider breaks the completion down. Passed back whole, fields this server does not read included."""
+
+    model_config = ConfigDict(extra='allow')
+
+    #: Thinking tokens. OpenAI counts them inside `completion_tokens`;
+    #: Vertex AI's Gemini counts them outside it, and inside `total_tokens`.
+    reasoning_tokens: int | None = None
+
+
 class CompletionUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    #: As the provider sent it, on a non-streamed answer as on a stream's last chunk.
+    completion_tokens_details: CompletionTokensDetails | None = None
+
+    @field_validator('completion_tokens_details', mode='wrap')
+    @classmethod
+    def _unreadable_details_are_none(cls, value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+        """A breakdown this server cannot read is no breakdown: it never makes the answer unreadable."""
+        try:
+            return handler(value)
+        except ValidationError:
+            return None
 
 
 class ChatCompletionResponse(BaseModel):
