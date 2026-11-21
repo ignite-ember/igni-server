@@ -23,7 +23,7 @@
 # instead of a property of whatever the tag pointed at that morning.
 # Slim rather than alpine because the wheels this project installs are
 # built against glibc.
-FROM python:3.13-slim-trixie AS builder
+FROM python:3.15-slim-trixie AS builder
 
 WORKDIR /app
 
@@ -45,7 +45,7 @@ RUN uv sync --no-dev && uv pip freeze > requirements.txt
 # The same base as the builder, so the two stages cannot disagree about
 # which Debian release and which glibc the wheels are built and shipped
 # against.
-FROM python:3.13-slim-trixie
+FROM python:3.15-slim-trixie
 
 WORKDIR /app
 
