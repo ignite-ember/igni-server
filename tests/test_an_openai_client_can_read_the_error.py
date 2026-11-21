@@ -410,6 +410,21 @@ class TestTheNonStreamingPathRetriesABadAnswer:
         assert answer.id == 'done'
         assert len(pool.acquired) == 2, pool.acquired
 
+    @pytest.mark.parametrize('finish_reason', ['length', 'content_filter'])
+    async def test_a_200_the_provider_ended_without_a_message_stops_on_the_first_node(self, finish_reason):
+        """Vertex's Gemini ends some answers with no `message`: out of tokens,
+        or its text withheld. That is the answer, and billed; another node
+        would only be billed for the same ending, so it is not asked."""
+        pool = SpyPool()
+        ended = json.dumps({'id': 'ended', 'choices': [{'index': 0, 'finish_reason': finish_reason}]})
+        upstream = _scripted((200, ended), (200, json.dumps(_COMPLETION)))
+
+        answer = await completions(upstream).complete(context(pool))
+
+        assert (answer.id, answer.choices[0].finish_reason) == ('ended', finish_reason)
+        assert answer.choices[0].message.content == ''
+        assert len(pool.acquired) == 1, pool.acquired
+
     async def test_a_200_with_no_completion_anywhere_is_a_502_that_says_so(self):
         broken = json.dumps({'id': 'half', 'choices': [{'index': 0}]})
 

@@ -85,6 +85,10 @@ def _empty_usage_is_none(value: object) -> object:
 ReportedUsage = Annotated[CompletionUsage | None, BeforeValidator(_empty_usage_is_none)]
 
 
+#: The finish reasons a provider gives for an answer it ended itself, which may carry no message.
+_ENDED_BY_THE_PROVIDER = frozenset({'length', 'content_filter'})
+
+
 class UpstreamChoice(BaseModel):
     """One choice of a node's non-streamed answer."""
 
@@ -94,16 +98,22 @@ class UpstreamChoice(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _out_of_tokens_before_a_word(cls, data: Any) -> Any:
-        """A choice cut off by its token limit before it wrote anything answered nothing: an empty message.
+    def _ended_before_a_word(cls, data: Any) -> Any:
+        """A choice the provider ended before it wrote anything answered nothing: an empty message.
 
-        Vertex AI's OpenAI-compatible endpoint sends a Gemini answer that ran
-        out of tokens while thinking as `{"finish_reason": "length"}` with no
-        `message` key at all. That is the provider's answer, counted and
-        billed. Any other choice without a message is still not a completion,
-        and is unreadable.
+        Vertex AI's OpenAI-compatible endpoint sends such a Gemini answer with
+        no `message` key at all: `{"finish_reason": "length"}` when it ran out
+        of tokens while thinking, `{"finish_reason": "content_filter"}` when
+        Gemini withheld the text (recitation, safety). Either is the
+        provider's answer, counted and billed, and asking another node only
+        buys the same ending again. Any other choice without a message is
+        still not a completion, and is unreadable.
         """
-        if isinstance(data, dict) and data.get('message') is None and data.get('finish_reason') == 'length':
+        if (
+            isinstance(data, dict)
+            and data.get('message') is None
+            and data.get('finish_reason') in _ENDED_BY_THE_PROVIDER
+        ):
             return {**data, 'message': {'role': 'assistant'}}
         return data
 
