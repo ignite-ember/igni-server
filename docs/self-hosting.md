@@ -407,7 +407,11 @@ EMAIL_FROM_NAME=Acme Engineering
 
 No credentials appear in that block, and that is the point. Set
 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` only where no role is
-available; leaving them empty is what engages the chain. Cross-account
+available; leaving them empty is what engages the chain. A *temporary*
+set — from assume-role, SSO or any federated login — also carries
+`AWS_SESSION_TOKEN`, and all three are passed together; the token is not
+optional, and a key and secret sent without it have SES answer "the
+security token included in the request is invalid". Cross-account
 assume-role needs no code from us either — an `AWS_PROFILE` with a
 `role_arn` in the shared config file is resolved by the SDK.
 

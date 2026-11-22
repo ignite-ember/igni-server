@@ -97,9 +97,61 @@ class TestCredentials:
             return FakeSesClient()
 
         monkeypatch.setattr('app.services.email.transports.ses.boto3.client', _fake_client)
-        SesTransport(access_key_id='AKIA...', secret_access_key='secret')._client()
+        SesTransport(access_key_id='AKIA...', secret_access_key='secret', session_token='')._client()
 
         assert captured['aws_access_key_id'] == 'AKIA...'
+
+    def test_a_temporary_credentials_session_token_travels_with_the_keys(self, monkeypatch):
+        """Key, secret and token are one set. Assume-role, SSO and every
+        federated login hand out a temporary credential whose token is not
+        optional — passing the key and secret without it is what made SES
+        answer ``UnrecognizedClientException: The security token included
+        in the request is invalid`` and drop the mail in a background task.
+        docs/self-hosting.md names the environment a supported chain link,
+        and a temporary set arriving there carries this token."""
+        captured: dict = {}
+
+        def _fake_client(service, **kwargs):
+            captured.update(kwargs)
+            return FakeSesClient()
+
+        monkeypatch.setattr('app.services.email.transports.ses.boto3.client', _fake_client)
+        SesTransport(access_key_id='ASIA...', secret_access_key='secret', session_token='FwoGtoken')._client()
+
+        assert captured['aws_access_key_id'] == 'ASIA...'
+        assert captured['aws_secret_access_key'] == 'secret'
+        assert captured['aws_session_token'] == 'FwoGtoken'
+
+    def test_a_long_lived_key_passes_no_session_token(self, monkeypatch):
+        """An IAM user's key has no token, so none is invented: passing an
+        empty ``aws_session_token`` to boto3 is itself an error."""
+        captured: dict = {}
+
+        def _fake_client(service, **kwargs):
+            captured.update(kwargs)
+            return FakeSesClient()
+
+        monkeypatch.setattr('app.services.email.transports.ses.boto3.client', _fake_client)
+        SesTransport(access_key_id='AKIA...', secret_access_key='secret', session_token='')._client()
+
+        assert captured['aws_access_key_id'] == 'AKIA...'
+        assert 'aws_session_token' not in captured
+
+    def test_no_session_token_is_passed_on_the_ambient_path(self, monkeypatch):
+        """With no static key, nothing is pinned at all — not even a token
+        that happened to be configured — so boto3 resolves and refreshes
+        the whole set itself."""
+        captured: dict = {}
+
+        def _fake_client(service, **kwargs):
+            captured.update(kwargs)
+            return FakeSesClient()
+
+        monkeypatch.setattr('app.services.email.transports.ses.boto3.client', _fake_client)
+        SesTransport(region='eu-west-1', access_key_id='', session_token='ignored')._client()
+
+        assert 'aws_access_key_id' not in captured
+        assert 'aws_session_token' not in captured
 
     def test_the_description_says_which_is_in_use(self):
         """An operator reading a startup log needs to know whether to go

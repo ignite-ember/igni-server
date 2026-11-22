@@ -60,11 +60,13 @@ class SesTransport(EmailTransport):
         configuration_set: str | None = None,
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
+        session_token: str | None = None,
     ) -> None:
         self._region = region if region is not None else settings.ses_region
         self._configuration_set = configuration_set if configuration_set is not None else settings.ses_configuration_set
         self._access_key_id = access_key_id if access_key_id is not None else settings.aws_access_key_id
         self._secret_access_key = secret_access_key if secret_access_key is not None else settings.aws_secret_access_key
+        self._session_token = session_token if session_token is not None else settings.aws_session_token
 
     @property
     def description(self) -> str:
@@ -94,10 +96,25 @@ class SesTransport(EmailTransport):
             # credential chain. Passing None explicitly would do the same,
             # but being explicit here is what makes the IAM-role path
             # readable rather than accidental.
+            #
+            # The session token goes with them when there is one. These
+            # three are a *set*: static keys may be long-lived (an IAM
+            # user, no token) or temporary (assume-role, SSO, a federated
+            # login — key, secret and a token that is not optional). The
+            # key and secret used to be passed without it, which silently
+            # dropped the token out of every temporary credential and left
+            # SES answering ``UnrecognizedClientException: The security
+            # token included in the request is invalid`` — swallowed in a
+            # background task, so the mail just vanished. docs/self-hosting.md
+            # calls the environment a supported chain link and names
+            # ``AWS_ACCESS_KEY_ID``/``AWS_SECRET_ACCESS_KEY`` as the way to
+            # set keys; a temporary set arriving that way carries a token,
+            # and it has to be forwarded with them.
             **(
                 {
                     'aws_access_key_id': self._access_key_id,
                     'aws_secret_access_key': self._secret_access_key,
+                    **({'aws_session_token': self._session_token} if self._session_token else {}),
                 }
                 if self._access_key_id
                 else {}
