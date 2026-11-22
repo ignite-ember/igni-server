@@ -63,14 +63,16 @@ def test_every_source_article_is_in_the_index_and_on_disk_once() -> None:
         assert page['description'], page['file']
 
 
-def test_the_index_is_stamped_with_the_app_version() -> None:
-    from tools.site_docs import app_version
+def test_the_index_is_stamped_with_the_doc_version() -> None:
+    from tools.site_docs import app_version, doc_version
 
     index = json.loads((_ROOT / 'docs/site/index.json').read_text(encoding='utf-8'))
-    version = app_version(_ROOT)
+    version = doc_version(_ROOT)
     assert index['packages'][0]['version'] == version
     for page in index['pages']:
         assert page['file'].split('/')[1] == version
+    # The doc version is the app version's major.minor series, not the full patch.
+    assert version == '.'.join(app_version(_ROOT).split('.')[:2])
 
 
 def test_every_generated_page_is_its_source_verbatim() -> None:
