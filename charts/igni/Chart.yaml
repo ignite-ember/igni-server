@@ -14,7 +14,7 @@ version: 0.3.0
 #
 # `helm template` refuses to render when this resolves to `latest` — see
 # templates/_helpers.tpl.
-appVersion: "0.8.0"
+appVersion: "0.8.1"
 
 home: https://github.com/ignite-ember/igni-server
 sources:
