@@ -6,7 +6,7 @@ igni server is the API, the portal and the migrations. It versions on its own ca
 
 | Package | What it is | Repository | Version now |
 |---|---|---|---|
-| igni server | the API, the portal, the migrations | `ignite-ember/igni-server` | 0.8.0 |
+| igni server | the API, the portal, the migrations | `ignite-ember/igni-server` | 0.8.1 |
 
 The **Helm chart** version (`0.2.0`) moves independently of the server app version. Keep the two separate.
 
@@ -16,9 +16,9 @@ As of 2026-11-22:
 
 | | Published |
 |---|---|
-| igni server | the git tags **v0.8.0** (and **v0.7.1**, **v0.7.0**) |
+| igni server | the git tags **v0.8.1** (and **v0.8.0**, **v0.7.1**, **v0.7.0**) |
 
-**This documentation describes 0.8.0** — the current release, which is the version the rest of the server pages are written against.
+**This documentation describes 0.8.1** — the current release, which is the version the rest of the server pages are written against.
 
 ## igni server 0.7.0: the pools are gone
 
@@ -45,9 +45,9 @@ As of 2026-11-22:
 
 So verify the first format-2 bundle by hand, or with the `igni-import` from this release. See [Offline updates](/docs/server/offline-updates).
 
-## igni server 0.7.1 and 0.8.0
+## igni server 0.7.1, 0.8.0 and 0.8.1
 
-The server has moved on twice since 0.7.0. **0.8.0 is the current release** (the git tag `v0.8.0`); `v0.7.1` sits between it and `v0.7.0`.
+The server has moved on three times since 0.7.0. **0.8.1 is the current release** (the git tag `v0.8.1`); `v0.8.0` and `v0.7.1` sit between it and `v0.7.0`.
 
 **0.7.1** changes no interface — every entry is a fix, an addition that keeps what it was, or a documentation correction. It carries the end-to-end campaign's server-side findings:
 
@@ -62,6 +62,10 @@ The server has moved on twice since 0.7.0. **0.8.0 is the current release** (the
 
 - **A release build trusts only the release key.** The images and the offline bundle are verified against the one release key and nothing else; a signature from any other key is refused.
 - **A tamper-evident central licence clock.** The licence check reads a central, tamper-evident clock rather than the machine's own, so a deployment cannot extend a lapsed licence by moving its system time back.
+
+**0.8.1** changes no interface — its one change is a fix:
+
+- **SES forwards the session token for temporary credentials.** With `email_backend=ses` and credentials in the environment, the transport passed the access key and secret to boto3 but not the `AWS_SESSION_TOKEN` that a temporary set (assume-role, SSO, any federated login) requires, so SES refused the send and the mail vanished in the background task. The token is now forwarded when present. A long-lived IAM user's key (no token) and the role/IMDS ambient path are unaffected.
 
 ## Where the release notes live
 
