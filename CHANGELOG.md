@@ -15,6 +15,27 @@ identifier. [SECURITY.md](SECURITY.md) is how to report one.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-22
+
+The first release after 0.8.0. It changes no interface: the one change is
+a fix to the SES email transport.
+
+### Fixed
+
+- **SES: forward `AWS_SESSION_TOKEN` for temporary environment
+  credentials.** `email_backend=ses` with credentials in the environment
+  — the first link of the chain `docs/self-hosting.md` documents, and how
+  assume-role, SSO and every federated login hand out keys — passed
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` to boto3 as static keys but
+  never the `AWS_SESSION_TOKEN` a temporary set requires, so SES answered
+  `UnrecognizedClientException` and the mail vanished inside the
+  background send task. The token is now forwarded with the keys when it
+  is present, so sends from temporary credentials no longer silently
+  fail. A long-lived IAM user's key has no token and is unchanged; the
+  role/IMDS ambient path (no keys in the environment) is unaffected.
+  (`app/services/email/transports/ses.py`,
+  `tests/test_ses_transport.py`.)
+
 ## [0.8.0] - 2026-11-21
 
 A security release. A released image now trusts only the release key,
