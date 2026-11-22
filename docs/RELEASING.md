@@ -39,9 +39,18 @@ with the commit and how a customer verifies the result.
    compare links at the bottom, and write `docs/releases/v<version>.md`:
    what a customer gets, what changed for them, how to upgrade, and the
    advisories it fixes. Security fixes name their GHSA or CVE identifier.
-3. **Merge to `main`.** `cd.yml` runs the tests on the merged commit and
+   Record the release in the published changelog article too
+   (`docs/site-src/changelog.md`).
+3. **The published docs.** Run `make docs-site` and commit the result.
+   The site-docs snapshot (`docs/site/server/<major.minor>/`) is stamped
+   from the app version's **major.minor** series, so a *new minor* starts a
+   new snapshot and `scripts/sync-docs.mjs server` in igni-site picks it up;
+   a *patch* within an existing minor reuses that snapshot — but you still
+   edited the changelog article above, so regenerate either way.
+   `tests/test_the_site_docs_are_generated.py` fails if you forget.
+4. **Merge to `main`.** `cd.yml` runs the tests on the merged commit and
    nothing else; no image is built in this repository.
-4. **Tag that commit**, signed, once its CD run has passed, and push the
+5. **Tag that commit**, signed, once its CD run has passed, and push the
    tag:
 
    ```sh
@@ -49,7 +58,7 @@ with the commit and how a customer verifies the result.
    git push origin v<version>
    ```
 
-5. **Build the release** from the tag, in `igni__release`:
+6. **Build the release** from the tag, in `igni__release`:
 
    ```sh
    gh workflow run release.yml -R ignite-ember/igni__release -f ref=v<version>
@@ -63,14 +72,14 @@ with the commit and how a customer verifies the result.
    `ghcr.io/ignite-ember/igni-bundle:<version>`. Only the first build of a
    version is kept; later ones say so in the run and are CI artefacts of
    `igni__release` only, so bump the version for each release.
-6. **Check what the release made.** Fetch the kept bundle (`oras pull
+7. **Check what the release made.** Fetch the kept bundle (`oras pull
    ghcr.io/ignite-ember/igni-bundle:<version>`) and verify it as a
    customer would, with the public key you hold and not a copy from the
    run: `igni-import --bundle … --public-key cosign.pub
    --expect-version <version> --verify-only`, and `cosign verify` on both
    images. The commit in the bundle's MANIFEST (`# commit:`) is the one
    the tag points at.
-7. **Publish the GitHub Release** on this repository, from the tag, with
+8. **Publish the GitHub Release** on this repository, from the tag, with
    the notes:
 
    ```sh

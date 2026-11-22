@@ -14,8 +14,8 @@ snapshot with no hand-typed version folder. It writes ``docs/site/``:
 * ``server/<version>/<slug>.md`` — one article each, the source ``.md`` verbatim
   (the site renders the prose, so nothing is added to it — not even a banner,
   which is why the output is byte-for-byte the source);
-* ``index.json`` — the version (stamped from ``app/config.py``'s ``app_version``,
-  the one number ``tests/test_one_version_number.py`` keeps the repository to)
+* ``index.json`` — the version (the ``major.minor`` series of ``app/config.py``'s
+  ``app_version``, so patches within a minor share one snapshot — see ``doc_version``)
   and every page's slug, title, description, category, order, file and sections,
   in the same shape igni-sdk emits, so ``scripts/sync-docs.mjs`` in igni-site
   consumes both uniformly.
@@ -60,6 +60,16 @@ def app_version(root: pathlib.Path = _ROOT) -> str:
     if not match:
         raise DocsError('could not find `app_version` in app/config.py')
     return match.group(1)
+
+
+def doc_version(root: pathlib.Path = _ROOT) -> str:
+    """The documentation version: the ``major.minor`` series of the app version.
+
+    The docs snapshot per minor series, not per patch — a code-only patch
+    (0.8.0 → 0.8.1) shares the 0.8 docs, so it does not churn a new snapshot.
+    The changelog article still records each patch within the series.
+    """
+    return '.'.join(app_version(root).split('.')[:2])
 
 
 def heading_id(text: str) -> str:
@@ -163,7 +173,7 @@ class SiteDocs:
         return articles
 
     def version(self) -> str:
-        return app_version(self.root)
+        return doc_version(self.root)
 
     def _package(self) -> IndexPackage:
         package = self._meta().get('package')
