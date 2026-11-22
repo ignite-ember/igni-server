@@ -1,0 +1,66 @@
+# The published documentation for the igni server, as its site (igni.sh,
+# the ``igni-site`` repository) shows it. These are the operator-facing
+# articles — DIFFERENT from the internal docs under ``docs/`` — and this is
+# their single source of truth. ``tools/site_docs.py`` (``make docs-site``)
+# reads this file and the ``.md`` files beside it, stamps the version from
+# ``app/config.py``, and writes ``docs/site/server/<version>/``; igni-site
+# copies that into its own content (``scripts/sync-docs.mjs server`` there).
+#
+# The ``.md`` files are the articles themselves, verbatim: the title, nav
+# order, slug, description and category live here, next to them, so the
+# prose stays byte-for-byte what the site renders. Add or reorder articles
+# here (the order below is the nav order); change prose in the ``.md`` file.
+
+[package]
+name = "server"
+title = "igni server"
+description = "Self-hosting the API, portal and migrations: configuration, inference and cloud providers, administration, offline updates and licensing."
+source = "https://github.com/ignite-ember/igni-server"
+
+[[article]]
+slug = "self-hosting-the-server"
+title = "Self-hosting the igni server"
+description = "Deploying the API, portal and migrations with Helm or Docker Compose, and knowing when the thing is actually up."
+category = "operations"
+
+[[article]]
+slug = "server-configuration"
+title = "Server configuration reference"
+description = "Every setting an operator sets, what it does, and which ones are safe to leave empty."
+category = "operations"
+
+[[article]]
+slug = "inference-backends"
+title = "Connecting your GPUs: inference backends"
+description = "How the server routes chat over the inference nodes and cloud providers you own, and how capacity is shared between them."
+category = "operations"
+
+[[article]]
+slug = "administering-your-organisation"
+title = "Administering your organisation in the portal"
+description = "Admitting developers, publishing where your server is so they never type a URL, shipping them a standard set of agents and skills, and taking access away again."
+category = "operations"
+
+[[article]]
+slug = "running-the-documents-service"
+title = "Running the documents service"
+description = "The optional deployment behind shared documents: what it needs, how it pairs with the server, and what is not yet packaged."
+category = "operations"
+
+[[article]]
+slug = "offline-updates"
+title = "Offline updates: the signed release bundle"
+description = "Carrying a release into a network with no route out, verifying it, and importing it into your own registry with igni-import."
+category = "operations"
+
+[[article]]
+slug = "licensing-and-evaluations"
+title = "Licensing and evaluations"
+description = "The offline, signed licence file the paid modules check, where it goes, and what happens when a licence or an evaluation runs out."
+category = "operations"
+
+[[article]]
+slug = "changelog"
+title = "igni server: changes and upgrades"
+description = "The API, portal and migrations: the pools removal, the offline bundle's new shape, and the 0.7.1 and 0.8.0 releases."
+category = "release-notes"

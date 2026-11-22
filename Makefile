@@ -32,7 +32,7 @@ SRC_FMT := app
         refresh-default-seed default-seed-migration refresh-agent-tools \
         portal-dev portal-build portal-lint portal-test portal-test-watch \
         portal-e2e portal-e2e-update check-configs docs check-docs \
-        docs-check-siblings dev-env
+        docs-site check-docs-site docs-check-siblings dev-env
 
 # Run the API locally against whatever .env points at. --reload because
 # this is the development entry point; the container's CMD is the one
@@ -260,4 +260,18 @@ check-docs:
 # thing in CI as on a machine that happens to have the sibling.
 docs-check-siblings:
 	@$(PYTHON) tools/generate_decisions.py --check-siblings
+
+# The server's published documentation on igni's site (igni.sh/docs/server),
+# generated next to the code it documents, the way igni-sdk's `make sdk-docs`
+# generates the SDK pages. Regenerate `docs/site/` from `docs/site-src/` after
+# editing an article, adding one to `index.toml`, or bumping the version;
+# `tests/test_the_site_docs_are_generated.py` (run by `make test`) fails when
+# it is stale. igni-site copies `docs/site/` (`scripts/sync-docs.mjs server`).
+docs-site:
+	$(PYTHON) tools/site_docs.py
+
+# What CI's own staleness test asserts, as a target: regenerate nothing, fail
+# if `docs/site/` is not what the sources produce.
+check-docs-site:
+	$(PYTHON) tools/site_docs.py --check
 
