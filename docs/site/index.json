@@ -1,0 +1,572 @@
+{
+  "generated_by": "igni-server tools/site_docs.py (make docs-site); do not edit",
+  "packages": [
+    {
+      "name": "server",
+      "title": "igni server",
+      "version": "0.8.0",
+      "description": "Self-hosting the API, portal and migrations: configuration, inference and cloud providers, administration, offline updates and licensing.",
+      "source": "https://github.com/ignite-ember/igni-server"
+    }
+  ],
+  "pages": [
+    {
+      "package": "server",
+      "slug": "self-hosting-the-server",
+      "title": "Self-hosting the igni server",
+      "description": "Deploying the API, portal and migrations with Helm or Docker Compose, and knowing when the thing is actually up.",
+      "category": "operations",
+      "order": 0,
+      "file": "server/0.8.0/self-hosting-the-server.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "what-needs-a-server",
+          "title": "What needs a server"
+        },
+        {
+          "level": 2,
+          "id": "what-you-must-bring",
+          "title": "What you must bring"
+        },
+        {
+          "level": 2,
+          "id": "getting-the-images",
+          "title": "Getting the images"
+        },
+        {
+          "level": 2,
+          "id": "deploying-with-helm",
+          "title": "Deploying with Helm"
+        },
+        {
+          "level": 3,
+          "id": "before-you-enable-the-networkpolicy",
+          "title": "Before you enable the NetworkPolicy"
+        },
+        {
+          "level": 3,
+          "id": "monitoring-is-three-switches-not-one",
+          "title": "Monitoring is three switches, not one"
+        },
+        {
+          "level": 3,
+          "id": "one-host-or-the-browser-blocks-you",
+          "title": "One host, or the browser blocks you"
+        },
+        {
+          "level": 3,
+          "id": "services-find-the-server-by-one-url",
+          "title": "Services find the server by one URL"
+        },
+        {
+          "level": 3,
+          "id": "every-service-has-its-own-hostname",
+          "title": "Every service has its own hostname"
+        },
+        {
+          "level": 2,
+          "id": "migrations",
+          "title": "Migrations"
+        },
+        {
+          "level": 2,
+          "id": "upgrading-and-what-a-rollback-does-not-undo",
+          "title": "Upgrading, and what a rollback does not undo"
+        },
+        {
+          "level": 2,
+          "id": "restoring-a-backup",
+          "title": "Restoring a backup"
+        },
+        {
+          "level": 2,
+          "id": "deploying-with-docker-compose",
+          "title": "Deploying with Docker Compose"
+        },
+        {
+          "level": 2,
+          "id": "after-it-starts",
+          "title": "After it starts"
+        },
+        {
+          "level": 2,
+          "id": "the-local-stack",
+          "title": "The local stack"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    },
+    {
+      "package": "server",
+      "slug": "server-configuration",
+      "title": "Server configuration reference",
+      "description": "Every setting an operator sets, what it does, and which ones are safe to leave empty.",
+      "category": "operations",
+      "order": 1,
+      "file": "server/0.8.0/server-configuration.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "how-settings-reach-the-process",
+          "title": "How settings reach the process"
+        },
+        {
+          "level": 2,
+          "id": "what-stops-the-server",
+          "title": "What stops the server"
+        },
+        {
+          "level": 2,
+          "id": "data-stores",
+          "title": "Data stores"
+        },
+        {
+          "level": 2,
+          "id": "settings-whose-emptiness-disables-a-feature",
+          "title": "Settings whose emptiness disables a feature"
+        },
+        {
+          "level": 2,
+          "id": "inference-backends",
+          "title": "Inference backends"
+        },
+        {
+          "level": 2,
+          "id": "email",
+          "title": "Email"
+        },
+        {
+          "level": 2,
+          "id": "sign-in",
+          "title": "Sign-in"
+        },
+        {
+          "level": 2,
+          "id": "urls-that-end-up-in-links",
+          "title": "URLs that end up in links"
+        },
+        {
+          "level": 2,
+          "id": "limits-retention-and-logs",
+          "title": "Limits, retention and logs"
+        },
+        {
+          "level": 2,
+          "id": "tracing-opentelemetry",
+          "title": "Tracing (OpenTelemetry)"
+        },
+        {
+          "level": 2,
+          "id": "secrets",
+          "title": "Secrets"
+        },
+        {
+          "level": 2,
+          "id": "two-helm-details-worth-knowing",
+          "title": "Two Helm details worth knowing"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    },
+    {
+      "package": "server",
+      "slug": "inference-backends",
+      "title": "Connecting your GPUs: inference backends",
+      "description": "How the server routes chat over the inference nodes and cloud providers you own, and how capacity is shared between them.",
+      "category": "operations",
+      "order": 2,
+      "file": "server/0.8.0/inference-backends.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "one-list-of-nodes",
+          "title": "One list of nodes"
+        },
+        {
+          "level": 2,
+          "id": "describing-a-node",
+          "title": "Describing a node"
+        },
+        {
+          "level": 2,
+          "id": "cloud-model-providers",
+          "title": "Cloud model providers"
+        },
+        {
+          "level": 3,
+          "id": "ambient-credentials-or-static-ones",
+          "title": "Ambient credentials, or static ones"
+        },
+        {
+          "level": 3,
+          "id": "examples",
+          "title": "Examples"
+        },
+        {
+          "level": 2,
+          "id": "letting-a-cluster-register-itself",
+          "title": "Letting a cluster register itself"
+        },
+        {
+          "level": 2,
+          "id": "how-a-request-picks-a-node",
+          "title": "How a request picks a node"
+        },
+        {
+          "level": 2,
+          "id": "watching-your-nodes-and-taking-one-out",
+          "title": "Watching your nodes, and taking one out"
+        },
+        {
+          "level": 2,
+          "id": "how-the-agent-reaches-a-model",
+          "title": "How the agent reaches a model"
+        },
+        {
+          "level": 2,
+          "id": "limits-worth-knowing",
+          "title": "Limits worth knowing"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    },
+    {
+      "package": "server",
+      "slug": "administering-your-organisation",
+      "title": "Administering your organisation in the portal",
+      "description": "Admitting developers, publishing where your server is so they never type a URL, shipping them a standard set of agents and skills, and taking access away again.",
+      "category": "operations",
+      "order": 3,
+      "file": "server/0.8.0/administering-your-organisation.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "your-own-account-first",
+          "title": "Your own account, first"
+        },
+        {
+          "level": 2,
+          "id": "accounts-organisations-and-roles",
+          "title": "Accounts, organisations and roles"
+        },
+        {
+          "level": 2,
+          "id": "what-an-ordinary-member-can-see",
+          "title": "What an ordinary member can see"
+        },
+        {
+          "level": 2,
+          "id": "sign-in-methods",
+          "title": "Sign-in methods"
+        },
+        {
+          "level": 3,
+          "id": "inviting-somebody",
+          "title": "Inviting somebody"
+        },
+        {
+          "level": 3,
+          "id": "provisioning-from-a-directory",
+          "title": "Provisioning from a directory"
+        },
+        {
+          "level": 2,
+          "id": "group-policy",
+          "title": "Group policy"
+        },
+        {
+          "level": 3,
+          "id": "switching-a-capability-off-for-everyone",
+          "title": "Switching a capability off for everyone"
+        },
+        {
+          "level": 3,
+          "id": "replacing-an-agent-that-igni-ships",
+          "title": "Replacing an agent that igni ships"
+        },
+        {
+          "level": 3,
+          "id": "which-extensions-a-group-gets",
+          "title": "Which extensions a group gets"
+        },
+        {
+          "level": 2,
+          "id": "apps-vm-profiles-and-commands-the-cloud",
+          "title": "Apps, VM profiles and commands: the cloud"
+        },
+        {
+          "level": 3,
+          "id": "registering-an-app",
+          "title": "Registering an app"
+        },
+        {
+          "level": 3,
+          "id": "vm-profiles",
+          "title": "VM profiles"
+        },
+        {
+          "level": 3,
+          "id": "commands-in-vms",
+          "title": "Commands in VMs"
+        },
+        {
+          "level": 3,
+          "id": "vm-credentials",
+          "title": "VM credentials"
+        },
+        {
+          "level": 3,
+          "id": "mcp-approvals-and-events",
+          "title": "MCP approvals and events"
+        },
+        {
+          "level": 2,
+          "id": "onboarding-a-developer",
+          "title": "Onboarding a developer"
+        },
+        {
+          "level": 3,
+          "id": "publish-where-your-igni-is",
+          "title": "Publish where your igni is"
+        },
+        {
+          "level": 3,
+          "id": "what-the-developer-does",
+          "title": "What the developer does"
+        },
+        {
+          "level": 3,
+          "id": "the-cli-for-the-cases-that-are-not-a-person",
+          "title": "The CLI, for the cases that are not a person"
+        },
+        {
+          "level": 2,
+          "id": "the-compliance-surface",
+          "title": "The compliance surface"
+        },
+        {
+          "level": 2,
+          "id": "deactivating-somebody",
+          "title": "Deactivating somebody"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    },
+    {
+      "package": "server",
+      "slug": "running-the-documents-service",
+      "title": "Running the documents service",
+      "description": "The optional deployment behind shared documents: what it needs, how it pairs with the server, and what is not yet packaged.",
+      "category": "operations",
+      "order": 4,
+      "file": "server/0.8.0/running-the-documents-service.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "the-documents-service",
+          "title": "The documents service"
+        },
+        {
+          "level": 2,
+          "id": "its-own-hostname",
+          "title": "Its own hostname"
+        },
+        {
+          "level": 2,
+          "id": "when-it-is-unreachable",
+          "title": "When it is unreachable"
+        },
+        {
+          "level": 2,
+          "id": "licence",
+          "title": "Licence"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    },
+    {
+      "package": "server",
+      "slug": "offline-updates",
+      "title": "Offline updates: the signed release bundle",
+      "description": "Carrying a release into a network with no route out, verifying it, and importing it into your own registry with igni-import.",
+      "category": "operations",
+      "order": 5,
+      "file": "server/0.8.0/offline-updates.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "where-images-and-bundles-come-from",
+          "title": "Where images and bundles come from"
+        },
+        {
+          "level": 2,
+          "id": "what-is-in-a-bundle",
+          "title": "What is in a bundle"
+        },
+        {
+          "level": 2,
+          "id": "the-one-key",
+          "title": "The one key"
+        },
+        {
+          "level": 2,
+          "id": "verify-and-import",
+          "title": "Verify and import"
+        },
+        {
+          "level": 2,
+          "id": "install-from-the-bundle",
+          "title": "Install from the bundle"
+        },
+        {
+          "level": 2,
+          "id": "verify-by-hand",
+          "title": "Verify by hand"
+        },
+        {
+          "level": 2,
+          "id": "verify-in-your-registry",
+          "title": "Verify in your registry"
+        },
+        {
+          "level": 2,
+          "id": "how-long-releases-are-kept",
+          "title": "How long releases are kept"
+        },
+        {
+          "level": 2,
+          "id": "what-is-not-finished",
+          "title": "What is not finished"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    },
+    {
+      "package": "server",
+      "slug": "licensing-and-evaluations",
+      "title": "Licensing and evaluations",
+      "description": "The offline, signed licence file the paid modules check, where it goes, and what happens when a licence or an evaluation runs out.",
+      "category": "operations",
+      "order": 6,
+      "file": "server/0.8.0/licensing-and-evaluations.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "one-file-checked-offline",
+          "title": "One file, checked offline"
+        },
+        {
+          "level": 2,
+          "id": "what-the-file-holds",
+          "title": "What the file holds"
+        },
+        {
+          "level": 2,
+          "id": "installing-and-renewing",
+          "title": "Installing and renewing"
+        },
+        {
+          "level": 2,
+          "id": "when-a-licence-runs-out",
+          "title": "When a licence runs out"
+        },
+        {
+          "level": 2,
+          "id": "evaluations",
+          "title": "Evaluations"
+        },
+        {
+          "level": 2,
+          "id": "seeing-where-you-stand",
+          "title": "Seeing where you stand"
+        },
+        {
+          "level": 2,
+          "id": "the-band-is-not-enforced",
+          "title": "The band is not enforced"
+        },
+        {
+          "level": 2,
+          "id": "known-limits",
+          "title": "Known limits"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    },
+    {
+      "package": "server",
+      "slug": "changelog",
+      "title": "igni server: changes and upgrades",
+      "description": "The API, portal and migrations: the pools removal, the offline bundle's new shape, and the 0.7.1 and 0.8.0 releases.",
+      "category": "release-notes",
+      "order": 7,
+      "file": "server/0.8.0/changelog.md",
+      "sections": [
+        {
+          "level": 2,
+          "id": "version-now",
+          "title": "Version now"
+        },
+        {
+          "level": 2,
+          "id": "what-is-published",
+          "title": "What is published"
+        },
+        {
+          "level": 2,
+          "id": "igni-server-0-7-0-the-pools-are-gone",
+          "title": "igni server 0.7.0: the pools are gone"
+        },
+        {
+          "level": 3,
+          "id": "the-offline-bundle-changed-shape",
+          "title": "The offline bundle changed shape"
+        },
+        {
+          "level": 2,
+          "id": "igni-server-0-7-1-and-0-8-0",
+          "title": "igni server 0.7.1 and 0.8.0"
+        },
+        {
+          "level": 2,
+          "id": "where-the-release-notes-live",
+          "title": "Where the release notes live"
+        },
+        {
+          "level": 2,
+          "id": "where-to-go-next",
+          "title": "Where to go next"
+        }
+      ]
+    }
+  ]
+}
