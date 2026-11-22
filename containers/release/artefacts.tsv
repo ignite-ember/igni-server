@@ -30,4 +30,4 @@
 # pushes an UNSIGNED one. The release's GITHUB_TOKEN, igni__release's,
 # reads the package only while it grants that repository read access
 # (package settings, "Manage Actions access").
-igni-fleet  0.1.1
+igni-fleet  0.1.2
