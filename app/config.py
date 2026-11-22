@@ -222,6 +222,15 @@ class Settings(BaseSettings):
     # where no role is available.
     aws_access_key_id: str = Field(default='', description='Leave empty to use the ambient AWS credential chain')
     aws_secret_access_key: str = Field(default='', description='Only meaningful alongside aws_access_key_id')
+    # The session token that comes with a *temporary* credential set —
+    # assume-role, SSO, any federated login. Read from AWS_SESSION_TOKEN,
+    # the standard name, so a temporary set in the environment arrives
+    # whole. Empty for a long-lived IAM user, which has no token. It is
+    # only forwarded alongside aws_access_key_id, and without it the SES
+    # API rejects temporary keys with "the security token ... is invalid".
+    aws_session_token: str = Field(
+        default='', description='Session token for temporary credentials; only meaningful alongside aws_access_key_id'
+    )
 
     # Base URL of the portal, used to build action links — invite
     # acceptance, password reset. Every self-hosted deployment must set
