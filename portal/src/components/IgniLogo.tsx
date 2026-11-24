@@ -1,24 +1,9 @@
+import igniIconUrl from '../assets/igni-icon.svg'
+
 /**
- * igni brand logo — the white flame on its coral tile, matching the favicon.
+ * igni brand logo — the cat on its coral tile, matching the favicon.
  * Used on login page, header, and landing.
  */
 export function IgniLogo({ size = 48 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 64 64"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-label="igni"
-      role="img"
-    >
-      <rect width="64" height="64" rx="15" fill="#EE6138" />
-      <path
-        fill="#fff"
-        fillRule="evenodd"
-        transform="translate(32 33) scale(.8) translate(-32 -32)"
-        d="M34.2 5.1C35.6 4.6 36.3 6 36.6 7.6C38.4 15.2 38.9 22.4 36.9 29.4C40.2 27.9 42.2 25.1 42.9 21.2C43.2 19.9 44.5 19.7 45.3 20.8C49.2 26.3 51.6 32.2 51.2 39.8C50.8 50.9 42.3 58.9 31.8 58.7C21.4 58.5 13.2 50.4 13.3 40.1C13.4 33.5 16.3 28.6 20.6 23.7C25.8 17.8 31.4 12.3 33.1 6.4C33.3 5.8 33.6 5.3 34.2 5.1Z M32.9 33.9C30.1 37.6 25.6 40.5 25.6 45.9C25.7 50.2 28.9 52.9 32.5 52.8C36.4 52.6 39.3 49.8 38.9 45.6C38.5 41.1 35.6 37.9 32.9 33.9Z"
-      />
-    </svg>
-  )
+  return <img src={igniIconUrl} width={size} height={size} alt="igni" style={{ display: 'block' }} />
 }
