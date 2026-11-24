@@ -1,8 +1,12 @@
+import { useId } from 'react'
+
 /**
- * igni brand logo — the white flame on its coral tile, matching the favicon.
+ * igni brand logo — the white flame on its coral gradient tile, matching the favicon.
  * Used on login page, header, and landing.
  */
 export function IgniLogo({ size = 48 }: { size?: number }) {
+  // Its own gradient id: the icon is drawn more than once on a page.
+  const tile = useId()
   return (
     <svg
       width={size}
@@ -12,7 +16,14 @@ export function IgniLogo({ size = 48 }: { size?: number }) {
       aria-label="igni"
       role="img"
     >
-      <rect width="64" height="64" rx="15" fill="#D98457" />
+      <defs>
+        <linearGradient id={tile} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#EB7F51" />
+          <stop offset=".5" stopColor="#E97341" />
+          <stop offset="1" stopColor="#EE6C38" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="15" fill={`url(#${tile})`} />
       <path
         fill="#fff"
         fillRule="evenodd"
