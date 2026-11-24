@@ -15,6 +15,7 @@ markup is escaped by the template, with `escape`, where it enters.
 """
 
 import html
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
@@ -31,8 +32,8 @@ class CalloutStyle(BaseModel):
 class EmailMarkup:
     """Renders the layout and reusable blocks shared by every email."""
 
-    ACCENT = '#F97316'
-    GRADIENT = 'linear-gradient(135deg, #F97316, #DC2626)'
+    ACCENT = '#B03A09'
+    GRADIENT = 'linear-gradient(135deg, #CC4A0E, #B03A09)'
     BG_DEFAULT = '#ffffff'
     BG_MUTED = '#f6f8fa'
     FG_DEFAULT = '#1f2328'
@@ -42,16 +43,15 @@ class EmailMarkup:
     MONO_STACK = "ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace"
 
     INFO = CalloutStyle(
-        background='linear-gradient(135deg, rgba(249, 115, 22, 0.08), rgba(220, 38, 38, 0.04))', border='#F97316'
+        background='linear-gradient(135deg, rgba(242, 106, 27, 0.08), rgba(194, 65, 12, 0.04))', border='#F26A1B'
     )
     WARNING = CalloutStyle(background='#fefce8', border='#d29922')
     ERROR = CalloutStyle(background='#fef2f2', border='#cf222e')
 
-    # igni flame SVG (matches EmberLogo.tsx)
-    LOGO_SVG = """<svg width="32" height="32" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M7.998 14.5c-3.312 0-6-2.246-6-5.014 0-3.047 2.262-5.674 3.625-7.018.27-.266.717-.058.717.318 0 1.335.877 2.562 1.753 2.562.645 0 .972-.379 1.096-.65.258-.564.2-1.363.027-2.043-.098-.387.3-.726.65-.498C10.87 3.534 14 6.186 14 9.486c0 2.768-2.688 5.014-6.002 5.014z" fill="#f85149"/>
-  <path d="M8.7 13.563c-1.822 0-3.3-1.235-3.3-2.758 0-1.677 1.244-3.122 1.994-3.862.149-.146.394-.032.394.175 0 .734.482 1.41.964 1.41.355 0 .534-.209.603-.358.142-.31.11-.75.015-1.124-.054-.213.165-.4.357-.274 1.266.894 2.987 2.354 2.987 4.033 0 1.523-1.479 2.758-3.014 2.758z" fill="#f0883e"/>
-</svg>"""
+    # The igni icon, attached to each message as an inline part: mail clients strip inline SVG
+    LOGO_CID = 'igni-logo'
+    LOGO_PNG = Path(__file__).with_name('igni-logo.png')
+    LOGO_IMG = f'<img src="cid:{LOGO_CID}" width="32" height="32" alt="igni" style="display: block; margin: 0 auto; border: 0;">'
 
     def escape(self, value: object) -> str:
         """Caller text, safe to drop into HTML.
@@ -106,7 +106,7 @@ class EmailMarkup:
                     <!-- Header -->
                     <tr>
                         <td style="padding: 40px 40px 32px; text-align: center;">
-                            <div style="margin-bottom: 20px;">{self.LOGO_SVG}</div>
+                            <div style="margin-bottom: 20px;">{self.LOGO_IMG}</div>
                             <h1 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.03em; color: {self.FG_DEFAULT};">
                                 {title}
                             </h1>{subtitle_line}
