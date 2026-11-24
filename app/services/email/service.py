@@ -17,6 +17,7 @@ import logging
 
 from app.config import Settings, settings as app_settings
 from app.services.email.delivery import invite_url_for
+from app.services.email.markup import EmailMarkup
 from app.services.email.templates import EmailTemplates
 from app.services.email.transports.base import EmailTransport
 from app.services.email.transports.factory import build_transport
@@ -91,6 +92,15 @@ class EmailService:
                 message.add_alternative(html_body, subtype='html')
             else:
                 message.set_content(html_body, subtype='html')
+            html_part = message.get_body(('html',))
+            if html_part is not None and f'cid:{EmailMarkup.LOGO_CID}' in html_body:
+                html_part.add_related(
+                    EmailMarkup.LOGO_PNG.read_bytes(),
+                    maintype='image',
+                    subtype='png',
+                    cid=f'<{EmailMarkup.LOGO_CID}>',
+                    disposition='inline',
+                )
         except ValueError:
             # Deliberately without the value: it is an address, and this
             # log is not the place for one (LG-5).

@@ -68,8 +68,6 @@ _ALLOWED_HOSTS: dict[str, str] = {
     'api.anthropic.com': "Anthropic's API, only for an anthropic backend that names no other address",
     'bedrock-runtime.{}.amazonaws.com': "a region's Bedrock host, only for a bedrock backend in that region",
     '{}-aiplatform.googleapis.com': "a region's Vertex AI host, only for a Vertex backend in that region",
-    # Not hosts.
-    'www.w3.org': 'an XML namespace in an SVG, never fetched',
     # Examples in docstrings, schema descriptions and log samples.
     'localhost': 'a local default or an example',
     'gpu-3': 'an inference-node example',
